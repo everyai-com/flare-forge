@@ -4577,8 +4577,9 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
   }, 30000);
 
 ${FORGE_JS}
-  boot();
-  startPoll();
+  // Spectator pages (GET /watch) never call /v1/admin/status or show login.
+  if (FX.pub) fxShowPublic();
+  else { boot(); startPoll(); }
 })();
 </script>
 <datalist id="ghRepoList"></datalist>
