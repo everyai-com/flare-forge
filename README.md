@@ -31,7 +31,7 @@ This repo is Flare Forge's entry for Cloudflare's
 competition (Workers + Artifacts, submissions close Oct 14, 2026).
 
 1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live) (demo data, rendered in your tab).
-2. **Watch a real swarm** (spectator mode, read-only; switched on with the public demo swarm, link 1 works today): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf), or ask your own Claude Code what the agents are doing:
+2. **Watch a real swarm** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf), or ask your own Claude Code what the agents are doing:
 
    ```bash
    claude mcp add --transport http flare-forge-watch https://flare-actions.everyai-com.workers.dev/v1/public/forge/mcp
@@ -58,18 +58,23 @@ public MCP.
 
 | | Ops per landed change | $ per 10,000 changes | Status |
 |---|---|---|---|
-| Forge, Bookshelf swarm on the hosted deployment | *pending live run* | *pending* | Measured from Cloudflare events once the live run lands ([plan §4](docs/FORGE-PRODUCT-PLAN.md#4-the-last-mile-list-ranked-by-score-moved)) |
-| Forge, simulator, 10k agents, no polling | 13.3 (fork 1, clone 1, fetch 8.1, push 3.2) | $20.01 | **SIMULATED** ([FORGE-BENCH §2.3](docs/FORGE-BENCH.md)) |
-| PR flow + serial queue on the same repo, simulator, 10k agents, no polling | 9.9 | $14.78 | **SIMULATED** |
+| **Forge, Bookshelf swarm on the hosted deployment** (6 agents, 13 intents, 11 landed, 1 semantic culprit failed, 1 conflict raced and landed) | **11.2** (fork 1.1, pull 6.6, push 3.5) | **$16.77** | **MEASURED** by Cloudflare's own `artifactsEventsAdaptiveGroups`, 2026-10-12 12:51-13:00 UTC; check it yourself with `npm run forge:ops-reconcile` |
+| Forge, simulator, 10 agents, no polling | 10.5 | $15.75 | **SIMULATED** ([FORGE-BENCH §2.3](docs/FORGE-BENCH.md)): the live run landed within 7% of it |
+| Forge, simulator, 10k agents, no polling | 13.3 | $20.01 | **SIMULATED** |
+| PR flow + serial queue on the same repo, simulator, 10k agents | 9.9 | $14.78 | **SIMULATED** |
 | The same PR flow, agents fetching every 30 s (while working .. until landed) | 39.7 .. 133,322 | $60 .. $199,982 | **Projected**, not measured |
 
-Without polling, Forge spends *more* git ops per landed change than the
-PR flow (replays and speculative lane rebuilds refetch); it wins
-against agents that poll. The train now reuses fork objects across
-lane rebuilds (shipped 2026-10-12, R2-backed object cache); the full
-cache design, which also has replays fetch once, brings Forge to 9.4 in
-the simulator, below the PR flow. Replays still refetch, so 9.4 stays
-**SIMULATED** until the live ledger says otherwise.
+Cloudflare also logged 668 reads and 132 token create/revoke calls in
+that run (61 and 12 per landed change). The pricing page names create,
+push, pull and clone; it does not say whether reads or tokens bill. If
+they do, the same run costs 83.9 operations per landed change.
+
+Without polling, Forge spends more git ops per landed change than a PR
+flow in the simulator (10.5 vs 6.2 at 10 agents, 13.3 vs 9.9 at 10k:
+replays and speculative lane rebuilds refetch); it wins against agents
+that poll, and it buys trains, replay and `why` with the difference. The train reuses fork objects across lane
+rebuilds (shipped 2026-10-12); the simulator's full cache design, which
+also has replays fetch once, brings Forge to 9.4 at 10k agents.
 
 The product plan, the repo decision and the schedule to submission are
 in [docs/FORGE-PRODUCT-PLAN.md](docs/FORGE-PRODUCT-PLAN.md); the full

@@ -18,6 +18,7 @@ import {
   OpsTally,
   opsTotals,
   parseArtifactsOpEvent,
+  pushBurstKey,
   recordOps,
   SIM_OPS_PER_INTENT,
   simulatedOpsEconomics,
@@ -337,6 +338,9 @@ describe("binding meter", () => {
     expect(tally.drain()).toEqual([
       { repoName: "i-3f2a9c1e7b4d", kind: "read", n: 2 },
       { repoName: "i-3f2a9c1e7b4d", kind: "token", n: 1 },
+      // The fork is charged to the NEW repo, and repo creation is counted.
+      { repoName: "s-copy", kind: "fork", n: 1 },
+      { repoName: "new-repo", kind: "create", n: 1 },
     ]);
     expect(tally.size).toBe(0);
   });
@@ -385,6 +389,38 @@ describe("binding meter", () => {
       { kind: "read", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 3 },
       { kind: "token", origin: "binding", subject: "trunk", intentId: null, n: 1 },
     ]);
+  });
+});
+
+describe("ledger accuracy vs Cloudflare metrics (prod, 2026-10-12)", () => {
+  it("counts Forge's own forks and creates as billable binding ops", () => {
+    const sql = doSql();
+    recordOps(sql, [{ kind: "fork", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 2 }], null, 0);
+    recordOps(sql, [{ kind: "read", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 9 }], null, 0);
+    const t = opsTotals(sql);
+    expect(t.billable).toBe(2);
+    expect(t.binding).toEqual({ fork: 2, read: 9 });
+    expect(intentOps(sql, INTENT_ID).billable).toBe(2);
+  });
+
+  it("attributes race forks through the tournament", async () => {
+    const l = { ...fakeLookups(), tournamentRepoByShort: async (short: string) => (short === "938cfb59" ? "bookshelf" : null) };
+    expect(classifyRepoName("t-938cfb59-replay-0")).toEqual({ role: "race", short: "938cfb59" });
+    expect(await attributeOp(l, { repoName: "t-938cfb59-replay-0" })).toEqual({ repo: "bookshelf", subject: "replay", intentId: null });
+    expect(await attributeOp(fakeLookups(), { repoName: "t-938cfb59-replay-0" })).toBeNull();
+  });
+
+  it("collapses a burst of ref creations into one push operation", async () => {
+    const recorded: Array<[string, string | null]> = [];
+    const deps = { namespace: "", lookups: fakeLookups(), record: async (repo: string, _e: unknown, id: string | null) => void recorded.push([repo, id]) };
+    const lane = (n: number) => envelope("cf.artifacts.repo.pushed", "bookshelf", { ref: `refs/heads/forge/lane-${n}`, before: "0".repeat(40), after: "b".repeat(40) });
+    const t = Date.parse("2026-10-12T12:37:10.250Z");
+    for (let i = 0; i < 3; i++) await handleArtifactsOpEvent(deps, lane(i), `evt-${i}`, t + i * 100);
+    const update = envelope("cf.artifacts.repo.pushed", "bookshelf", { ref: "refs/heads/main", before: "a".repeat(40), after: "c".repeat(40) });
+    await handleArtifactsOpEvent(deps, update, "evt-main", t);
+    expect(new Set(recorded.slice(0, 3).map((r) => r[1]))).toEqual(new Set([pushBurstKey("bookshelf", t)]));
+    expect(recorded[3][1]).toBe("evt-main");
+    expect(parseArtifactsOpEvent(update)?.createdRef).toBe(false);
   });
 });
 

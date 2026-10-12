@@ -565,10 +565,12 @@ How batching works:
 
 ### Push trigger (`ForgePushWorkflow`)
 
-Seven namespace-wide event triggers (`triggers.events` in
+Three namespace-wide event triggers (`triggers.events` in
 `wrangler.jsonc`, namespace `flare-tournaments`: `pushed`, `cloned`,
-`fetched`, `created`, `forked`, `imported`, `deleted`) target the
-Workflow `flare-forge-push`. Every event first runs a **meter op**
+`fetched`) target the Workflow `flare-forge-push`. (Account-level
+`created` / `forked` / `imported` / `deleted` triggers were tried on
+2026-10-12 and never delivered with a namespace filter; Forge meters the
+repo creation it performs through the binding instead.) Every event first runs a **meter op**
 step that records it in the [ops ledger](#ops-ledger). Push events
 then run the reconcile step below: the trigger is the **primary**
 live-footprint signal, and the agent's `report_push` is the fast path
@@ -618,8 +620,8 @@ not O(time). The ledger (`apps/worker/src/forge-ops.ts`) measures it.
 
 | Source | What | How |
 |---|---|---|
-| `event` | `create`, `fork`, `import`, `delete`, `push`, `clone`, `fetch` | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days |
-| `binding` | `read` (readFile, readCommit, readTree, log, ...), `token` (createToken) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
+| `event` | `push`, `clone`, `fetch` (and `create`/`fork`/`import`/`delete` if those events arrive) | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days; a burst of ref creations on one repo in the same second counts as one push |
+| `binding` | `read` (readFile, readCommit, readTree, log, info, ...), `token` (createToken), and billable `fork` / `create` / `import` (charged to the new repo) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
 
 Repo creation through the binding arrives as an event, so it is not
 metered twice. Dollars use the documented kinds only (create, fork,
@@ -995,6 +997,33 @@ The number of rounds is capped at ⌈log₂ max_per_train⌉ + 5.
 - MCP: `approve_plan`, `send_back`, `review_sample` (human tier, admin
   only). Successful forge MCP writes keep only the semantic `forge.*`
   audit row (the generic `mcp.<tool>` row stays for failures).
+
+### Live run on production (2026-10-12)
+
+> Provenance: agent-run 2026-10-12. Hosted deployment
+> (`flare-actions.everyai-com.workers.dev`, version 1a21c932), Artifacts
+> namespace `flare-tournaments`, one BYO runner (macOS arm64, token
+> scoped to `flare-tournaments/*`), `npm run forge:demo` then
+> `forge:agents --mode scripted --count 6`. Operation counts are
+> Cloudflare's own (`artifactsEventsAdaptiveGroups`, eventKind action,
+> 12:51-13:00 UTC), read with the GraphQL API.
+
+| | Result |
+|---|---|
+| Intents | 13 declared, 12 ready (p50 18.7 s, p90 26.3 s per intent), 1 protected (waits for a human) |
+| Landed | 11 in about 5 minutes through 7 landed trains; CI on each exact merged SHA |
+| Semantic red | Caught by CI on the combined SHA; the culprit failed; main never red |
+| Textual conflict | Raced by `flare-replay` (prod cron), resolved, landed |
+| Artifacts operations | fork 12, pull 73, push 38 = **123 billable-kind ops, 11.2 per landed change, $0.0185** at list price; plus read 668, token_create 98, token_revoke 34 (billing undocumented) |
+| Simulator check | FORGE-BENCH predicted 10.5 per landed change at 10 agents; measured 11.2 |
+
+The first attempt (12:37 UTC) failed 12 of 13 pushes: a fresh fork is
+not pushable for a few seconds. Fixed the same day (claims wait for the
+fork; `forge push` retries) and re-run clean. Reconciling the ledger
+against Cloudflare's dataset showed two ledger errors, also fixed: forks
+were missing (now metered from the binding) and pushes were counted per
+ref (a 34-ref bootstrap push counted 34; ref-creation bursts now count
+once). `npm run forge:ops-reconcile` prints both sides.
 
 ### Live run: the full loop on real Artifacts (wrangler dev, 2026-10-12)
 

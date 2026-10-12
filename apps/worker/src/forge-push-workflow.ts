@@ -31,6 +31,7 @@ export class ForgePushWorkflow extends WorkflowEntrypoint<WorkerEnv, unknown> {
           },
           event.payload,
           event.instanceId,
+          event.timestamp instanceof Date ? event.timestamp.getTime() : undefined,
         );
       },
     );
