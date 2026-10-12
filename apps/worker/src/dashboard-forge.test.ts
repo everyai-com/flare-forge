@@ -162,7 +162,7 @@ describe("forge dashboard", () => {
     // the overlap feed uses the Feed DO's "edge" ops
     expect(FORGE_JS).toContain('op.kind === "edge"');
     expect(FORGE_JS).toContain('kind: "edge"');
-    expect(FORGE_JS).toContain('label: "Main red (integration)"');
+    expect(FORGE_JS).toContain('label: "Main red"');
     expect(FORGE_JS).toContain('truncated_footprint: "footprint truncated — routed to a human"');
     expect(FORGE_JS).toContain("main only moves to a SHA CI verified green as that exact SHA");
   });
@@ -290,8 +290,13 @@ describe("forge simple mode", () => {
     expect(FORGE_JS).toContain("if (!fxSimple() || FX.paused) return;");
     // screens expose their one job and the phase for agents
     expect(FORGE_JS).toContain('root.setAttribute("data-job", FX_SCREEN_JOB[s] || s)');
-    // demo visitors default to Simple unless a mode is already set
-    expect(FORGE_JS).toContain('if (FX.demo && q.get("stage") !== "1" && !rootCl.contains("ui-simple") && !rootCl.contains("ui-pro")) rootCl.add("ui-simple");');
+    // judges (demo, stage, /watch) default to Pro: Forge's own words stay on screen
+    expect(FORGE_JS).not.toContain('rootCl.add("ui-simple")');
+    expect(FORGE_JS).toContain('if (q.get("stage") === "1") { rootCl.remove("ui-simple"); rootCl.add("ui-pro"); }');
+    expect(DASHBOARD_HTML).toContain('else if (judge && stored !== "simple") m = "pro";');
+    // the judge story: three beats, a narrated scene that loops
+    expect(FORGE_JS).toContain("function fxRenderStory(s)");
+    expect(FORGE_JS).toContain("if (!s.sim && FX.sim.t >= FX_SIM_LOOP) { fxSimReset(); return; }");
   });
 });
 

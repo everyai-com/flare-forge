@@ -748,6 +748,7 @@ export const FORGE_JS = String.raw`
     tag.hidden = !demo;
     n.hidden = !demo;
     n.setAttribute("data-state", demo ? "demo" : "live");
+    n.setAttribute("data-screen", key);
     fxClear(n);
     if (!demo) return;
     if (fxSimple()) {
@@ -1168,14 +1169,14 @@ export const FORGE_JS = String.raw`
     { key: "overlaps_caught", label: "Overlaps caught", series: "overlaps_caught", rate: "overlaps_per_min", unit: "at declare" },
     { key: "conflicts_open", label: "Conflicts open", kind: "conflicts" },
     { key: "landed_today", label: "Landed today", series: "landed_today", rate: "landed_per_min" },
-    { key: "main_red_minutes", label: "Main red (integration)", kind: "invariant", info: "Minutes main spent red. main only moves to a SHA CI verified green as that exact SHA, so this stays 0." },
+    { key: "main_red_minutes", label: "Main red", kind: "invariant", info: "Minutes main spent red. main only moves to a SHA CI verified green as that exact SHA, so this stays 0." },
     { key: "artifacts_ops", label: "Artifacts ops", kind: "ops", info: "Billable Cloudflare Artifacts operations (create, fork, import, push, clone, fetch) counted from Cloudflare's own events since the ledger began, per landed change, at list price ($0.15 per 1,000). Answering who-is-touching-what costs zero git operations." }
   ];
   // Ops ledger line pieces (REST snapshot ops field, forge-ops.ts).
   function fxOpsSub(o) {
     var out = [];
     if (!o) return out;
-    if (o.perLandedChange !== null && o.perLandedChange !== undefined) out.push(fxNum(o.perLandedChange) + " / landed change");
+    if (o.perLandedChange !== null && o.perLandedChange !== undefined) out.push(fxNum(o.perLandedChange) + " / change");
     if (typeof o.usd === "number") out.push("$" + o.usd.toFixed(2));
     if (o.simulated) out.push("SIMULATED");
     return out;
@@ -1268,6 +1269,7 @@ export const FORGE_JS = String.raw`
     var s = FX.snap;
     if (!s) return;
     fxGameDiff(s);
+    fxRenderStory(s);
     fxRenderCounters("fxLiveCounters", fxLiveCounterDefs(), s);
     fxRenderLiveSimple(s);
     var mt = document.getElementById("fxMapTitle");
@@ -2101,6 +2103,9 @@ export const FORGE_JS = String.raw`
     if (FX.paused) { fxOnFeed({ v: 1, type: "delta", ops: [] }); return; }
     var s = FX.snap;
     if (!s || document.hidden) return;
+    // The bookshelf story loops so a judge who arrives late still sees
+    // every beat (declare, overlap, narrow, train, land).
+    if (!s.sim && FX.sim.t >= FX_SIM_LOOP) { fxSimReset(); return; }
     FX.sim.t++;
     var ops = [];
     if (s.sim) fxSimScale(s, ops); else fxSimBookshelf(s, ops);
@@ -2134,9 +2139,128 @@ export const FORGE_JS = String.raw`
       if (c && c.agents > 200) ops.push({ op: "upsert", kind: "cell", id: c.path, fields: { agents: c.agents + Math.round(rng() * 8 - 4) } });
     }
   }
+  // ---------- Judge story: three beats + a narrated scene ----------
+  // Shown on demo fixtures and the public /watch page. The scene is the
+  // core idea on screen: an agent declares, Forge answers with the
+  // overlap before any code exists, the agent narrows, a train verifies
+  // the exact SHA, main moves.
+  var FX_SIM_LOOP = 112;
+  var FX_SCENES = [
+    { at: 6, id: "i-d0a1", agent: "a-10", name: "Claude Code #10", label: "C10", title: "Filter GET /books by ?author=",
+      decl: ["src/routes/books.ts", "test/books-author.test.ts"], narrow: ["src/lib/filters.ts", "test/books-author.test.ts"],
+      other: "i-77b4", shared: "src/routes/books.ts", sha: "7c1e9b2",
+      reasoning: "Readers ask for every book by one author. Add an author filter to the list endpoint, matched case-insensitively." },
+    { at: 62, id: "i-d0b2", agent: "a-11", name: "Codex #2", label: "X2", client: "codex", title: "Cache GET /books/:id with an ETag",
+      decl: ["src/index.ts", "src/routes/books.ts"], narrow: ["src/middleware/etag.ts", "test/etag.test.ts"],
+      other: "i-3b90", shared: "src/index.ts", sha: "a41f06d",
+      reasoning: "Clients refetch unchanged books. Send an ETag and answer 304 when it matches, in middleware so routes stay untouched." }
+  ];
+  function fxJudgeView() { return FX.demo || !!document.querySelector("meta[name=flare-public]"); }
+  function fxSimReset() {
+    FX.fixtures = null;
+    FX.sim = { t: 0, landedAt: 0 };
+    FX.scene = null;
+    FX.game = null;
+    FX.snap = fxNormSnapshot(fxFxSnapshot(FX.repo));
+    fxScheduleRender(true);
+  }
+  function fxSceneSay(beat, text) { FX.scene = { beat: beat, text: text }; }
+  function fxSimScene(s, ops, t) {
+    var f = fxFixtures();
+    FX_SCENES.forEach(function (sc) {
+      var k = t - sc.at;
+      if (k < 0 || k > 40) return;
+      var a = fxAgent(sc.agent);
+      var who = sc.label;
+      var other = fxIntentById(sc.other);
+      var otherWho = other ? fxAgentName(fxAgent(other.agent)) : sc.other;
+      if (k === 0) {
+        var agent = { id: sc.agent, name: sc.name, label: sc.label, client: sc.client || "claude-code", intent: sc.id, last_tool: "declare_intent", last_ago_s: 0, landed_today: 0 };
+        [f.agents || (f.agents = []), s.agents || (s.agents = [])].forEach(function (list) { if (!list.some(function (x) { return x.id === sc.agent; })) list.push(agent); });
+        var it = { id: sc.id, goal_id: "g-2", title: sc.title, agent: sc.agent, state: "draft", risk: 3, risk_terms: [{ term: "footprint_size", points: 3, detail: sc.decl.length + " files" }],
+          path: sc.decl[0], footprint: { declared: sc.decl.slice(), actual: [], drift: [] }, reasoning: sc.reasoning, accept: "node --test " + sc.decl[sc.decl.length - 1], rejected: [], plan: [],
+          train_id: null, landed_sha: null, lease_expires_in_s: 300, lease_expires_at: new Date(Date.now() + 300000).toISOString(), route: null, escalation: null, evidence: null, created_at: new Date().toISOString() };
+        (f.intents || (f.intents = [])).push(it);
+        ops.push({ op: "upsert", kind: "intent", id: sc.id, fields: JSON.parse(JSON.stringify(it)) });
+        ops.push({ op: "upsert", kind: "counters", fields: { intents: (s.counters.intents || 0) + 1 } });
+        fxSceneSay(1, who + " declares intent \u201c" + sc.title + "\u201d on " + sc.decl[0] + " and " + (sc.decl.length - 1) + " more file. No code written yet.");
+      } else if (k === 4) {
+        ops.push({ op: "upsert", kind: "edge", id: sc.other + "~" + sc.id, fields: { a: sc.other, b: sc.id, paths: [sc.shared], state: "advisory", origin: "declared" } });
+        ops.push({ op: "upsert", kind: "counters", fields: { overlaps_caught: (s.counters.overlaps_caught || 0) + 1 } });
+        fxSceneSay(2, "Forge answers before any code exists: " + sc.other + " (" + otherWho + ") already touches " + sc.shared + ".");
+      } else if (k === 10) {
+        var fi = fxIntentById(sc.id);
+        if (fi) { fi.footprint = { declared: sc.narrow.slice(), actual: [], drift: [] }; fi.path = sc.narrow[0]; fi.state = "claimed"; }
+        ops.push({ op: "remove", kind: "edge", id: sc.other + "~" + sc.id });
+        ops.push({ op: "upsert", kind: "intent", id: sc.id, fields: { state: "claimed", path: sc.narrow[0], footprint: { declared: sc.narrow.slice(), actual: [], drift: [] } } });
+        fxSceneSay(2, who + " sends " + otherWho + " a note and narrows to " + sc.narrow[0] + ". Overlap cleared, still before any code.");
+      } else if (k === 14) {
+        ops.push({ op: "upsert", kind: "intent", id: sc.id, fields: { state: "working" } });
+        var w = fxIntentById(sc.id); if (w) w.state = "working";
+        fxSceneSay(2, who + " works in its own Artifacts fork with a 1-hour token for that fork only. No agent ever holds a trunk write token.");
+      } else if (k === 22) {
+        ops.push({ op: "upsert", kind: "intent", id: sc.id, fields: { state: "in_train" } });
+        var r = fxIntentById(sc.id); if (r) r.state = "in_train";
+        fxSceneSay(3, "Acceptance check passed. " + sc.id + " rides a train: CI runs on the exact merged SHA, and a red lane is bisected.");
+      } else if (k === 30) {
+        var l = fxIntentById(sc.id); if (l) { l.state = "landed"; l.landed_sha = sc.sha; l.route = "auto"; }
+        ops.push({ op: "upsert", kind: "intent", id: sc.id, fields: { state: "landed" } });
+        ops.push({ op: "upsert", kind: "head", fields: { sha: sc.sha, at: new Date().toISOString() } });
+        ops.push({ op: "upsert", kind: "counters", fields: { landed_today: (s.counters.landed_today || 0) + 1, intents: Math.max(0, (s.counters.intents || 0) - 1) } });
+        fxSceneSay(3, "Landed. main moved to " + sc.sha + " only because CI verified that exact SHA. Each of its lines now answers why.");
+      } else if (k === 40) {
+        FX.scene = null;
+      }
+    });
+  }
+  function fxRenderStory(s) {
+    var box = document.getElementById("fxStory");
+    if (!box) return;
+    var show = fxJudgeView();
+    box.hidden = !show;
+    if (!show) return;
+    var c = s.counters || {};
+    var sc = FX.scene || { beat: 0, text: "" };
+    if (!box.firstChild) {
+      var ol = h("ol", { cls: "fx-story-beats" });
+      [["Declare before you edit", "Each agent posts an intent first: the paths it will touch, why, and how it will prove it worked."],
+       ["Overlaps come back first", "Forge answers who else is on those paths in milliseconds, from a Durable Object, before any code exists."],
+       ["Only verified trains move main", "CI runs on the exact merged SHA; a red lane is bisected. Every landed line answers why."]].forEach(function (b, i) {
+        ol.appendChild(h("li", { cls: "fx-beat", "data-beat": String(i + 1) }, [h("div", { cls: "fx-beat-n", text: "STEP " + (i + 1) }), h("p", { cls: "fx-beat-t", text: b[0] }), h("p", { cls: "fx-beat-d", text: b[1] }), h("p", { cls: "fx-beat-p" })]));
+      });
+      box.appendChild(ol);
+      box.appendChild(h("p", { cls: "fx-narrate", id: "fxNarrate", role: "status", "aria-live": "polite" }, [h("span", { cls: "fx-narrate-k", text: "Now" }), h("span", { cls: "fx-narrate-t" })]));
+      box.appendChild(h("p", { cls: "fx-story-chip", id: "fxStoryChip" }));
+    }
+    var proofs = [fxNum(c.intents || 0) + " intents live", fxNum(c.overlaps_caught || 0) + " overlaps caught before code", "main red " + fxNum(c.main_red_minutes || 0) + " min \u00b7 " + fxNum(c.landed_today || 0) + " landed today"];
+    var lis = box.querySelectorAll(".fx-beat");
+    for (var i = 0; i < lis.length; i++) {
+      lis[i].setAttribute("data-active", sc.beat === i + 1 ? "1" : "0");
+      var p = lis[i].querySelector(".fx-beat-p");
+      if (p && p.textContent !== proofs[i]) p.textContent = proofs[i];
+    }
+    var nar = document.getElementById("fxNarrate");
+    var idle = !sc.text;
+    var text = idle ? (s.sim ? "10,000 simulated agents run the same MCP calls; heat shows where they cluster." : "Watching " + fxNum(c.agents || 0) + " agents. The next intent arrives in a few seconds.") : sc.text;
+    nar.setAttribute("data-idle", idle ? "1" : "0");
+    var nt = nar.querySelector(".fx-narrate-t");
+    if (nt.textContent !== text) nt.textContent = text;
+    var chip = document.getElementById("fxStoryChip");
+    fxClear(chip);
+    var o = s.ops;
+    if (o && typeof o.billable === "number") {
+      chip.appendChild(h("span", { text: "Artifacts bill:" }));
+      chip.appendChild(h("b", { text: fxNum(o.billable) + " ops" }));
+      if (o.perLandedChange !== null && o.perLandedChange !== undefined) chip.appendChild(h("span", { text: "\u00b7 " + fxNum(o.perLandedChange) + " per landed change" }));
+      chip.appendChild(h("span", { text: "\u00b7 $" + Number(o.usd || 0).toFixed(2) + " at list price" }));
+      if (o.simulated) chip.appendChild(h("span", { cls: "sim", text: "\u00b7 simulated" }));
+    }
+    if (FX.demo) chip.appendChild(h("a", { href: "https://github.com/everyai-com/flare-forge", target: "_blank", rel: "noopener", "data-action": "open_repo", text: "Source on GitHub \u2192" }));
+  }
   function fxSimBookshelf(s, ops) {
     var f = fxFixtures();
     var t = FX.sim.t;
+    fxSimScene(s, ops, t);
     var cur = s.track.current;
     // leases: heartbeat when under 12s
     s.intents.forEach(function (i) {
@@ -3933,7 +4057,7 @@ export const FORGE_JS = String.raw`
   var FX_TOUR = [
     { hash: "#/live", target: "#fxMap", sk: "tour1", q: "Who's doing what?", body: "Each dot is one agent working on one intent, placed on the files it declared. The rail on the right names every agent and its task. Amber hatching marks footprints that overlap: caught at declare time, before anyone wrote code.", tip: "Try it: hover an agent in the rail to find its dots on the map." },
     { hash: "#/inbox", target: "#fxStories", st: "#fxInboxSimple", sk: "tour2", q: "What do humans review?", body: "Only the exceptions. Low-risk work lands on its own; you see plans that touch protected paths, escalations and a small audit sample. Every risk score lists the terms that produced it.", tip: "Try it: press a to approve the plan (there is a 5 s undo)." },
-    { hash: "#/conflicts/c-9", target: "#fxConflicts .fx-ab", sk: "tour3", q: "What happens when they collide?", body: "Ready intents merge in stacked lanes and land only on a SHA CI verified green. A real conflict drops one intent from its train and replays it with both intents' why in context; a race keeps the smallest green diff.", tip: "Then open Trains: a red lane is bisected to its culprit while the rest lands." },
+    { hash: "#/conflicts/c-9", target: "#fxConflicts .fx-ab", alt: "#fxConflicts", sk: "tour3", q: "What happens when they collide?", body: "Ready intents merge in stacked lanes and land only on a SHA CI verified green. A real conflict drops one intent from its train and replays it with both intents' why in context; a race keeps the smallest green diff.", tip: "Then open Trains: a red lane is bisected to its culprit while the rest lands." },
     { hash: "#/why?path=src%2Fmiddleware%2Flogging.ts&line=10", target: "#fxDrawer", sk: "tour4", q: "Why does this line exist?", body: "Click any line number. The chain runs line → commit → intent → goal → reasoning → rejected options → CI evidence → session, and Fork session hands that exact context to a new agent.", tip: "Agents get the same chain from the why MCP tool." }
   ];
   var FX_TOUR_KEY = "flare-forge-tour";
@@ -3978,6 +4102,7 @@ export const FORGE_JS = String.raw`
     if (!fxTourOpen()) return;
     var step = FX_TOUR[FX.tour.i];
     var t = document.querySelector(fxSimple() && step.st ? step.st : step.target);
+    if ((!t || t.hidden) && step.alt) t = document.querySelector(step.alt);
     var r = t && !t.hidden ? t.getBoundingClientRect() : null;
     if ((!r || r.width < 20 || r.height < 20) && tries < 30) { FX.tour.timer = setTimeout(function () { fxTourPlace(tries + 1); }, 100); return; }
     var box = document.getElementById("fxTour");
@@ -3991,13 +4116,16 @@ export const FORGE_JS = String.raw`
       ring.hidden = false;
     } else ring.hidden = true;
     var bw = box.offsetWidth || 360, bh = box.offsetHeight || 220, x, y;
-    if (vw < 640 || !r) { x = 12; y = vh - bh - 12; box.style.width = (vw - 24) + "px"; }
+    if (vw < 640) { x = 12; y = vh - bh - 12; box.style.width = (vw - 24) + "px"; }
+    else if (!r) { box.style.width = ""; x = vw - bw - 16; y = vh - bh - 16; }
     else {
       box.style.width = "";
       if (r.right + 16 + bw < vw) { x = r.right + 16; y = r.top; }
       else if (r.left - 16 - bw > 0) { x = r.left - 16 - bw; y = r.top; }
       else if (r.bottom + 16 + bh < vh) { x = r.left; y = r.bottom + 16; }
-      else { x = Math.min(vw - bw - 16, r.right - bw - 20); y = Math.max(r.top + 20, 70); }
+      // No room beside a big target: dock in the viewport's bottom-right
+      // corner (the rail side), never over the target's top-left content.
+      else { x = vw - bw - 16; y = vh - bh - 16; }
       y = Math.max(12, Math.min(vh - bh - 12, y));
       x = Math.max(12, Math.min(vw - bw - 12, x));
     }
@@ -4193,10 +4321,13 @@ export const FORGE_JS = String.raw`
     var dm = q.get("demo");
     FX.demo = dm === "1" || dm === "true" || dm === "scale";
     FX.demoScale = dm === "scale";
-    // ?demo=1 visitors get Simple unless a mode is already set (the mode
-    // switch in dashboard.ts owns the class); ?stage=1 is the Pro video.
     var rootCl = document.documentElement.classList;
-    if (FX.demo && q.get("stage") !== "1" && !rootCl.contains("ui-simple") && !rootCl.contains("ui-pro")) rootCl.add("ui-simple");
+    // Judges (?demo=1, ?stage=1, /watch) default to Pro in the head
+    // script; stage always shows Pro words.
+    if (q.get("stage") === "1") { rootCl.remove("ui-simple"); rootCl.add("ui-pro"); }
+    // Judge chrome: the story, the map and the tour; no mode switch,
+    // palette, JSON or shortcut buttons competing for attention.
+    if (FX.demo || document.querySelector("meta[name=flare-public]")) document.body.classList.add("fx-judge");
     var moreBtn = document.getElementById("fxMoreBtn");
     if (moreBtn) moreBtn.addEventListener("click", function () { FX.more = !FX.more; fxSyncMore(); if (FX.route.screen === "live" && FX.snap) setTimeout(function () { fxRenderLive(true); }, 30); });
     fxSyncMore();
