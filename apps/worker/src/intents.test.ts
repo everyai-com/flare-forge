@@ -9,6 +9,7 @@ import {
   appendForgeLedger,
   claimConflict,
   claimIntent,
+  waitForkReady,
   createGoal,
   createTrain,
   declareIntent,
@@ -294,6 +295,25 @@ describe("claimIntent", () => {
     const claimed = await claimIntent(db, fakeArtifacts({ forkHead: moved }).artifacts, { id: r.intent.id, agent: "a1" });
     expect("error" in claimed).toBe(false);
     expect((await getIntent(db, r.intent.id))?.baseSha).toBe(moved);
+  });
+  it("waits for a fresh fork to report ready before handing it out", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const handle = {
+      info: async () => {
+        calls++;
+        if (calls < 3) throw Object.assign(new Error("fork in progress"), { code: "FORK_IN_PROGRESS" });
+        return { name: "i-x", status: "ready" };
+      },
+    };
+    expect(await waitForkReady(handle, { delayMs: 5, sleep: async (ms) => void sleeps.push(ms) })).toEqual({ ready: true, polls: 3 });
+    expect(sleeps).toEqual([5, 5]);
+    const stuck = { info: async () => ({ status: "forking" }) };
+    expect(await waitForkReady(stuck, { attempts: 3, sleep: async () => {} })).toEqual({ ready: false, polls: 3 });
+    // No info() (older binding, fakes): ready, no polling.
+    expect(await waitForkReady({}, {})).toEqual({ ready: true, polls: 0 });
+    // A binding without a status field is ready as soon as info() answers.
+    expect(await waitForkReady({ info: async () => ({ name: "i-x" }) })).toEqual({ ready: true, polls: 1 });
   });
   it("re-claims an expired intent reusing its fork", async () => {
     const { db } = sqliteDb();

@@ -40,6 +40,8 @@ export interface ForgeCliDeps {
   cwd: string;
   /** How the user invoked the CLI (`npm run cli --`, `npx flare-forge`); default `cli`. */
   cli?: string;
+  /** Waits between push retries (tests pass a no-op). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export const FORGE_USAGE = [
@@ -92,6 +94,9 @@ function opsOf(v: unknown): Pick<OpsEconomics, "billable" | "landed" | "perLande
     },
   };
 }
+
+// Backoff for `forge push` retries (fresh forks need a moment).
+export const PUSH_RETRY_DELAYS_MS = [2000, 4000, 6000];
 
 const FORGE_VERB_NAMES = ["goal", "declare", "claim", "push", "heartbeat", "ready", "note", "inbox", "status", "why", "conflicts", "trains", "snapshot", "done", "abandon", "fork", "approve", "connect-agent", "init"];
 
@@ -356,9 +361,21 @@ export async function runForge(argv: string[], d: ForgeCliDeps): Promise<number>
       const f = parseFlags(head, { values: ["agent"], multi: ["files"], bools: ["no-git"] });
       const id = resolveIntent(d, f.pos[0]);
       if (!f.bools.has("no-git")) {
-        const pushed = d.git(["push", ...gitArgs], { env: { GIT_TERMINAL_PROMPT: "0" } });
+        // A just-claimed fork can take a few seconds to accept pushes
+        // (seen on prod): retry transient failures with backoff, never a
+        // rejection (non-fast-forward is the agent's to fix).
+        const sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+        let pushed = d.git(["push", ...gitArgs], { env: { GIT_TERMINAL_PROMPT: "0" } });
+        for (let i = 0; pushed.status !== 0 && i < PUSH_RETRY_DELAYS_MS.length && !/rejected|non-fast-forward/i.test(pushed.stderr); i++) {
+          d.err(`git push failed; retrying in ${PUSH_RETRY_DELAYS_MS[i] / 1000}s (${i + 1}/${PUSH_RETRY_DELAYS_MS.length})`);
+          await sleep(PUSH_RETRY_DELAYS_MS[i]);
+          pushed = d.git(["push", ...gitArgs], { env: { GIT_TERMINAL_PROMPT: "0" } });
+        }
         if (pushed.stderr.trim()) d.err(pushed.stderr.trim());
-        if (pushed.status !== 0) throw new Error("git push failed (token expired? run `cli forge heartbeat --refresh-token`)");
+        if (pushed.status !== 0) {
+          const why = pushed.stderr.trim().split("\n").filter(Boolean).slice(-3).join(" | ");
+          throw new Error(`git push failed${why ? `: ${why}` : ""} (token expired? run \`cli forge heartbeat --refresh-token\`)`);
+        }
       }
       const rev = d.git(["rev-parse", "HEAD"]);
       const sha = rev.stdout.trim();

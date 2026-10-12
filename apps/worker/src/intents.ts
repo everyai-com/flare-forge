@@ -643,11 +643,40 @@ async function revokeForkTokens(handle: TournamentRepoHandle): Promise<number | 
 // state. The agent never receives a trunk token (§3.2 invariant 1).
 const FORK_ATTEMPTS = 2;
 const FORK_RETRY_DELAY_MS = 750;
+// A fresh Artifacts fork is not pushable for a few seconds (seen on prod
+// 2026-10-12: 12 of 13 first pushes failed ~2 s after the claim). Wait
+// until info() reports it, bounded, before handing the fork out.
+export const FORK_READY_ATTEMPTS = 12;
+export const FORK_READY_DELAY_MS = 1000;
+
+// True once the fork answers info() without an in-progress error (and,
+// when the binding reports one, with status "ready"). Handles without
+// info() (older bindings, test fakes) count as ready.
+export async function waitForkReady(
+  handle: object,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<{ ready: boolean; polls: number }> {
+  const info: unknown = Reflect.get(handle, "info");
+  if (typeof info !== "function") return { ready: true, polls: 0 };
+  const attempts = opts.attempts ?? FORK_READY_ATTEMPTS;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let polls = 1; polls <= attempts; polls++) {
+    try {
+      const out: unknown = await Reflect.apply(info, handle, []);
+      const status = typeof out === "object" && out !== null ? (out as { status?: unknown }).status : undefined;
+      if (status === undefined || status === "ready") return { ready: true, polls };
+    } catch {
+      // FORK_IN_PROGRESS / NOT_FOUND while the copy runs: poll again.
+    }
+    if (polls < attempts) await sleep(opts.delayMs ?? FORK_READY_DELAY_MS);
+  }
+  return { ready: false, polls: attempts };
+}
 
 export async function claimIntent(
   db: Db,
   artifacts: ForgeArtifacts,
-  input: { id: string; agent: string; leaseTtlSeconds?: number },
+  input: { id: string; agent: string; leaseTtlSeconds?: number; forkReady?: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } },
 ): Promise<ClaimIntentResult> {
   const a = validateAgent(input.agent);
   if (!a.ok) return { error: "invalid-agent", message: a.error };
@@ -714,6 +743,10 @@ export async function claimIntent(
   let fork: TournamentRepoHandle | null = null;
   try {
     fork = await artifacts.get(forkRepo);
+    if (!reused) {
+      const waited = await waitForkReady(fork, input.forkReady);
+      if (!waited.ready) console.log(JSON.stringify({ level: "warn", msg: "forge fork not ready in time", intent: current.id, fork: forkRepo, polls: waited.polls }));
+    }
     if (reused) {
       // Re-claim of a fork a previous holder wrote to: its token may
       // still be live (1 h TTL outlives a lapsed lease). Revoke every
