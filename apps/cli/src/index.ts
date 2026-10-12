@@ -47,7 +47,7 @@ import { spawnSync } from "node:child_process";
 // alone. Runs before loadEnv(), which walks up from cwd, so the repo-root
 // .env is still found from any subdirectory up to 6 levels deep.
 const initCwd = process.env["INIT_CWD"];
-const ownScript = process.env["npm_package_name"] === "flare-actions" || process.env["npm_package_name"] === "flare-forge";
+const ownScript = ["flare-forge-monorepo", "flare-actions", "flare-forge"].includes(process.env["npm_package_name"] ?? "");
 if (initCwd && ownScript && initCwd !== process.cwd()) {
   process.chdir(initCwd);
 }

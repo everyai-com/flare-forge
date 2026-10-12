@@ -1177,8 +1177,9 @@ export const FORGE_JS = String.raw`
     var out = [];
     if (!o) return out;
     if (o.perLandedChange !== null && o.perLandedChange !== undefined) out.push(fxNum(o.perLandedChange) + " / change");
-    if (typeof o.usd === "number") out.push("$" + o.usd.toFixed(2));
-    if (o.simulated) out.push("SIMULATED");
+    // Dollars ride the story chip; the tile stays short enough not to clip.
+    if (o.simulated) out.push("sim");
+    else if (typeof o.usd === "number") out.push("$" + o.usd.toFixed(2));
     return out;
   }
   function fxSpark(values) {

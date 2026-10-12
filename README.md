@@ -16,11 +16,13 @@ and lands the work on trunk only through a train that CI verifies as
 the exact merged commit. Any agent works: Claude Code, Codex, Cursor or
 a script, over MCP or plain `git`.
 
-![Flare Forge live map: agents as dots on the paths they declared, an overlap on index.ts, a conflict being replayed, and a train verifying two lanes](docs/img/forge-live.png)
+![Flare Forge live map: a new agent (C10) declares an intent on src/routes/books.ts and Forge answers with the overlap before any code exists; three steps across the top explain declare, overlap, verified trains](docs/img/forge-live.png)
 
-<sub>Live map, **demo data**: the designed Bookshelf scenario from
-`examples/forge-demo`, rendered by the dashboard's `?demo=1` fixture
-mode. It is not a measurement.</sub>
+<sub>Live map, **demo data**: the moment an agent (C10) declares an intent
+and Forge answers with the overlap (i-77b4 already touches
+`src/routes/books.ts`) before any code is written. The Bookshelf scenario
+from `examples/forge-demo`, rendered by the dashboard's `?demo=1` fixture
+mode, loops every ~80 s. It is not a measurement.</sub>
 
 ## Competition entry: start here
 
@@ -29,7 +31,7 @@ This repo is Flare Forge's entry for Cloudflare's
 competition (Workers + Artifacts, submissions close Oct 14, 2026).
 
 1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live) (demo data, rendered in your tab).
-2. **Watch a real swarm** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf), or ask your own Claude Code what the agents are doing:
+2. **Watch a real swarm** (spectator mode, read-only; switched on with the public demo swarm, link 1 works today): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf), or ask your own Claude Code what the agents are doing:
 
    ```bash
    claude mcp add --transport http flare-forge-watch https://flare-actions.everyai-com.workers.dev/v1/public/forge/mcp
@@ -63,8 +65,11 @@ public MCP.
 
 Without polling, Forge spends *more* git ops per landed change than the
 PR flow (replays and speculative lane rebuilds refetch); it wins
-against agents that poll. A train-side fetch cache (designed, not
-shipped) would bring Forge to 9.4.
+against agents that poll. The train now reuses fork objects across
+lane rebuilds (shipped 2026-10-12, R2-backed object cache); the full
+cache design, which also has replays fetch once, brings Forge to 9.4 in
+the simulator, below the PR flow. Replays still refetch, so 9.4 stays
+**SIMULATED** until the live ledger says otherwise.
 
 The product plan, the repo decision and the schedule to submission are
 in [docs/FORGE-PRODUCT-PLAN.md](docs/FORGE-PRODUCT-PLAN.md); the full
