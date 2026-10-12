@@ -14,12 +14,15 @@
 // from the environment. Re-running without a code just restarts an
 // already paired runner. Kept as an array of plain strings: no template
 // literal, so shell `$VAR` / `${...}` stay literal.
-export const RUNNER_REPO_URL = "https://github.com/everyai-com/flare-actions";
+// The runner must speak this server's claim protocol (Artifacts runs ride
+// `artifacts=1` + a claim-time read token since 2026-10-12), so it comes
+// from this repo. The repo must be public for the installer's fetch.
+export const RUNNER_REPO_URL = "https://github.com/everyai-com/flare-forge";
 
 // Fallback pin when the deployment configures none (FLARE_RUNNER_REF var
-// or the fleet runner_version setting): main when one-line pairing
-// shipped. Bump deliberately, like a dependency.
-export const RUNNER_DEFAULT_REF = "5b1a81ae5c1ed471b703efa57c177a78c20cd316";
+// or the fleet runner_version setting): flare-forge main when BYO runners
+// learned Artifacts checkouts (PR #7). Bump deliberately, like a dependency.
+export const RUNNER_DEFAULT_REF = "52bf08d8401b629a3d0624df4c8d9f033979bc5f";
 
 const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/;
 // A release tag (v1.2.3[-pre]) or a full 40-hex commit SHA. Both are
