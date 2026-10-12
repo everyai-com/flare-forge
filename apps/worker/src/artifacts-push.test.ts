@@ -8,6 +8,8 @@ import {
   handleArtifactsPush,
   loadArtifactsPipeline,
   parseArtifactsPush,
+  RUNNER_CHECKOUT_TTL_SECONDS,
+  runnerCheckoutFor,
   type ArtifactsDispatchInput,
   type ArtifactsNamespace,
 } from "./artifacts-push";
@@ -218,5 +220,48 @@ describe("handleArtifactsPush", () => {
         pushMsg(),
       ),
     ).toEqual({ status: "skipped", reason: "dispatch-failed" });
+  });
+});
+
+describe("runnerCheckoutFor", () => {
+  const ACC = "a".repeat(32);
+  function tokens(out: { plaintext: string } | string | Error) {
+    const seen: { names: string[]; scopes: string[]; ttls: number[]; disposed: number } = { names: [], scopes: [], ttls: [], disposed: 0 };
+    const ns = {
+      get: async (name: string) => {
+        seen.names.push(name);
+        return {
+          createToken: async (scope: "read" | "write", ttl: number) => {
+            seen.scopes.push(scope);
+            seen.ttls.push(ttl);
+            if (out instanceof Error) throw out;
+            return out;
+          },
+          [Symbol.dispose]: () => {
+            seen.disposed++;
+          },
+        };
+      },
+    };
+    return { ns, seen };
+  }
+
+  it("mints a 10-minute read token for the run's repo and names the remote", async () => {
+    const { ns, seen } = tokens({ plaintext: "tok-1" });
+    const out = await runnerCheckoutFor(ns, { accountId: ACC, namespace: "flare-forge-preview", runRepo: "flare-forge-preview/bookshelf" });
+    expect(out).toEqual({ url: `https://${ACC}.artifacts.cloudflare.net/git/flare-forge-preview/bookshelf.git`, token: "tok-1", username: "x", expiresInSeconds: RUNNER_CHECKOUT_TTL_SECONDS });
+    expect(seen).toEqual({ names: ["bookshelf"], scopes: ["read"], ttls: [600], disposed: 1 });
+  });
+
+  it("refuses repos outside our namespace and degrades mint failures to null", async () => {
+    const { ns, seen } = tokens("tok");
+    expect(await runnerCheckoutFor(ns, { accountId: ACC, namespace: "mine", runRepo: "other/bookshelf" })).toBeNull();
+    expect(await runnerCheckoutFor(ns, { accountId: ACC, namespace: "mine", runRepo: "no-slash" })).toBeNull();
+    expect(await runnerCheckoutFor(ns, { accountId: "bad", namespace: "mine", runRepo: "mine/x" })).toBeNull();
+    expect(seen.names).toEqual([]);
+    const failing = tokens(new Error("down"));
+    expect(await runnerCheckoutFor(failing.ns, { accountId: ACC, namespace: "mine", runRepo: "mine/x" })).toBeNull();
+    expect(failing.seen.disposed).toBe(1);
+    expect(await runnerCheckoutFor(tokens("").ns, { accountId: ACC, namespace: "mine", runRepo: "mine/x" })).toBeNull();
   });
 });

@@ -164,3 +164,59 @@ export async function handleArtifactsPush(deps: ArtifactsPushDeps, msg: unknown)
     return { status: "skipped", reason: "dispatch-failed" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// BYO runner checkout for Artifacts runs (claim-time read token)
+// ---------------------------------------------------------------------------
+
+export interface ArtifactsTokenNamespace {
+  get(name: string): Promise<{
+    createToken(scope: "read" | "write", ttlSeconds: number): Promise<{ plaintext: string } | string>;
+    readonly [Symbol.dispose]?: () => void;
+  }>;
+}
+
+export interface RunnerCheckout {
+  url: string;
+  token: string;
+  // Basic-auth username Artifacts expects alongside the token.
+  username: string;
+  expiresInSeconds: number;
+}
+
+// Short enough to expire soon after the checkout, long enough for a slow clone.
+export const RUNNER_CHECKOUT_TTL_SECONDS = 600;
+
+// Mints a read-only token for the run's repo ("<namespace>/<name>",
+// namespace must be ours) and pairs it with the remote. Null when the
+// repo is outside our namespace or the mint fails; the caller releases
+// the job so a seat (or a later poll) can take it.
+export async function runnerCheckoutFor(
+  artifacts: ArtifactsTokenNamespace,
+  input: { accountId: string; namespace: string; runRepo: string },
+): Promise<RunnerCheckout | null> {
+  const slash = input.runRepo.indexOf("/");
+  if (slash <= 0) return null;
+  const ns = input.runRepo.slice(0, slash);
+  const name = input.runRepo.slice(slash + 1);
+  if (!input.namespace || ns !== input.namespace) return null;
+  // Same shape as promote.ts artifactsRemoteFor (inlined: no import cycle
+  // through tournaments.ts).
+  if (!/^[a-f0-9]{32}$/.test(input.accountId) || !/^[\w.-]{1,100}$/.test(name)) return null;
+  const url = `https://${input.accountId}.artifacts.cloudflare.net/git/${ns}/${name}.git`;
+  let handle: Awaited<ReturnType<ArtifactsTokenNamespace["get"]>> | null = null;
+  try {
+    handle = await artifacts.get(name);
+    const out = await handle.createToken("read", RUNNER_CHECKOUT_TTL_SECONDS);
+    const token = typeof out === "string" ? out : out.plaintext;
+    return token ? { url, token, username: "x", expiresInSeconds: RUNNER_CHECKOUT_TTL_SECONDS } : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      handle?.[Symbol.dispose]?.();
+    } catch {
+      // Disposal never fails a claim.
+    }
+  }
+}

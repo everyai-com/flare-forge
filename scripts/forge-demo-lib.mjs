@@ -357,6 +357,22 @@ export function replayPlanFor(seed, bSeedId, aSeedId) {
   return { intent: bSeedId, on: it.expect.replay.on };
 }
 
+/**
+ * The replay plan for a train conflict. Trains open conflicts with
+ * intentA = the DROPPED intent (it failed to merge) and intentB = the
+ * landed one, or "trunk" when the other side already landed in an
+ * earlier train (then the designed pair names the partner). Either
+ * order works: the dropped intent is re-derived on its partner, if its
+ * solution has that replay variant (agents/solutions/*.mjs replayOn).
+ */
+export function replayPlanForConflict(seed, droppedSeedId, otherSeedId) {
+  if (!droppedSeedId) return null;
+  const it = seed.interactions.find((x) => x.kind === "textual_conflict" && x.intents?.includes(droppedSeedId) && (!otherSeedId || x.intents.includes(otherSeedId)));
+  if (!it) return null;
+  const on = otherSeedId ?? it.intents.find((x) => x !== droppedSeedId);
+  return on ? { intent: droppedSeedId, on } : null;
+}
+
 // ---------------------------------------------------------------------------
 // Real agents (Claude Code headless)
 // ---------------------------------------------------------------------------

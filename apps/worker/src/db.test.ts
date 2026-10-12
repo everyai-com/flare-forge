@@ -73,7 +73,7 @@ class QueueDb implements Db {
     return {
       bind: (...values: unknown[]) => ({
         all: async <T,>(): Promise<{ results: T[] }> => {
-          if (norm.startsWith("SELECT j.*, r.repo, r.sha, r.source, r.branch, r.changed_files, r.agent FROM jobs")) {
+          if (norm.startsWith("SELECT j.*, r.repo, r.sha, r.source, r.branch, r.changed_files, r.agent, r.event FROM jobs")) {
             this.selects += 1;
             return { results: this.select(norm, values) as T[] };
           }
@@ -260,6 +260,18 @@ describe("claimNextJob", () => {
     ]);
     expect((await claimNextJob(db, []))?.id).toBe("job-gh");
     expect(await claimNextJob(db, [])).toBeNull();
+  });
+
+  it("claims artifacts-event jobs only for runners that advertise the capability", async () => {
+    const db = new QueueDb([
+      jobRow({ id: "job-art", event: "artifacts", created_at: "2026-10-02T08:00:00.000Z" }),
+      jobRow({ id: "job-gh", event: "push", created_at: "2026-10-02T09:00:00.000Z" }),
+    ]);
+    // An older runner still never sees the artifacts job.
+    expect((await claimNextJob(db, []))?.id).toBe("job-gh");
+    const art = await claimNextJob(db, [], [], { artifacts: true });
+    expect(art?.id).toBe("job-art");
+    expect(art?.event).toBe("artifacts");
   });
 
   it("claims higher-priority jobs before older batch work", async () => {

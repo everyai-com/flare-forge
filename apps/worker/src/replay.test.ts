@@ -335,4 +335,25 @@ describe("replay end-to-end", { timeout: 60_000 }, () => {
     expect((await getIntent(s.db, y))?.state).toBe("landed");
     expect(fx?.show(REPO, "main", "src/a.ts")).toContain("a3 = both()");
   });
+
+  it("race: trunk moving while the race runs does not void a green winner (seen live)", async () => {
+    const ai = aiFake(() => `${RESOLVED_OPEN}\n${withLine(lines("a"), 3, "a3 = both()")}${RESOLVED_CLOSE}`);
+    const s = await setup(ai, "replay: { max_attempts: 2, race_k: 2 }\n");
+    const { y, conflictId } = await conflictPair(s);
+    await replayTick(s.deps, REPO);
+    const tid = (await listForgeLedger(s.db, "conflict", conflictId)).find((r) => r.kind === "race")?.body ?? "";
+    const attempts = await s.db.prepare("SELECT fork_repo FROM attempts WHERE tournament_id = ? ORDER BY agent").bind(tid).all<{ fork_repo: string }>();
+    const heads = attempts.results.map((a) => fx?.head(a.fork_repo) ?? "");
+    // Other work lands on trunk after the race forks were cut.
+    fx?.commit(REPO, { "docs/readme.md": "landed while the race ran\n" }, "unrelated landing");
+    await s.db.prepare("INSERT INTO runs (id, repo, sha, event, branch, status, created_at, updated_at) VALUES ('race-run', ?, ?, 'artifacts', '', 'success', '', '')").bind(`ns/${attempts.results[0].fork_repo}`, heads[0]).run();
+    await s.db.prepare("UPDATE attempts SET verdict_rank = 1, run_id = 'race-run', last_seen_sha = ? WHERE fork_repo = ?").bind(heads[0], attempts.results[0].fork_repo).run();
+    await s.db.prepare("UPDATE tournaments SET state = 'decided', winner_run_id = 'race-run', resolved_sha = ? WHERE id = ?").bind(heads[0], tid).run();
+    expect(await pollRaces(s.deps, REPO)).toEqual({ resolved: 1, failed: 0 });
+    const resolved = await getIntent(s.db, y);
+    expect(resolved?.actualFootprint?.paths).toEqual(["src/a.ts"]);
+    for (let i = 0; i < 8 && (await getIntent(s.db, y))?.state !== "landed"; i++) await advanceRepo(s.deps, REPO);
+    expect((await getIntent(s.db, y))?.state).toBe("landed");
+    expect(fx?.show(REPO, "main", "docs/readme.md")).toBe("landed while the race ran\n");
+  });
 });

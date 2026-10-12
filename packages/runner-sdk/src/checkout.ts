@@ -7,6 +7,9 @@ export interface CheckoutOptions {
   dir: string;
   token?: string;
   timeoutMs?: number;
+  // Basic-auth username for the token (GitHub: x-access-token,
+  // Artifacts: x). Defaults to GitHub's.
+  username?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 180000;
@@ -16,15 +19,40 @@ const DEFAULT_TIMEOUT_MS = 180000;
 // arguments are world-readable in process listings, process
 // environments are not. The remote URL stays token-free so git errors
 // cannot echo a credential.
-function gitEnv(token?: string): NodeJS.ProcessEnv {
+// Local paths and file:// remotes need no header; scope it to GitHub
+// (harmless) rather than throwing.
+function httpOrigin(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.protocol === "https:" || u.protocol === "http:") return u.origin;
+  } catch {
+    // Not a URL (a local path).
+  }
+  return "https://github.com";
+}
+
+// The header is scoped to the remote's origin, so it never leaks to
+// another host (redirects, submodules).
+export function gitEnv(token?: string, url: string = "https://github.com/", username: string = "x-access-token"): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
   if (token) {
-    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+    const basic = Buffer.from(`${username}:${token}`).toString("base64");
     env["GIT_CONFIG_COUNT"] = "1";
-    env["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraheader";
+    env["GIT_CONFIG_KEY_0"] = `http.${httpOrigin(url)}/.extraheader`;
     env["GIT_CONFIG_VALUE_0"] = `Authorization: Basic ${basic}`;
   }
   return env;
+}
+
+// Artifacts remotes the claim may point a runner at (defense in depth:
+// a checkout URL from the server must be an Artifacts git remote).
+export function isArtifactsRemote(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && /^[a-f0-9]{32}\.artifacts\.cloudflare\.net$/.test(u.hostname) && u.pathname.startsWith("/git/") && !u.username && !u.password;
+  } catch {
+    return false;
+  }
 }
 
 function git(args: string[], cwd: string, timeoutMs: number, env: NodeJS.ProcessEnv): Promise<void> {
@@ -68,7 +96,7 @@ export async function checkoutRepo(opts: CheckoutOptions, urlOverride?: string):
   mkdirSync(opts.dir, { recursive: true });
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const url = urlOverride ?? `https://github.com/${opts.repo}.git`;
-  const env = gitEnv(opts.token);
+  const env = gitEnv(opts.token, url, opts.username);
   try {
     await git(["init", "-q"], opts.dir, timeoutMs, env);
     await git(["remote", "add", "origin", url], opts.dir, timeoutMs, env);

@@ -8,6 +8,7 @@ import {
   cancelSupersededBranchRuns,
   claimAdminMarker,
   claimNextJob,
+  releaseJob,
   cloudRunningCap,
   claimWebhookDelivery,
   createJob,
@@ -226,7 +227,7 @@ import { cloudMetering, creditBalance, grantCredits, hostedMode, parseCloudEntit
 import { runGenerateWithStatus } from "./generate";
 import { getCacheStats, handleCacheGet, handleCachePut, listCacheEntries, parseRestoreKeysParam, pruneCacheStats, purgeCachePrefix, recordCacheOutcome } from "./cache";
 import { deleteJobArtifacts, handleArtifactGet, handleArtifactPut, listRunArtifacts, pruneOldCache } from "./artifacts";
-import { ARTIFACTS_EVENT, handleArtifactsPush } from "./artifacts-push";
+import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerCheckout } from "./artifacts-push";
 import { ensureRepoMirror } from "./artifacts-mirrors";
 import { resolvePairDedupe } from "./event-dedupe";
 import {
@@ -3199,14 +3200,32 @@ export default {
           .filter(Boolean);
         const fairShare = parseFairSharePerRepo(await getSetting(env.DB, SETTING_KEYS.fairSharePerRepo));
         const agentShare = parseFairSharePerAgent(await getSetting(env.DB, SETTING_KEYS.fairSharePerAgent));
+        // Runners that can check out from Artifacts say so (`artifacts=1`):
+        // they may claim Artifacts runs (train lanes, probes, replays) and
+        // get a short-lived read token for that repo with the claim.
+        const artifactsCapable = url.searchParams.get("artifacts") === "1" && !!env.ARTIFACTS;
         const job = await claimNextJob(env.DB, labels, ident.repos, {
           fairSharePerRepo: "cap" in fairShare ? fairShare.cap : 0,
           fairSharePerAgent: "cap" in agentShare ? agentShare.cap : 0,
           // Hosted plans cap concurrently running jobs at claim time too:
           // dispatch-time checks alone let one dispatch overshoot.
           maxRunning: hostedMode(env) ? await cloudRunningCap(env.DB) : null,
+          artifacts: artifactsCapable,
         });
         if (!job) return json({ job: null }, 200);
+        let checkout: RunnerCheckout | null = null;
+        if (job.event === ARTIFACTS_EVENT) {
+          checkout = env.ARTIFACTS
+            ? await runnerCheckoutFor(env.ARTIFACTS, { accountId: env.ARTIFACTS_ACCOUNT_ID ?? "", namespace: env.ARTIFACTS_NAMESPACE ?? "", runRepo: job.repo })
+            : null;
+          if (!checkout) {
+            // No token, no checkout: hand the job back (a seat or a later
+            // poll takes it) instead of failing a run over a mint hiccup.
+            await releaseJob(env.DB, job.id);
+            log("warn", "artifacts checkout token unavailable; job released", { jobId: job.id, repo: job.repo });
+            return json({ job: null }, 200);
+          }
+        }
         await rollupRunStatus(env.DB, job.run_id, env.ANALYTICS, basinSink(env, ctx), cloudMetering(env));
         // Secrets ride the authenticated claim only — never any read API.
         // Undecryptable rows fail open to empty (flagged) rather than
@@ -3250,6 +3269,8 @@ export default {
         const needsCtx = await readNeedsContext(env.DB, job.run_id, needsBases);
         return json({
           job,
+          // Artifacts runs only: remote + read token (10 min) for this job.
+          ...(checkout ? { checkout } : {}),
           secrets,
           secretsError,
           selection,

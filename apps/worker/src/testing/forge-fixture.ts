@@ -222,7 +222,10 @@ export function gitFixture(): GitFixture {
     },
     async readCommit(hash: string) {
       try {
-        return { treeHash: sh(["--git-dir", bare(name), "rev-parse", "--verify", "-q", `${hash}^{tree}`]) };
+        // Like the real binding: tree plus parents.
+        const treeHash = sh(["--git-dir", bare(name), "rev-parse", "--verify", "-q", `${hash}^{tree}`]);
+        const parents = sh(["--git-dir", bare(name), "log", "-1", "--format=%P", hash]).split(" ").filter(Boolean);
+        return { treeHash, parents };
       } catch {
         return null;
       }

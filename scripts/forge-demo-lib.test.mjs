@@ -23,6 +23,7 @@ import {
   redact,
   renderTable,
   replayPlanFor,
+  replayPlanForConflict,
   resolveArtifactsTarget,
   seedIntents,
   stagePath,
@@ -152,6 +153,17 @@ describe("seed and scripted picks", () => {
     expect(replayPlanFor(seed, "g3-log-latency", "g1-request-id")).toEqual({ intent: "g3-log-latency", on: "g1-request-id" });
     expect(replayPlanFor(seed, "g3-log-latency", "g2-fuzzy-search")).toBeNull();
     expect(replayPlanFor(seed, "g1-metrics")).toBeNull();
+  });
+
+  it("plans the replay of the DROPPED intent (intentA), in either landing order", () => {
+    // Designed order: request-id landed, log-latency dropped.
+    expect(replayPlanForConflict(seed, "g3-log-latency", "g1-request-id")).toEqual({ intent: "g3-log-latency", on: "g1-request-id" });
+    // Trains landed log-latency first: request-id is the dropped one.
+    expect(replayPlanForConflict(seed, "g1-request-id", "g3-log-latency")).toEqual({ intent: "g1-request-id", on: "g3-log-latency" });
+    // The other side landed in an earlier train: the conflict says "trunk".
+    expect(replayPlanForConflict(seed, "g1-request-id", undefined)).toEqual({ intent: "g1-request-id", on: "g3-log-latency" });
+    expect(replayPlanForConflict(seed, "g1-metrics", undefined)).toBeNull();
+    expect(replayPlanForConflict(seed, undefined, "g1-request-id")).toBeNull();
   });
   it("validates --until", () => {
     expect(untilIndex("pushed")).toBe(2);

@@ -73,6 +73,12 @@ function sqliteDb(): { db: Db; raw: InstanceType<typeof DatabaseSync> } {
 
 interface FakeOpts {
   forkThrows?: boolean;
+  // What the fork's main log returns (its head = the claim-time base).
+  forkHead?: string;
+  // Fail the first N fork calls (a transient Artifacts error).
+  forkFailures?: number;
+  // The first fork call lands but its response is lost.
+  forkLostResponse?: boolean;
   tokenThrows?: boolean;
   // Omit the handle's listTokens/revokeToken (an older binding).
   noTokenApi?: boolean;
@@ -116,6 +122,15 @@ function fakeArtifacts(opts: FakeOpts = {}): {
     readFile: async () => null,
     fork: async (forkName: string) => {
       if (opts.forkThrows) throw new Error("fork exploded");
+      if ((opts.forkFailures ?? 0) > 0) {
+        opts.forkFailures = (opts.forkFailures ?? 0) - 1;
+        throw new Error("Network connection lost.");
+      }
+      if (opts.forkLostResponse) {
+        opts.forkLostResponse = false;
+        forks.push(forkName);
+        throw new Error("Network connection lost.");
+      }
       if (forks.includes(forkName)) {
         const err = new Error("exists") as Error & { code: string };
         err.code = "ALREADY_EXISTS";
@@ -124,7 +139,7 @@ function fakeArtifacts(opts: FakeOpts = {}): {
       forks.push(forkName);
       return { name: forkName, remote: `https://acct.git/${forkName}.git`, defaultBranch: "main" };
     },
-    log: async () => [],
+    log: async () => (opts.forkHead && forks.includes(name) ? [{ hash: opts.forkHead, message: "trunk tip", author: { name: "t", email: "t@x" }, timestamp: 0 }] : []),
     readTree: async () => null,
     readCommit: async () => null,
     createToken: async (scope, ttl) => {
@@ -252,6 +267,33 @@ describe("claimIntent", () => {
     const r2 = await claimIntent(db, fakeArtifacts({ tokenThrows: true }).artifacts, { id: intent.id, agent: "a1" });
     expect("error" in r2 && r2.error).toBe("token-failed");
     expect((await getIntent(db, intent.id))?.state).toBe("draft");
+  });
+  it("retries one transient fork failure, and reuses a fork whose response was lost", async () => {
+    const { db } = sqliteDb();
+    const a = await declared(db);
+    const flaky = fakeArtifacts({ forkFailures: 1 });
+    const r1 = await claimIntent(db, flaky.artifacts, { id: a.intent.id, agent: "a1" });
+    expect("error" in r1).toBe(false);
+    expect(flaky.forks).toHaveLength(1);
+    const b = await declared(db, ["src/other.ts"]);
+    const lost = fakeArtifacts({ forkLostResponse: true });
+    const r2 = await claimIntent(db, lost.artifacts, { id: b.intent.id, agent: "a2" });
+    expect("error" in r2).toBe(false);
+    expect(lost.forks).toHaveLength(1);
+    const c = await declared(db, ["src/third.ts"]);
+    const down = await claimIntent(db, fakeArtifacts({ forkFailures: 5 }).artifacts, { id: c.intent.id, agent: "a3" });
+    expect("error" in down && down.error).toBe("fork-failed");
+    expect("error" in down && down.message).toMatch(/Network connection lost/);
+    expect((await getIntent(db, c.intent.id))?.state).toBe("draft");
+  });
+  it("records the fresh fork's head as the base (trunk moved since declare)", async () => {
+    const { db } = sqliteDb();
+    const r = await declareIntent(db, { repo: "demo", title: "Add x", reasoning: "because", accept: "npm test", footprint: { paths: ["src/a.ts"] }, baseSha: "a".repeat(40) });
+    if (isForgeError(r)) throw new Error(r.message);
+    const moved = "b".repeat(40);
+    const claimed = await claimIntent(db, fakeArtifacts({ forkHead: moved }).artifacts, { id: r.intent.id, agent: "a1" });
+    expect("error" in claimed).toBe(false);
+    expect((await getIntent(db, r.intent.id))?.baseSha).toBe(moved);
   });
   it("re-claims an expired intent reusing its fork", async () => {
     const { db } = sqliteDb();

@@ -406,7 +406,10 @@ runs from source. After editing `skills/flare-forge/SKILL.md`, run
 `npx flare-forge ...`, never `npx flare` (that npm name is an
 unrelated package).
 
-**Dogfooding: coordination mode (live since 2026-10-10).** The repo's
+**Dogfooding: coordination mode (set up 2026-10-10; not yet in use:
+prod D1 had 0 intents and 0 goals on 2026-10-12, because the per-user
+`flare-forge` MCP still needs its OAuth sign-in and the local runner
+token was revoked. Pair a token or run `/mcp` to start).** The repo's
 Artifacts mirror is `everyai-com-flare-actions`; its trunk follows
 GitHub `main` on every push. Agents changing this repo coordinate
 through Forge and still land through GitHub PRs + CI (GitHub stays the
