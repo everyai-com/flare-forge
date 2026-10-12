@@ -100,14 +100,20 @@ CI-verified **trains**, so `main` is never red. Humans spend their time
 on about 2% of changes, chosen by risk, and every line can answer
 `flare why`.
 
-**Why we win:**
-1. **We're the only entry with a real CI and execution engine.** Others
-   "verify" with a model.
-2. **We already have** fork-per-agent tournaments, a merge queue, an MCP
-   server, a dashboard and container seats.
-3. **One unifying primitive** instead of a feature list.
-4. **A measured scale demo with a baseline comparison.** Nobody else
-   shows numbers against a baseline.
+**Why we can win** (corrected 2026-10-12 after a survey of 25+ public
+entries: several run real CI in sandboxes and some publish baselines,
+e.g. Tartan, Gitstalk, Spore, so neither is unique):
+1. **The whole loop, not one idea:** declare-time overlaps, a fork per
+   agent, trains that CI-verify the exact merged SHA and bisect, conflict
+   replay and resolution races, a risk-routed inbox, per-line `why`, and
+   MCP. Close rivals each ship a subset.
+2. **The Artifacts bill, measured:** the ops ledger counts Cloudflare's
+   own Artifacts events per landed change, in dollars; no surveyed entry
+   reports cost per change.
+3. **One unifying primitive** (the intent) instead of a feature list.
+4. **Honest numbers:** every figure is labelled measured, simulated or
+   projected, including the one that goes against us (without polling,
+   Forge spends more git ops per landed change than a PR flow).
 
 **How we execute:**
 - A **walking skeleton** (thin end to end) by Saturday noon, then deepen.

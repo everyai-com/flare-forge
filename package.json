@@ -1,8 +1,8 @@
 {
-  "name": "flare-actions",
+  "name": "flare-forge-monorepo",
   "version": "0.1.0",
   "private": true,
-  "description": "Open-source GitHub Actions alternative you host on your Cloudflare",
+  "description": "Flare Forge: many AI agents on one repo. Agents declare intent before they edit, overlaps come back before code exists, only CI-verified trains move main, every line answers why. Cloudflare Workers + Artifacts, with the Flare Actions CI engine underneath.",
   "license": "MIT",
   "repository": {
     "type": "git",

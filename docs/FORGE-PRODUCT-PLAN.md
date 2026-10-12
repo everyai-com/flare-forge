@@ -96,10 +96,10 @@ Actions. The judges get one link. It should be the product.
 
 ### Why keep Flare Actions inside the Forge repo
 
-Because it is the moat. COMPETITION-PLAN §0: "We're the only entry
-with a real CI and execution engine. Others 'verify' with a model."
-Every train, replay and race lands only on a SHA that Flare Actions ran
-green. The engine is part of the product, not a dependency to hide. The
+Because every train, replay and race lands only on a SHA that Flare
+Actions ran green, as that exact SHA. (Real CI is not unique among
+entries: several run tests in sandboxes. The integration is the point:
+the verification engine, the trains and the ops ledger are one system.) The engine is part of the product, not a dependency to hide. The
 README keeps the "verification engine underneath" section and the
 Deploy button.
 
@@ -141,7 +141,7 @@ The four questions and the one primitive stay (README, COMPETITION-PLAN
 Scoring reminder (terms PDF, COMPETITION-PLAN §1): 50% originality and
 quality of the prototype (tie-breaker), 25% concurrency, coordination,
 context, review and conflicts, 25% ease of use. The fifth row moves the
-50% (nobody else will show a bill) and the 25% UX (a judge sees a
+50% (no surveyed entry reports a bill per change) and the 25% UX (a judge sees a
 number they can check against Cloudflare's own metrics).
 
 ---

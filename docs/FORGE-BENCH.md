@@ -353,8 +353,14 @@ What this says, and what it doesn't:
   replay fetches trunk once. Forge's no-poll figure drops to 9.4 ops per
   landed change at 10k (from 13.3; baseline 9.9) and 7.6 at 1k (from
   11.6; baseline 7.1). Landings are unchanged (same seed, same
-  decisions); only fetches move. Not shipped: `train.ts` builds each
-  group in a fresh MemoryFS today.
+  decisions); only fetches move. **Status (2026-10-12):** the
+  lane-rebuild half shipped: `train.ts` restores the previous build's
+  objects from an R2-backed `objectCache` and skips a fork fetch when
+  the intent's head and base are present (`train.test.ts` "object
+  cache" tests: a rebuild after main moves does one fork fetch instead
+  of two). Replays still fetch trunk and fork (their merge calls the AI
+  resolver, so a cache-miss retry would re-run it). The rows above stay
+  labelled as the model they are; the live ledger is the measurement.
 
 ### What the simulated numbers say, and what they don't
 
