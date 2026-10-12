@@ -90,7 +90,7 @@ token: Access tab → Revoke.
 ## Minimal setup (any OS)
 
 ```bash
-git clone https://github.com/everyai-com/flare-actions && cd flare-actions
+git clone https://github.com/everyai-com/flare-forge && cd flare-forge
 npm install
 export FLARE_ACTIONS_URL=https://<your-worker>.workers.dev
 export RUNNER_TOKEN=<runner token from the dashboard Access tab>

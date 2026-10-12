@@ -97,7 +97,7 @@ provision managed seats so train CI runs without your laptop.
 1. **Deploy and configure.**
 
    ```sh
-   git clone https://github.com/everyai-com/flare-actions && cd flare-actions
+   git clone https://github.com/everyai-com/flare-forge && cd flare-forge
    npm install
    npm run setup        # D1, queues, R2, Artifacts namespace, deploy, writes .env
    ```

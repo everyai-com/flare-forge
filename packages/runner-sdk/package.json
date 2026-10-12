@@ -14,8 +14,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/everyai-com/flare-actions.git",
+    "url": "git+https://github.com/everyai-com/flare-forge.git",
     "directory": "packages/runner-sdk"
   },
-  "homepage": "https://github.com/everyai-com/flare-actions#readme"
+  "homepage": "https://github.com/everyai-com/flare-forge#readme"
 }

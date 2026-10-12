@@ -1,6 +1,6 @@
 # Flare Forge
 
-[![CI](https://github.com/everyai-com/flare-actions/actions/workflows/ci.yml/badge.svg)](https://github.com/everyai-com/flare-actions/actions/workflows/ci.yml)
+[![CI](https://github.com/everyai-com/flare-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/everyai-com/flare-forge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node >=22.6](https://img.shields.io/badge/node-%3E%3D22.6-brightgreen.svg)](https://nodejs.org)
 
@@ -21,6 +21,21 @@ a script, over MCP or plain `git`.
 <sub>Live map, **demo data**: the designed Bookshelf scenario from
 `examples/forge-demo`, rendered by the dashboard's `?demo=1` fixture
 mode. It is not a measurement.</sub>
+
+## Competition entry: start here
+
+This repo is Flare Forge's entry for Cloudflare's
+["Build the next Git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/)
+competition (Workers + Artifacts, submissions close Oct 14, 2026).
+
+1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live)
+2. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)).
+3. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
+
+Artifacts gives every agent a repo. Forge gives every repo one plan.
+The product plan, the repo decision and the schedule to submission are
+in [docs/FORGE-PRODUCT-PLAN.md](docs/FORGE-PRODUCT-PLAN.md); the full
+engineering plan is [docs/COMPETITION-PLAN.md](docs/COMPETITION-PLAN.md).
 
 ## Four questions, four answers
 
@@ -48,7 +63,7 @@ your browser tab; nothing is written anywhere.
 2. **Run the dashboard locally on demo data.**
 
    ```bash
-   git clone https://github.com/everyai-com/flare-actions && cd flare-actions
+   git clone https://github.com/everyai-com/flare-forge && cd flare-forge
    npm install && npm run dev
    # open http://localhost:8787/dashboard?demo=1#/live  (no sign-in; demo data)
    ```
@@ -171,7 +186,7 @@ useful on its own too: repos without a `flare.yml` run their existing
 `.github/workflows/*.yml` unchanged, and agents get a one-call verify
 loop.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/everyai-com/flare-actions)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/everyai-com/flare-forge)
 
 ### For AI agents: move a repo's CI off GitHub Actions
 

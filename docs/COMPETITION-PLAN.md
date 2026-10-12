@@ -16,6 +16,14 @@
 
 ---
 
+> **2026-10-12 update.** The entry now lives in its own repo,
+> `everyai-com/flare-forge` (seeded from `flare-actions` at `56a3c84`,
+> the commit production runs). The product decision, the repo
+> governance, the ops-ledger item from the Artifacts billing news, and
+> the hour-by-hour schedule to submission are in
+> [FORGE-PRODUCT-PLAN.md](FORGE-PRODUCT-PLAN.md). This document stays
+> the engineering plan: rules, scoring, architecture, video beats, Q&A.
+
 ## Status board (integration branch `feat/forge-intents`)
 
 | Area | State | Notes |

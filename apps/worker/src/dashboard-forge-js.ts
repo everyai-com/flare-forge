@@ -751,7 +751,7 @@ export const FORGE_JS = String.raw`
       n.appendChild(h("strong", { text: fxS("notice_demo_h") }));
       if (FX.demo) {
         n.setAttribute("data-fixture", FX.demoScale ? "scale" : "1");
-        n.appendChild(h("span", {}, [" " + fxS("notice_demo") + " ", h("a", { href: "https://github.com/everyai-com/flare-actions", target: "_blank", rel: "noopener", "data-action": "open_repo", style: "white-space:nowrap", text: fxS("notice_repo_link") })]));
+        n.appendChild(h("span", {}, [" " + fxS("notice_demo") + " ", h("a", { href: "https://github.com/everyai-com/flare-forge", target: "_blank", rel: "noopener", "data-action": "open_repo", style: "white-space:nowrap", text: fxS("notice_repo_link") })]));
       } else n.appendChild(h("span", { "data-reason": FX.fallback[key], text: " " + fxS("notice_fallback") }));
       return;
     }
@@ -763,7 +763,7 @@ export const FORGE_JS = String.raw`
       n.setAttribute("data-fixture", FX.demoScale ? "scale" : "1");
       n.appendChild(h("span", {}, [
         " AI coding agents changing one repo at once, on sample data" + (FX.demoScale ? " plus a 10,000-agent simulated monorepo" : "") + ". Each dot is an agent on the files it declared; overlaps show up before anyone writes code. Nothing here is measured, and clicks stay in this tab. ",
-        h("a", { href: "https://github.com/everyai-com/flare-actions", target: "_blank", rel: "noopener", "data-action": "open_repo", style: "white-space:nowrap", text: "Get Flare on GitHub \u2192" })
+        h("a", { href: "https://github.com/everyai-com/flare-forge", target: "_blank", rel: "noopener", "data-action": "open_repo", style: "white-space:nowrap", text: "Get Flare on GitHub \u2192" })
       ]));
     }
     else n.appendChild(h("span", { text: " " + FX.fallback[key] + ", so this screen shows fixtures until the Forge API is deployed. Nothing here is a measurement." }));

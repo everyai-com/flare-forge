@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/everyai-com/flare-actions.git"
+    "url": "git+https://github.com/everyai-com/flare-forge.git"
   },
   "bugs": {
-    "url": "https://github.com/everyai-com/flare-actions/issues"
+    "url": "https://github.com/everyai-com/flare-forge/issues"
   },
-  "homepage": "https://github.com/everyai-com/flare-actions#readme",
+  "homepage": "https://github.com/everyai-com/flare-forge#readme",
   "type": "module",
   "engines": {
     "node": ">=22.6"

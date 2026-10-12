@@ -32,13 +32,13 @@ Facts agents get wrong: there is no public hosted Flare yet (Flare Cloud is plan
 
 ## Forge docs
 
-- [README](https://github.com/everyai-com/flare-actions/blob/main/README.md): the four questions and answers, live demo, try it, connect your agent, architecture, simulated benchmark.
-- [Forge agent protocol](https://github.com/everyai-com/flare-actions/blob/main/docs/FORGE-AGENTS.md): every verb over MCP, REST `/v1/forge/*`, CLI and SDK; payloads; safety invariants.
-- [Forge contracts](https://github.com/everyai-com/flare-actions/blob/main/docs/FORGE.md): tables, lifecycle, pure core (`intents-core.ts`), policy (`.flare/policy.yml`), risk.
-- [skills/flare-forge](https://github.com/everyai-com/flare-actions/blob/main/skills/flare-forge/SKILL.md): agent skill for the loop, conflicts and etiquette.
-- [Resolution races](https://github.com/everyai-com/flare-actions/blob/main/docs/TOURNAMENTS.md): N CI-verified attempts at a conflict (`replay.race_k`) or a task, deterministic verdict + AI rationale, ledger.
-- [Demo runbook](https://github.com/everyai-com/flare-actions/blob/main/docs/DEMO.md): `npm run forge:demo`, `forge:agents`, `forge:director`.
-- [Bench](https://github.com/everyai-com/flare-actions/blob/main/docs/FORGE-BENCH.md): simulator methodology and SIMULATED results; the live harness.
+- [README](https://github.com/everyai-com/flare-forge/blob/main/README.md): the four questions and answers, live demo, try it, connect your agent, architecture, simulated benchmark.
+- [Forge agent protocol](https://github.com/everyai-com/flare-forge/blob/main/docs/FORGE-AGENTS.md): every verb over MCP, REST `/v1/forge/*`, CLI and SDK; payloads; safety invariants.
+- [Forge contracts](https://github.com/everyai-com/flare-forge/blob/main/docs/FORGE.md): tables, lifecycle, pure core (`intents-core.ts`), policy (`.flare/policy.yml`), risk.
+- [skills/flare-forge](https://github.com/everyai-com/flare-forge/blob/main/skills/flare-forge/SKILL.md): agent skill for the loop, conflicts and etiquette.
+- [Resolution races](https://github.com/everyai-com/flare-forge/blob/main/docs/TOURNAMENTS.md): N CI-verified attempts at a conflict (`replay.race_k`) or a task, deterministic verdict + AI rationale, ledger.
+- [Demo runbook](https://github.com/everyai-com/flare-forge/blob/main/docs/DEMO.md): `npm run forge:demo`, `forge:agents`, `forge:director`.
+- [Bench](https://github.com/everyai-com/flare-forge/blob/main/docs/FORGE-BENCH.md): simulator methodology and SIMULATED results; the live harness.
 
 ## Forge MCP tools
 
@@ -46,19 +46,19 @@ Facts agents get wrong: there is no public hosted Flare yet (Flare Cloud is plan
 
 ## Flare Actions (the CI engine)
 
-- [GitHub Actions compatibility](https://github.com/everyai-com/flare-actions/blob/main/docs/GITHUB-ACTIONS-COMPAT.md): repos without `flare.yml` run `.github/workflows` unchanged; trigger mapping, supported subset, App vs no-App.
-- [Pipelines](https://github.com/everyai-com/flare-actions/blob/main/docs/PIPELINES.md): `flare.yml` reference: jobs, matrices, shards, cache, artifacts, conditions.
-- [MCP](https://github.com/everyai-com/flare-actions/blob/main/docs/MCP.md): CI tools (`run_and_wait`, `get_run_digest`, dispatch, rerun) and client config.
-- [Runners](https://github.com/everyai-com/flare-actions/blob/main/docs/RUNNERS.md): BYO runners (Linux/macOS/Windows/GPU) and managed seats.
-- [GitHub runners](https://github.com/everyai-com/flare-actions/blob/main/docs/GITHUB-RUNNERS.md): `runs-on: flare`: GitHub keeps orchestrating, Flare supplies ephemeral JIT runners.
-- [Error codes](https://github.com/everyai-com/flare-actions/blob/main/docs/ERRORS.md): stable `code` + `hint` on failures, Forge codes included.
-- [Operations](https://github.com/everyai-com/flare-actions/blob/main/docs/OPERATIONS.md), [Roadmap](https://github.com/everyai-com/flare-actions/blob/main/docs/ROADMAP.md), [Dev speed](https://github.com/everyai-com/flare-actions/blob/main/docs/DEV-SPEED.md).
-- [API](https://github.com/everyai-com/flare-actions/blob/main/openapi.yaml): OpenAPI spec (served live at `GET /openapi.yaml`). [pricing.json](https://github.com/everyai-com/flare-actions/blob/main/pricing.json): machine-readable plans and limits.
-- [skills/flare-verify](https://github.com/everyai-com/flare-actions/blob/main/skills/flare-verify/SKILL.md) (the verify loop), [skills/flare-migrate](https://github.com/everyai-com/flare-actions/blob/main/skills/flare-migrate/SKILL.md) (move a repo off GitHub Actions) and [skills/flare-setup](https://github.com/everyai-com/flare-actions/blob/main/skills/flare-setup/SKILL.md) (one-command onboarding).
+- [GitHub Actions compatibility](https://github.com/everyai-com/flare-forge/blob/main/docs/GITHUB-ACTIONS-COMPAT.md): repos without `flare.yml` run `.github/workflows` unchanged; trigger mapping, supported subset, App vs no-App.
+- [Pipelines](https://github.com/everyai-com/flare-forge/blob/main/docs/PIPELINES.md): `flare.yml` reference: jobs, matrices, shards, cache, artifacts, conditions.
+- [MCP](https://github.com/everyai-com/flare-forge/blob/main/docs/MCP.md): CI tools (`run_and_wait`, `get_run_digest`, dispatch, rerun) and client config.
+- [Runners](https://github.com/everyai-com/flare-forge/blob/main/docs/RUNNERS.md): BYO runners (Linux/macOS/Windows/GPU) and managed seats.
+- [GitHub runners](https://github.com/everyai-com/flare-forge/blob/main/docs/GITHUB-RUNNERS.md): `runs-on: flare`: GitHub keeps orchestrating, Flare supplies ephemeral JIT runners.
+- [Error codes](https://github.com/everyai-com/flare-forge/blob/main/docs/ERRORS.md): stable `code` + `hint` on failures, Forge codes included.
+- [Operations](https://github.com/everyai-com/flare-forge/blob/main/docs/OPERATIONS.md), [Roadmap](https://github.com/everyai-com/flare-forge/blob/main/docs/ROADMAP.md), [Dev speed](https://github.com/everyai-com/flare-forge/blob/main/docs/DEV-SPEED.md).
+- [API](https://github.com/everyai-com/flare-forge/blob/main/openapi.yaml): OpenAPI spec (served live at `GET /openapi.yaml`). [pricing.json](https://github.com/everyai-com/flare-forge/blob/main/pricing.json): machine-readable plans and limits.
+- [skills/flare-verify](https://github.com/everyai-com/flare-forge/blob/main/skills/flare-verify/SKILL.md) (the verify loop), [skills/flare-migrate](https://github.com/everyai-com/flare-forge/blob/main/skills/flare-migrate/SKILL.md) (move a repo off GitHub Actions) and [skills/flare-setup](https://github.com/everyai-com/flare-forge/blob/main/skills/flare-setup/SKILL.md) (one-command onboarding).
 
 ## CI quickstart
 
-- One-click deploy: `https://deploy.workers.cloudflare.com/?url=https://github.com/everyai-com/flare-actions`
+- One-click deploy: `https://deploy.workers.cloudflare.com/?url=https://github.com/everyai-com/flare-forge`
 - Verify loop over MCP: `run_and_wait` → `get_run_digest`. CLI: `npx flare-forge run owner/repo HEAD` dispatches, waits and prints the digest; `npx flare-forge local` runs the working tree with no commit; `npx flare-forge connect [--wire] [--dry-run]` probes, wires and verifies a repo in one command; `npx flare-forge init` scaffolds `flare.yml` + an AGENTS.md snippet. Append `--dry-run` to `run` / `dispatch` to plan with zero writes. Every command accepts `--json` (one `{ version: 1, command, data }` envelope).
 - Runner mode: change one `runs-on:` line to `flare` (opt-in in dashboard Settings); `npx flare-forge github-jobs` lists those jobs.
 - Flaky tests don't block: `npx flare-forge quarantine list|add|remove <repo> ...`. `npx flare-forge explain <run-id>` narrates a run.

@@ -3,7 +3,7 @@
 The command line for **Flare Forge**, intent-native git for many agents
 on one repo, and for **Flare Actions**, the CI engine underneath it.
 Both run on your own Cloudflare account:
-[github.com/everyai-com/flare-actions](https://github.com/everyai-com/flare-actions).
+[github.com/everyai-com/flare-forge](https://github.com/everyai-com/flare-forge).
 
 Needs Node 22.6 or newer. Point it at your deployment with
 `FLARE_ACTIONS_URL` and a token in `RUNNER_TOKEN` (or run

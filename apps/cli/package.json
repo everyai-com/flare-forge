@@ -31,12 +31,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/everyai-com/flare-actions.git",
+    "url": "git+https://github.com/everyai-com/flare-forge.git",
     "directory": "apps/cli"
   },
-  "homepage": "https://github.com/everyai-com/flare-actions#readme",
+  "homepage": "https://github.com/everyai-com/flare-forge#readme",
   "bugs": {
-    "url": "https://github.com/everyai-com/flare-actions/issues"
+    "url": "https://github.com/everyai-com/flare-forge/issues"
   },
   "publishConfig": {
     "access": "public"

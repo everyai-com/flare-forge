@@ -14,7 +14,7 @@ paragraph.
 
 - **Name:** Flare Forge (MCP server id `flare-actions`; client configs
   name the entry `flare-forge`)
-- **Repo:** https://github.com/everyai-com/flare-actions
+- **Repo:** https://github.com/everyai-com/flare-forge
 - **License:** MIT
 - **Transport:** Streamable HTTP, `POST https://<your-worker>/mcp`
   (stateless JSON-RPC, no sessions; every deployment is a server)
@@ -44,7 +44,7 @@ paragraph.
     attributed audit rows for write-tier calls, token repo-scoping, and
     OAuth scopes (`flare:read` / `flare:run`; OAuth never carries admin).
 - **Docs:** `docs/FORGE-AGENTS.md` (protocol), `docs/MCP.md` (CI tools),
-  machine-readable [llms.txt](https://github.com/everyai-com/flare-actions/blob/main/llms.txt)
+  machine-readable [llms.txt](https://github.com/everyai-com/flare-forge/blob/main/llms.txt)
 
 ## One-line description (all directories)
 

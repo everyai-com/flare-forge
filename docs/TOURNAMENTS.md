@@ -78,7 +78,7 @@ needs it), and `npx wrangler login`. Managed seats must exist once per
 account; `npm run setup` provisions them when Docker is available.
 
 ```bash
-git clone https://github.com/everyai-com/flare-actions.git
+git clone https://github.com/everyai-com/flare-forge.git
 cd flare-actions
 npm install
 git checkout -b try-tournaments
