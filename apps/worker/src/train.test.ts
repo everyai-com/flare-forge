@@ -28,6 +28,9 @@ import {
   type TrainDeps,
   type TrainDispatchInput,
   type TrainGit,
+  decodeObjectCache,
+  encodeObjectCache,
+  type CachedGitFile,
 } from "./train";
 import { DEFAULT_POLICY } from "./intents-core";
 import { laneRefPool } from "./train-core";
@@ -353,6 +356,70 @@ describe("trains: merger end-to-end (isomorphic-git + MemoryFS + git http-backen
     expect(h.fx.log(REPO)).toContain(moved);
     expect(h.fx.show(REPO, "main", "docs/readme.md")).toBe("moved by someone else\n");
     expect(h.fx.show(REPO, "main", "src/a.ts")).toContain("a6");
+  });
+
+  it("object cache: a rebuilt lane reuses the fork objects instead of refetching the fork", async () => {
+    const store = new Map<string, CachedGitFile[]>();
+    h.deps.objectCache = {
+      load: async (repo) => store.get(repo) ?? null,
+      save: async (repo, files) => {
+        store.set(repo, files);
+      },
+    };
+    const forkFetches: string[] = [];
+    const inner = h.deps.git;
+    h.deps.git = {
+      ...inner,
+      fetch: async (args) => {
+        const url = args.remote ? await git.getConfig({ fs: args.fs, gitdir: args.gitdir ?? "", path: `remote.${args.remote}.url` }) : args.url;
+        if (typeof url === "string" && /\/i-[a-z0-9]+\.git$/.test(url)) forkFetches.push(url);
+        return inner.fetch(args);
+      },
+    };
+    const a = await h.ready({ title: "a", paths: ["src/a.ts"], files: { "src/a.ts": withLine(lines("a"), 6, "a6") } });
+    await cutTrain(h.deps, REPO);
+    const first = await buildTrains(h.deps, REPO);
+    expect(first).toMatchObject({ status: "built", fetchesSaved: 0 });
+    expect(forkFetches).toHaveLength(1);
+    expect((store.get(REPO) ?? []).some((f) => f.path.startsWith("/train/objects/"))).toBe(true);
+    // main moves under the green train: the lane is rebuilt on the new main
+    const moved = h.fx.commit(REPO, { "docs/readme.md": "moved by someone else\n" }, "external");
+    h.completeCi();
+    expect(await checkTrains(h.deps, REPO)).toMatchObject({ status: "rebuild", requeued: [a] });
+    await cutTrain(h.deps, REPO);
+    const rebuilt = await buildTrains(h.deps, REPO);
+    expect(rebuilt).toMatchObject({ status: "built", fetchesSaved: 1 });
+    expect(forkFetches).toHaveLength(1); // no second fork fetch
+    await settle();
+    expect((await getIntent(h.db, a))?.state).toBe("landed");
+    expect(h.fx.log(REPO)).toContain(moved);
+    expect(h.fx.show(REPO, "main", "src/a.ts")).toContain("a6");
+  });
+
+  it("object cache: a poisoned shallow list never invents a conflict", async () => {
+    // A cache whose shallow list was lost must still land cleanly.
+    const store = new Map<string, CachedGitFile[]>();
+    h.deps.objectCache = { load: async (repo) => store.get(repo) ?? null, save: async (repo, files) => void store.set(repo, files) };
+    const a = await h.ready({ title: "a", paths: ["src/a.ts"], files: { "src/a.ts": withLine(lines("a"), 2, "a2") } });
+    await cutTrain(h.deps, REPO);
+    await buildTrains(h.deps, REPO);
+    store.set(REPO, (store.get(REPO) ?? []).map((f) => (f.path === "/train/shallow" ? { path: f.path, data: new TextEncoder().encode("") } : f)));
+    h.fx.commit(REPO, { "docs/readme.md": "moved\n" }, "external");
+    h.completeCi();
+    await checkTrains(h.deps, REPO);
+    await settle();
+    expect((await getIntent(h.db, a))?.state).toBe("landed");
+    expect(h.conflictsSeen).toEqual([]);
+  });
+
+  it("object cache codec round-trips and rejects garbage", () => {
+    const files: CachedGitFile[] = [
+      { path: "/train/objects/pack/p.pack", data: new Uint8Array([1, 2, 3]) },
+      { path: "/train/shallow", data: new TextEncoder().encode("abc\n") },
+    ];
+    expect(decodeObjectCache(encodeObjectCache(files))).toEqual(files);
+    expect(decodeObjectCache(new Uint8Array([0, 0, 0, 99, 1]))).toBeNull();
+    expect(decodeObjectCache(new Uint8Array([1]))).toBeNull();
   });
 
   it("human-routed intents are held out of trains until a landing approval", async () => {
