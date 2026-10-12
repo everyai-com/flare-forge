@@ -64,6 +64,12 @@ public MCP.
 | PR flow + serial queue on the same repo, simulator, 10k agents | 9.9 | $14.78 | **SIMULATED** |
 | The same PR flow, agents fetching every 30 s (while working .. until landed) | 39.7 .. 133,322 | $60 .. $199,982 | **Projected**, not measured |
 
+The live counter on `/watch` and in `forge_snapshot` reads higher (14.4
+per landed change) because it also counts the first, failed attempt of
+that day and predates two ledger fixes (forks were missed, pushes were
+counted per ref); the row above is Cloudflare's own count of the clean
+run, and `npm run forge:ops-reconcile` prints both.
+
 Cloudflare also logged 668 reads and 132 token create/revoke calls in
 that run (61 and 12 per landed change). The pricing page names create,
 push, pull and clone; it does not say whether reads or tokens bill. If
