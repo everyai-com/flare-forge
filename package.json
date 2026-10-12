@@ -28,6 +28,7 @@
     "cli": "node --experimental-strip-types apps/cli/src/index.ts",
     "build:cli": "npm --workspace apps/cli run build",
     "pack:cli": "npm --workspace apps/cli run build && npm pack --workspace apps/cli",
+    "publish:cli": "node scripts/publish-cli.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run",

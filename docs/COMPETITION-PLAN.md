@@ -49,7 +49,7 @@
 | Review fixes: 2 critical, 6 high, 8 medium, 4 low | 🔄 partly merged | Hardening set (#3, #4, #5, #10, #14, #15, #17, #19, #20) merged. Service (#1, #2, #7, #8, #9, #16) and train (#6, #11–#13) fixes in flight |
 | **Judge instance**: public read-only spectator view, swarm loop, read-only public MCP | 🔄 in progress | From the strategic review: the single URL that serves all three criteria |
 | **Forge-first identity**: README, fold Tournaments into "resolution races", retire old video scripts | ✅ merged | |
-| Publishable CLI (`npx flare-forge`), `cli forge init` scaffolding (AGENTS.md + `.mcp.json`) | ✅ merged | **User** runs `npm login && npm publish --workspace apps/cli`. Note: npm `flare` is an unrelated package, so docs now say `npx flare-forge` |
+| Publishable CLI (`npx flare-forge`), `cli forge init` scaffolding (AGENTS.md + `.mcp.json`) | ✅ merged | **User** runs `npm login && npm run publish:cli` (never `npm publish --workspace apps/cli`: inside the monorepo npm strips both bins; the script publishes the packed tarball and checks them). Note: npm `flare` is an unrelated package, so docs now say `npx flare-forge` |
 | Staging deploy and live run with real Claude Code agents | ⏳ next | First measured number: the baseline-vs-Forge table at 1k |
 | Cold-start check (8.6 s first hit observed on staging) | ⏳ | Measure after staging deploy |
 | Dogfooding: mirror this repo into Artifacts and run `flare why` on a line of Forge itself | ⏳ after staging | |
