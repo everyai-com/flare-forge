@@ -31,6 +31,7 @@ import {
   pumpRepo,
   type CheckResult,
   type TrainDispatchInput,
+  bucketObjectCache,
 } from "./train";
 import { ABANDONED_TRAIN_MS, auditRoll, MAX_CI_POLLS, maxTrainRounds, pollBackoffSeconds } from "./train-core";
 
@@ -79,6 +80,8 @@ export function trainDepsFromEnv(env: WorkerEnv, opts: { launch?: boolean } = {}
       : null,
     ai: env.AI ?? null,
     gatewayId: env.AI_GATEWAY_ID,
+    // Rebuilt lanes reuse fork objects from the last build (R2).
+    objectCache: env.CACHE ? bucketObjectCache(env.CACHE) : null,
   };
   deps.notes = createWhyNotesWriter({ git, http, fs: deps.fs, remoteFor: deps.remoteFor, artifacts: deps.artifacts });
   deps.onConflict = async (conflict) => {

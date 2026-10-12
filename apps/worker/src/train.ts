@@ -20,7 +20,7 @@
 //      exact SHA* (checked against runs.sha), via a non-force push.
 //   4. Conflict resolutions re-enter as ready intents and land only
 //      through this same train path.
-import type { FsClient, HttpClient } from "isomorphic-git";
+import type { FsClient, HttpClient, PromiseFsClient } from "isomorphic-git";
 import type git from "isomorphic-git";
 import { type Db, claimWebhookDelivery, getRun, isTerminal, nowIso } from "./db";
 import { ARTIFACTS_EVENT, artifactsDeliveryId, loadArtifactsPipeline } from "./artifacts-push";
@@ -144,6 +144,22 @@ export interface TrainDeps {
   launch?: ((repo: string, key: string) => Promise<void>) | null;
   // Called after a merge conflict opens (replay strategies, replay.ts).
   onConflict?: ((conflict: Conflict) => Promise<void>) | null;
+  // Git objects earlier builds fetched (packs, loose objects, the shallow
+  // list), restored into each new build so a rebuilt lane does not
+  // refetch every intent from its fork. Absent = every build starts empty.
+  objectCache?: TrainObjectCache | null;
+}
+
+export interface CachedGitFile {
+  path: string;
+  data: Uint8Array;
+}
+
+// Content-addressed objects only, so a stale entry is harmless. Bounded
+// by OBJECT_CACHE_MAX_BYTES; failures degrade to an empty build.
+export interface TrainObjectCache {
+  load(repo: string): Promise<CachedGitFile[] | null>;
+  save(repo: string, files: CachedGitFile[]): Promise<void>;
 }
 
 // Runs dispatched by trains ride the Artifacts event (seats check out
@@ -154,6 +170,8 @@ export const TRAIN_RUN_AGENT = "forge-train";
 // bottleneck, so they jump the queue too.
 export const TRAIN_RUN_PRIORITY = 8;
 const GITDIR = "/train";
+// A cache past this size is dropped and rebuilt from the next fetches.
+export const OBJECT_CACHE_MAX_BYTES = 24 * 1024 * 1024;
 const TOKEN_TTL_SECONDS = 600;
 // A builder that crashed mid-merge leaves `merging` rows: requeue them
 // after this long. A verifying train whose CI never finishes, likewise.
@@ -383,6 +401,151 @@ interface GitCtx {
   // url -> configured remote name (isomorphic-git fetch needs a remote
   // with a refspec; a bare url fetch has none).
   remotes: Map<string, string>;
+  // Objects restored from TrainDeps.objectCache (fork fetches may skip).
+  restored: boolean;
+  // Fork fetches skipped because the objects were already here.
+  fetchesSaved: number;
+}
+
+// ---------------------------------------------------------------------------
+// Object cache: snapshot / restore the build's object store
+// ---------------------------------------------------------------------------
+
+function fsPromises(fs: FsClient): PromiseFsClient["promises"] | null {
+  return "promises" in fs && fs.promises ? fs.promises : null;
+}
+
+function isDirStat(st: unknown): boolean {
+  if (typeof st !== "object" || st === null) return false;
+  const fn = (st as { isDirectory?: unknown }).isDirectory;
+  return typeof fn === "function" && fn.call(st) === true;
+}
+
+async function listTree(p: PromiseFsClient["promises"], dir: string, out: string[]): Promise<void> {
+  let names: unknown;
+  try {
+    names = await p.readdir(dir);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(names)) return;
+  for (const n of names) {
+    if (typeof n !== "string") continue;
+    const path = `${dir}/${n}`;
+    let st: unknown;
+    try {
+      st = await p.stat(path);
+    } catch {
+      continue;
+    }
+    if (isDirStat(st)) await listTree(p, path, out);
+    else out.push(path);
+  }
+}
+
+// Objects (packs + loose) and the shallow list; null when too big or
+// the filesystem has no promise surface.
+export async function snapshotObjects(fs: FsClient, maxBytes: number = OBJECT_CACHE_MAX_BYTES): Promise<CachedGitFile[] | null> {
+  const p = fsPromises(fs);
+  if (!p) return null;
+  const paths: string[] = [];
+  await listTree(p, `${GITDIR}/objects`, paths);
+  paths.push(`${GITDIR}/shallow`);
+  const out: CachedGitFile[] = [];
+  let bytes = 0;
+  for (const path of paths) {
+    let data: unknown;
+    try {
+      data = await p.readFile(path);
+    } catch {
+      continue;
+    }
+    if (!(data instanceof Uint8Array)) continue;
+    bytes += data.byteLength;
+    if (bytes > maxBytes) return null;
+    out.push({ path, data });
+  }
+  return out;
+}
+
+// One blob per repo: a 4-byte header length, a JSON header of
+// [{ path, len }], then the file bytes in order.
+export function encodeObjectCache(files: readonly CachedGitFile[]): Uint8Array {
+  const header = new TextEncoder().encode(JSON.stringify(files.map((f) => ({ path: f.path, len: f.data.byteLength }))));
+  const total = 4 + header.byteLength + files.reduce((n, f) => n + f.data.byteLength, 0);
+  const out = new Uint8Array(total);
+  new DataView(out.buffer).setUint32(0, header.byteLength);
+  out.set(header, 4);
+  let at = 4 + header.byteLength;
+  for (const f of files) {
+    out.set(f.data, at);
+    at += f.data.byteLength;
+  }
+  return out;
+}
+
+export function decodeObjectCache(bytes: Uint8Array): CachedGitFile[] | null {
+  if (bytes.byteLength < 4) return null;
+  const hlen = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+  if (4 + hlen > bytes.byteLength) return null;
+  let header: unknown;
+  try {
+    header = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + hlen)));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(header)) return null;
+  const out: CachedGitFile[] = [];
+  let at = 4 + hlen;
+  for (const h of header) {
+    if (typeof h !== "object" || h === null) return null;
+    const path = (h as { path?: unknown }).path;
+    const len = (h as { len?: unknown }).len;
+    if (typeof path !== "string" || typeof len !== "number" || !Number.isInteger(len) || len < 0 || at + len > bytes.byteLength) return null;
+    out.push({ path, data: bytes.slice(at, at + len) });
+    at += len;
+  }
+  return out;
+}
+
+// TrainObjectCache over an R2 bucket (one object per trunk repo).
+export interface ObjectCacheBucket {
+  get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null>;
+  put(key: string, value: Uint8Array): Promise<unknown>;
+  delete(key: string): Promise<unknown>;
+}
+
+export function bucketObjectCache(bucket: ObjectCacheBucket, prefix = "forge/train-objects/"): TrainObjectCache {
+  const key = (repo: string): string => `${prefix}${encodeURIComponent(repo)}.bin`;
+  return {
+    async load(repo) {
+      const obj = await bucket.get(key(repo));
+      return obj ? decodeObjectCache(new Uint8Array(await obj.arrayBuffer())) : null;
+    },
+    async save(repo, files) {
+      if (!files.length) await bucket.delete(key(repo));
+      else await bucket.put(key(repo), encodeObjectCache(files));
+    },
+  };
+}
+
+export async function restoreObjects(fs: FsClient, files: readonly CachedGitFile[]): Promise<number> {
+  const p = fsPromises(fs);
+  if (!p) return 0;
+  let n = 0;
+  for (const f of files) {
+    if (!f.path.startsWith(`${GITDIR}/objects/`) && f.path !== `${GITDIR}/shallow`) continue;
+    if (f.path.includes("..")) continue;
+    const dir = f.path.slice(0, f.path.lastIndexOf("/"));
+    try {
+      await p.mkdir(dir, { recursive: true });
+      await p.writeFile(f.path, f.data);
+      n++;
+    } catch {
+      // A file that cannot be restored is just refetched.
+    }
+  }
+  return n;
 }
 
 async function remoteFor(ctx: GitCtx, url: string): Promise<string> {
@@ -440,7 +603,28 @@ async function openGit(deps: TrainDeps, repo: string): Promise<GitCtx | null> {
   const readToken = await mintToken(deps.artifacts, repo, "read");
   const fs = deps.fs();
   await deps.git.init({ fs, gitdir: GITDIR, bare: true, defaultBranch: "main" });
-  return { deps, fs, repo, trunkUrl, readToken, remotes: new Map() };
+  let restored = false;
+  if (deps.objectCache) {
+    try {
+      const files = await deps.objectCache.load(repo);
+      restored = files !== null && (await restoreObjects(fs, files)) > 0;
+    } catch (err) {
+      log("warn", "train object cache load failed", { repo, error: redact(err) });
+    }
+  }
+  return { deps, fs, repo, trunkUrl, readToken, remotes: new Map(), restored, fetchesSaved: 0 };
+}
+
+async function saveObjectCache(ctx: GitCtx): Promise<void> {
+  const cache = ctx.deps.objectCache;
+  if (!cache) return;
+  try {
+    const files = await snapshotObjects(ctx.fs);
+    // Too big: store nothing, the next build starts empty and smaller.
+    await cache.save(ctx.repo, files ?? []);
+  } catch (err) {
+    log("warn", "train object cache save failed", { repo: ctx.repo, error: redact(err) });
+  }
 }
 
 async function pushRef(ctx: GitCtx, localRef: string, remoteRef: string, force: boolean): Promise<void> {
@@ -665,7 +849,7 @@ export interface BuiltLane {
 }
 
 export type BuildResult =
-  | { status: "built"; baseSha: string; lanes: BuiltLane[]; dispatched: number }
+  | { status: "built"; baseSha: string; lanes: BuiltLane[]; dispatched: number; fetchesSaved?: number }
   | { status: "none" | "busy" | "unavailable" | "failed"; detail?: string };
 
 interface MergeOk {
@@ -754,18 +938,20 @@ async function otherSide(db: Db, repo: string, earlier: Intent[], files: string[
 export async function buildTrains(deps: TrainDeps, repo: string): Promise<BuildResult> {
   let first: BuildResult | null = null;
   const lanes: BuiltLane[] = [];
+  let fetchesSaved = 0;
   for (let k = 0; k <= MAX_SPECULATION_DEPTH; k++) {
     const out = await buildGroup(deps, repo);
     if (!first) first = out;
     if (out.status !== "built") break;
     lanes.push(...out.lanes);
+    fetchesSaved += out.fetchesSaved ?? 0;
   }
   const probes = await buildProbes(deps, repo);
   lanes.push(...probes);
   // Only the builder that built dispatches (checkTrains covers misses).
   if ((!first || first.status !== "built") && !probes.length) return first ?? { status: "none" };
   const dispatched = await dispatchTrains(deps, repo);
-  return { status: "built", baseSha: first?.status === "built" ? first.baseSha : "", lanes, dispatched };
+  return { status: "built", baseSha: first?.status === "built" ? first.baseSha : "", lanes, dispatched, fetchesSaved };
 }
 
 // Build the first forming group of the chain. Every group ahead of it
@@ -893,18 +1079,28 @@ async function buildStack(deps: TrainDeps, repo: string, forming: Train[], paren
     const built: BuiltLane = { trainId: t.id, lane: t.lane, head: null, merged: [], conflicts: [], requeued: [], mergeMs: 0 };
     for (const intent of intentsByTrain.get(t.id) ?? []) {
       const forkUrl = intent.forkRepo ? deps.remoteFor(intent.forkRepo) : null;
-      let theirs: string | null = null;
-      if (forkUrl && intent.forkRepo) {
+      const forkRepo = intent.forkRepo;
+      const need = [intent.headSha, ...(intent.baseSha ? [intent.baseSha] : [])];
+      const fetchFork = async (): Promise<void> => {
+        if (!forkUrl || !forkRepo) return;
         try {
-          const forkToken = await mintToken(deps.artifacts, intent.forkRepo, "read");
-          const need = [intent.headSha, ...(intent.baseSha ? [intent.baseSha] : [])];
+          const forkToken = await mintToken(deps.artifacts, forkRepo, "read");
           await fetchCovering(ctx, forkUrl, forkToken, "main", need);
           if (!(await hasCommit(ctx, intent.headSha))) await fetchRef(ctx, forkUrl, forkToken, intent.headSha, 50).catch(() => null);
-          if (await hasCommit(ctx, intent.headSha)) theirs = intent.headSha;
         } catch (err) {
           log("warn", "train fork fetch failed", { repo, intent: intent.id, error: redact(err) });
         }
+      };
+      // An earlier build already fetched this exact head (a rebuilt
+      // speculative lane, a bisect probe): skip the fork fetch.
+      let cached = false;
+      if (ctx.restored && forkUrl) {
+        cached = true;
+        for (const oid of need) if (!(await hasCommit(ctx, oid))) cached = false;
       }
+      if (cached) ctx.fetchesSaved++;
+      else await fetchFork();
+      const theirs: string | null = (await hasCommit(ctx, intent.headSha)) ? intent.headSha : null;
       if (!theirs) {
         await requeueIntent(deps.db, intent.id, "fork head unreachable; requeued");
         built.requeued.push(intent.id);
@@ -918,13 +1114,22 @@ async function buildStack(deps: TrainDeps, repo: string, forming: Train[], paren
         goalId: intent.goalId,
         session: intent.forkRepo ?? "",
       });
-      let out: MergeOk | MergeConflictOut;
-      try {
-        out = await squashOnto(ctx, head, theirs, message, agentIdentity(intent.agent), timestamp);
-      } catch (err) {
-        // Shallow history cut the merge-base walk: treat as unmergeable
-        // here (replay re-derives on the new trunk).
-        out = { ok: false, files: [], reason: `merge failed: ${redact(err)}` };
+      const merge = async (): Promise<MergeOk | MergeConflictOut> => {
+        try {
+          return await squashOnto(ctx, head, theirs, message, agentIdentity(intent.agent), timestamp);
+        } catch (err) {
+          // Shallow history cut the merge-base walk: treat as unmergeable
+          // here (replay re-derives on the new trunk).
+          return { ok: false, files: [], reason: `merge failed: ${redact(err)}` };
+        }
+      };
+      let out = await merge();
+      // Never open a conflict on cached objects alone: refetch the fork
+      // and merge again before believing it.
+      if (!out.ok && cached) {
+        ctx.fetchesSaved--;
+        await fetchFork();
+        out = await merge();
       }
       if (!out.ok) {
         const other = await otherSide(deps.db, repo, mergedSoFar, out.files, intent.id);
@@ -979,7 +1184,9 @@ async function buildStack(deps: TrainDeps, repo: string, forming: Train[], paren
     built.head = head;
     lanes.push(built);
   }
-  return { status: "built", baseSha, lanes, dispatched: 0 };
+  if (ctx.fetchesSaved) log("info", "train fork fetches skipped (object cache)", { repo, saved: ctx.fetchesSaved });
+  await saveObjectCache(ctx);
+  return { status: "built", baseSha, lanes, dispatched: 0, fetchesSaved: ctx.fetchesSaved };
 }
 
 // Dispatch CI for verifying lanes that have no run yet (idempotent: the
