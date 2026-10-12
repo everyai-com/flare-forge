@@ -279,7 +279,8 @@ export async function runScriptedIntent(ctx, agent, it) {
     cwd: work,
     env: cliEnv(cfg, agent),
   });
-  if (pushed.status !== 0) throw new Error(`cli forge push failed: ${redact(pushed.stderr.trim().split("\n").slice(-2).join(" | "), [claim.token, cfg.token])}`);
+  // Keep git's own error (the CLI prints it before its summary line).
+  if (pushed.status !== 0) throw new Error(`cli forge push failed: ${redact(pushed.stderr.trim().split("\n").filter((l) => !/ExperimentalWarning|--trace-warnings/.test(l)).slice(-6).join(" | "), [claim.token, cfg.token])}`);
   let pushData = null;
   try {
     pushData = JSON.parse(pushed.stdout).data;

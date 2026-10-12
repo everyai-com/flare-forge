@@ -37,6 +37,7 @@ function harness(opts: { json?: boolean; git?: (args: string[]) => GitResult; re
     readText: (p) => files.get(p) ?? null,
     writeText: (p, t) => files.set(p, t),
     writeFile: (p, t) => files.set(p, t),
+    sleep: async () => {},
     cwd: "/work",
   };
   return { deps, out, err, gitCalls, files, fetches };
@@ -118,10 +119,24 @@ describe("cli forge", () => {
     log.mockRestore();
   });
 
-  it("push fails loudly when git push fails, without reporting", async () => {
-    const h = harness({ git: (args) => (args[0] === "push" ? { status: 1, stdout: "", stderr: "denied" } : { status: 0, stdout: "", stderr: "" }) });
-    await expect(runForge(["push", "i1"], h.deps)).rejects.toThrow(/git push failed/);
+  it("push fails loudly when git push fails, without reporting (git's error included)", async () => {
+    const h = harness({ git: (args) => (args[0] === "push" ? { status: 1, stdout: "", stderr: "fatal: unable to access: 503" } : { status: 0, stdout: "", stderr: "" }) });
+    await expect(runForge(["push", "i1"], h.deps)).rejects.toThrow(/git push failed: fatal: unable to access: 503/);
     expect(h.fetches).toHaveLength(0);
+    expect(h.gitCalls.filter((c) => c.args[0] === "push")).toHaveLength(4);
+  });
+
+  it("push retries a fresh fork that is not ready yet, then reports", async () => {
+    let pushes = 0;
+    const h = harness({ git: (args) => (args[0] === "push" && ++pushes < 3 ? { status: 1, stdout: "", stderr: "fatal: repository not found" } : args[0] === "rev-parse" ? { status: 0, stdout: "a".repeat(40) + "\n", stderr: "" } : { status: 0, stdout: "", stderr: "" }) });
+    await runForge(["push", "i1"], h.deps).catch(() => 1);
+    expect(pushes).toBe(3);
+  });
+
+  it("push never retries a rejection", async () => {
+    const h = harness({ git: (args) => (args[0] === "push" ? { status: 1, stdout: "", stderr: "! [rejected] HEAD -> main (non-fast-forward)" } : { status: 0, stdout: "", stderr: "" }) });
+    await expect(runForge(["push", "i1"], h.deps)).rejects.toThrow(/rejected/);
+    expect(h.gitCalls.filter((c) => c.args[0] === "push")).toHaveLength(1);
   });
 
   it("claim --clone keeps the token out of argv and records flare.intent", async () => {
