@@ -58,7 +58,7 @@ export const NAIVE_BASELINE = {
 export const EVENT_OP_KINDS = ["create", "fork", "import", "delete", "push", "clone", "fetch"] as const;
 export type EventOpKind = (typeof EVENT_OP_KINDS)[number];
 
-export const BINDING_OP_KINDS = ["read", "token"] as const;
+export const BINDING_OP_KINDS = ["read", "token", "fork", "create", "import"] as const;
 export type BindingOpKind = (typeof BINDING_OP_KINDS)[number];
 
 export type OpOrigin = "event" | "binding";
@@ -67,6 +67,11 @@ export type OpKind = EventOpKind | BindingOpKind;
 // Kinds the pricing page's examples cover: a fork creates a repo and a
 // fetch is a pull.
 export const DOCUMENTED_BILLABLE: readonly EventOpKind[] = ["create", "fork", "import", "push", "clone", "fetch"];
+// Repo creation Forge performs itself through the binding (claims, session
+// and replay forks, races). Cloudflare's metrics count these as `fork` /
+// `create` operations; the account-level events never reached the push
+// Workflow on prod (2026-10-12), so the binding meter is the source.
+export const BINDING_BILLABLE: readonly BindingOpKind[] = ["fork", "create", "import"];
 
 // Who an op is attributed to inside a repo.
 export const OP_SUBJECTS = ["trunk", "lane", "intent", "session", "replay"] as const;
@@ -95,6 +100,8 @@ export interface ArtifactsOpEvent {
   targetRepo: string | null;
   // `push` only.
   ref: string | null;
+  // `push` only: true when the push CREATED the ref (before = zeros).
+  createdRef?: boolean;
 }
 
 const NAME_RE = /^[\w.-]{1,100}$/;
@@ -126,7 +133,9 @@ export function parseArtifactsOpEvent(raw: unknown): ArtifactsOpEvent | null {
   if (!namespace || !repoName) return null;
   const targetRepo = kind === "fork" ? nameOf(body["repoName"]) : null;
   const ref = kind === "push" && typeof body["ref"] === "string" && body["ref"].length <= 300 ? body["ref"] : null;
-  return { kind, namespace, repoName, targetRepo, ref };
+  const before = body["before"];
+  const createdRef = kind === "push" && typeof before === "string" && (before === "" || /^0+$/.test(before));
+  return { kind, namespace, repoName, targetRepo, ref, ...(kind === "push" ? { createdRef } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -136,13 +145,17 @@ export function parseArtifactsOpEvent(raw: unknown): ArtifactsOpEvent | null {
 // Fork naming (intents-core intentForkName, session.ts sessionForkName,
 // replay.ts replayForkName): `i-<12>`, `s-<12>-<agent>-<rand>`,
 // `r-<12>-<attempt>`. Anything else is a trunk candidate.
-export function classifyRepoName(name: string): { role: "intent" | "session" | "replay" | "trunk"; short: string | null } {
+export function classifyRepoName(name: string): { role: "intent" | "session" | "replay" | "race" | "trunk"; short: string | null } {
   let m = /^i-([a-z0-9]{1,12})$/.exec(name);
   if (m) return { role: "intent", short: m[1] };
   m = /^s-([a-z0-9]{1,12})-/.exec(name);
   if (m) return { role: "session", short: m[1] };
   m = /^r-([a-z0-9]{1,12})-\d+$/.exec(name);
   if (m) return { role: "replay", short: m[1] };
+  // Resolution-race forks: tournaments.ts forkNameFor (first 8 of the
+  // tournament id + agent slug).
+  m = /^t-([a-f0-9]{8})-/.exec(name);
+  if (m) return { role: "race", short: m[1] };
   return { role: "trunk", short: null };
 }
 
@@ -162,6 +175,8 @@ export interface OpTarget {
 export interface OpsLookups {
   intentByFork(forkRepo: string): Promise<{ id: string; repo: string } | null>;
   conflictRepoByShort(short: string): Promise<string | null>;
+  // Race forks: the tournament's source repo (optional for older callers).
+  tournamentRepoByShort?(short: string): Promise<string | null>;
   isForgeRepo(name: string): Promise<boolean>;
 }
 
@@ -172,6 +187,9 @@ async function targetForName(lookups: OpsLookups, name: string, ref: string | nu
     if (intent) return { repo: intent.repo, subject: c.role, intentId: intent.id };
   } else if (c.role === "replay" && c.short) {
     const repo = await lookups.conflictRepoByShort(c.short);
+    if (repo) return { repo, subject: "replay", intentId: null };
+  } else if (c.role === "race" && c.short && lookups.tournamentRepoByShort) {
+    const repo = await lookups.tournamentRepoByShort(c.short);
     if (repo) return { repo, subject: "replay", intentId: null };
   }
   // A trunk literally named like a fork still resolves as trunk.
@@ -191,7 +209,8 @@ export async function attributeOp(lookups: OpsLookups, ev: { repoName: string; t
     const source = await targetForName(lookups, ev.repoName, null);
     if (!source) return null;
     const role = classifyRepoName(ev.targetRepo).role;
-    return { repo: source.repo, subject: role === "trunk" ? source.subject : role, intentId: role === "trunk" ? source.intentId : null };
+    const subject: OpSubject = role === "trunk" ? source.subject : role === "race" ? "replay" : role;
+    return { repo: source.repo, subject, intentId: role === "trunk" ? source.intentId : null };
   }
   return targetForName(lookups, ev.repoName, ev.ref ?? null);
 }
@@ -215,6 +234,17 @@ export function forgeOpsLookups(db: Db): OpsLookups {
           .bind(prefix, `${prefix}\uffff`)
           .first<{ repo: string }>();
         return row?.repo ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async tournamentRepoByShort(short) {
+      try {
+        const row = await db
+          .prepare("SELECT source_repo FROM tournaments WHERE id >= ? AND id < ? ORDER BY id LIMIT 1")
+          .bind(short, `${short}\uffff`)
+          .first<{ source_repo: string }>();
+        return row?.source_repo ?? null;
       } catch {
         return null;
       }
@@ -385,6 +415,7 @@ export function opsTotals(sql: SqlStore): OpsTotals {
     } else if (head === "binding" && (BINDING_OP_KINDS as readonly string[]).includes(tail)) {
       out.binding[tail as BindingOpKind] = r.n;
       out.total += r.n;
+      if ((BINDING_BILLABLE as readonly string[]).includes(tail)) out.billable += r.n;
     } else if (head === "subject" && SUBJECT_SET.has(tail)) out.bySubject[tail as OpSubject] = r.n;
   }
   return out;
@@ -410,6 +441,7 @@ export function intentOps(sql: SqlStore, intentId: string): IntentOps {
       if ((DOCUMENTED_BILLABLE as readonly string[]).includes(r.kind)) out.billable += r.n;
     } else if (r.origin === "binding" && (BINDING_OP_KINDS as readonly string[]).includes(r.kind)) {
       out.binding[r.kind as BindingOpKind] = r.n;
+      if ((BINDING_BILLABLE as readonly string[]).includes(r.kind)) out.billable += r.n;
     }
   }
   out.usd = usdFor(out.billable);
@@ -569,6 +601,14 @@ function meterHandle<H extends object>(handle: H, repoName: string, sink: MeterS
       const fn = value as (...args: unknown[]) => unknown;
       const kind: BindingOpKind | null =
         typeof prop === "string" ? (TOKEN_METHODS.has(prop) ? "token" : READ_METHODS.has(prop) ? "read" : null) : null;
+      if (prop === "fork") {
+        // Charged to the NEW repo (an intent / replay / race fork).
+        return async (...args: unknown[]): Promise<unknown> => {
+          const out: unknown = await Reflect.apply(fn, target, args);
+          if (typeof args[0] === "string") safeSink(sink, args[0], "fork");
+          return out;
+        };
+      }
       return (...args: unknown[]): unknown => {
         if (kind) safeSink(sink, repoName, kind);
         return Reflect.apply(fn, target, args);
@@ -578,8 +618,8 @@ function meterHandle<H extends object>(handle: H, repoName: string, sink: MeterS
 }
 
 // Wraps the ARTIFACTS binding so every handle from `get(name)` is
-// metered. The binding's own methods (create/import/delete/get) are
-// not counted here: repo creation and deletion arrive as events.
+// metered, plus repo creation (create / import) on the binding itself,
+// counted once it succeeds.
 export function meterArtifacts<B extends object>(binding: B, sink: MeterSink): B {
   return new Proxy(binding, {
     get(target, prop) {
@@ -591,6 +631,16 @@ export function meterArtifacts<B extends object>(binding: B, sink: MeterSink): B
           const handle: unknown = await Reflect.apply(fn, target, args);
           const name = typeof args[0] === "string" ? args[0] : "";
           return isHandle(handle) && name ? meterHandle(handle, name, sink) : handle;
+        };
+      }
+      if (prop === "create" || prop === "import") {
+        return async (...args: unknown[]): Promise<unknown> => {
+          const out: unknown = await Reflect.apply(fn, target, args);
+          const a0 = args[0];
+          const name =
+            typeof a0 === "string" ? a0 : isHandle(a0) && isHandle(Reflect.get(a0, "target")) ? Reflect.get(Reflect.get(a0, "target") as object, "name") : undefined;
+          if (typeof name === "string") safeSink(sink, name, prop);
+          return out;
         };
       }
       return (...args: unknown[]): unknown => Reflect.apply(fn, target, args);
@@ -664,12 +714,21 @@ export type OpEventOutcome =
   | { status: "recorded"; kind: EventOpKind; repo: string; subject: OpSubject; intentId: string | null }
   | { status: "skipped"; reason: "invalid" | "other-namespace" | "unattributed"; kind?: EventOpKind; repoName?: string };
 
-export async function handleArtifactsOpEvent(deps: OpEventDeps, raw: unknown, eventId: string | null): Promise<OpEventOutcome> {
+// Cloudflare emits one `pushed` event per updated ref, while its metrics
+// count one push per git push. A burst of ref CREATIONS on one repo in
+// the same second (e.g. bootstrapping 32 lane refs in one push) is one
+// operation, so those dedupe on a per-second key.
+export function pushBurstKey(repo: string, eventTimeMs: number): string {
+  return `push-burst:${repo}:${Math.floor(eventTimeMs / 1000)}`;
+}
+
+export async function handleArtifactsOpEvent(deps: OpEventDeps, raw: unknown, eventId: string | null, eventTimeMs?: number): Promise<OpEventOutcome> {
   const ev = parseArtifactsOpEvent(raw);
   if (!ev) return { status: "skipped", reason: "invalid" };
   if (deps.namespace && ev.namespace !== deps.namespace) return { status: "skipped", reason: "other-namespace", kind: ev.kind };
   const target = await attributeOp(deps.lookups, ev);
   if (!target) return { status: "skipped", reason: "unattributed", kind: ev.kind, repoName: ev.repoName };
-  await deps.record(target.repo, [{ kind: ev.kind, origin: "event", subject: target.subject, intentId: target.intentId, n: 1 }], eventId);
+  const id = ev.kind === "push" && ev.createdRef && typeof eventTimeMs === "number" ? pushBurstKey(ev.repoName, eventTimeMs) : eventId;
+  await deps.record(target.repo, [{ kind: ev.kind, origin: "event", subject: target.subject, intentId: target.intentId, n: 1 }], id);
   return { status: "recorded", kind: ev.kind, repo: target.repo, subject: target.subject, intentId: target.intentId };
 }
