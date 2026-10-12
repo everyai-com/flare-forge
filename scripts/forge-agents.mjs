@@ -43,7 +43,7 @@ import {
   realAgentPrompt,
   redact,
   renderTable,
-  replayPlanFor,
+  replayPlanForConflict,
   resolveArtifactsTarget,
   ROOT,
   untilIndex,
@@ -336,9 +336,10 @@ export async function resolveDesignedConflicts(o, cfg, board, dir, { waitSeconds
   while (Date.now() <= deadline) {
     const open = (await forge.listConflicts(o.repo, "open")).conflicts;
     for (const c of open) {
-      const bSeed = seedOf.get(String(c.intentB));
+      // intentA = the dropped intent; intentB = the landed one or "trunk".
       const aSeed = seedOf.get(String(c.intentA));
-      const plan = bSeed ? replayPlanFor(o.seed, bSeed, aSeed) : null;
+      const bSeed = seedOf.get(String(c.intentB));
+      const plan = replayPlanForConflict(o.seed, aSeed, bSeed);
       if (!plan) continue;
       board.set(agent, { intent: bSeed, state: "claiming", detail: `conflict ${String(c.id)} on ${(c.files ?? []).join(", ")}` });
       const claimed = await forge.claimConflict(String(c.id), { agent });
@@ -363,7 +364,7 @@ export async function resolveDesignedConflicts(o, cfg, board, dir, { waitSeconds
         trailers: { goal: state.goals[it?.id?.split("-")[0] ?? ""] ?? "", intent: r.intentId, agent, session: r.forkRepo },
       });
       await gitAsync(["push", "-q", r.forkRemote, "+HEAD:refs/heads/main"], { cwd: work, token: r.token });
-      const res = await forge.resolveConflict(String(c.id), sha, { agent });
+      const res = await forge.resolveConflict(String(c.id), sha, { agent, forkRepo: r.forkRepo });
       board.set(agent, { state: "resolved", detail: `${sha.slice(0, 12)}; ${res.nextSteps?.[0]?.why ?? "rides the next train"}` });
       done.push({ conflict: String(c.id), sha });
     }

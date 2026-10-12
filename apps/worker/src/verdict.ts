@@ -100,6 +100,27 @@ async function commitTree(
   }
 }
 
+// A commit's first parent (the binding's readCommit carries `parents`;
+// the structural type here only promises treeHash). Null when unknown.
+export async function firstParent(artifacts: TournamentArtifacts, repo: string, commit: string): Promise<string | null> {
+  let handle = null as Awaited<ReturnType<TournamentArtifacts["get"]>> | null;
+  try {
+    handle = await artifacts.get(repo);
+    const decoded: unknown = await handle.readCommit(commit);
+    const parents = typeof decoded === "object" && decoded !== null ? (decoded as { parents?: unknown }).parents : undefined;
+    const first = Array.isArray(parents) ? parents[0] : undefined;
+    return typeof first === "string" && /^[0-9a-f]{40}$/.test(first) ? first : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      handle?.[Symbol.dispose]?.();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 // Changed paths between two commits, by per-path blob comparison.
 // Null when either side cannot be read.
 export async function changedFiles(

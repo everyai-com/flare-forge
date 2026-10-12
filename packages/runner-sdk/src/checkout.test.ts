@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkoutRepo } from "./checkout";
+import { checkoutRepo, gitEnv, isArtifactsRemote } from "./checkout";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -53,5 +53,26 @@ describe("checkoutRepo", () => {
   it("rejects bad repo/sha without touching the network", async () => {
     await expect(checkoutRepo({ repo: "nope", sha: "abc", dir: "/tmp/x" })).rejects.toThrow("invalid repo");
     await expect(checkoutRepo({ repo: "a/b", sha: "not a sha!", dir: "/tmp/x" })).rejects.toThrow("invalid sha");
+  });
+});
+
+describe("artifacts checkout helpers", () => {
+  it("scopes the auth header to the remote's origin with the given username", () => {
+    const env = gitEnv("tok", "https://abc.artifacts.cloudflare.net/git/ns/repo.git", "x");
+    expect(env["GIT_CONFIG_KEY_0"]).toBe("http.https://abc.artifacts.cloudflare.net/.extraheader");
+    expect(env["GIT_CONFIG_VALUE_0"]).toBe(`Authorization: Basic ${Buffer.from("x:tok").toString("base64")}`);
+    const gh = gitEnv("tok");
+    expect(gh["GIT_CONFIG_KEY_0"]).toBe("http.https://github.com/.extraheader");
+    expect(gitEnv(undefined)["GIT_CONFIG_COUNT"]).toBeUndefined();
+  });
+
+  it("accepts only Artifacts git remotes from a claim", () => {
+    const acc = "a".repeat(32);
+    expect(isArtifactsRemote(`https://${acc}.artifacts.cloudflare.net/git/ns/repo.git`)).toBe(true);
+    expect(isArtifactsRemote(`http://${acc}.artifacts.cloudflare.net/git/ns/repo.git`)).toBe(false);
+    expect(isArtifactsRemote(`https://${acc}.artifacts.cloudflare.net.evil.com/git/x.git`)).toBe(false);
+    expect(isArtifactsRemote(`https://user:pw@${acc}.artifacts.cloudflare.net/git/x.git`)).toBe(false);
+    expect(isArtifactsRemote("https://github.com/a/b.git")).toBe(false);
+    expect(isArtifactsRemote("not a url")).toBe(false);
   });
 });

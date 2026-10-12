@@ -91,7 +91,7 @@ import { forkSession, readSession, SESSION_DEFAULT_STEPS, SESSION_MAX_STEPS, typ
 import { agentClient, agentLabel, bisectView, conflictSide, evidenceOf, runBriefs, trackView, trainView, whyTitle, type DetailNode } from "./forge-views";
 import { benchPayload } from "./forge-bench-data";
 import { tournamentAllowed } from "./tournaments";
-import { changedFiles } from "./verdict";
+import { changedFiles, firstParent } from "./verdict";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1506,7 +1506,13 @@ async function rescoreReplay(
   let files: string[] = intent.actualFootprint?.paths ?? [];
   let truncated = false;
   if (deps.artifacts && forkRepo && base) {
-    const diff = await changedFiles(deps.artifacts, forkRepo, base, head).catch(() => null);
+    let diff = await changedFiles(deps.artifacts, forkRepo, base, head).catch(() => null);
+    // Trunk moved after the replay was built: diff the replay against
+    // the trunk it was built on (its first parent) instead.
+    if (!diff) {
+      const parent = await firstParent(deps.artifacts, forkRepo, head).catch(() => null);
+      if (parent) diff = await changedFiles(deps.artifacts, forkRepo, parent, head).catch(() => null);
+    }
     if (!diff) return null;
     truncated = diff.truncated || diff.changed.length > LIMITS.footprintEntries;
     const norm = normalizeFootprint(diff.changed.slice(0, LIMITS.footprintEntries));
@@ -1593,12 +1599,22 @@ async function resolveConflictViaTrains(
   if (!resolve) return forgeFail("not_implemented", "trains are not wired");
   const intent = await getIntent(deps.db, conflict.intentA);
   let forkRepo: string | undefined;
+  // This conflict's replay forks: r-<conflict 12>-<attempt>.
+  const prefix = `r-${conflict.id.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12)}-`;
   if (forkArg !== undefined && forkArg !== null && forkArg !== "") {
     if (typeof forkArg !== "string" || !/^[a-zA-Z0-9][\w.-]{0,99}$/.test(forkArg)) return forgeFail("invalid_request", "forkRepo is not a valid repo name");
     // Only this conflict's replay forks or the intent's own fork.
-    const prefix = `r-${conflict.id.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12)}-`;
     if (!forkArg.startsWith(prefix) && forkArg !== intent?.forkRepo) return forgeFail("invalid_request", `forkRepo must be ${prefix}<n> or the intent's fork`);
     forkRepo = forkArg === intent?.forkRepo ? undefined : forkArg;
+  } else if (deps.artifacts && conflict.attempts > 0) {
+    // No forkRepo given: claim_conflict handed out a fresh replay fork,
+    // so a replay pushed there resolves without the caller naming it
+    // (SDKs and agents that skip the argument hit push_unverified).
+    const onIntent = intent?.forkRepo ? await forkHasCommit(deps, intent.forkRepo, sha) : false;
+    if (!onIntent) {
+      const candidate = `${prefix}${conflict.attempts}`;
+      if (await forkHasCommit(deps, candidate, sha)) forkRepo = candidate;
+    }
   }
   const verifyOn = forkRepo ?? intent?.forkRepo ?? null;
   if (verifyOn && deps.artifacts) {

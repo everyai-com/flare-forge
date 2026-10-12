@@ -5,6 +5,7 @@ import {
   assertSafeTar,
   buildFlareEnv,
   checkoutRepo,
+  isArtifactsRemote,
   extractTar,
   FlareClient,
   loadEnv,
@@ -87,7 +88,9 @@ const AUTO_UPDATE = process.argv.includes("--auto-update");
 const updateState = { lastCheck: 0, lastWarn: 0 };
 
 async function pollOnce(): Promise<boolean> {
-  const { job, secrets, secretsError, selection, needs, needsTruncated, needsWarnings } = await client.nextClaim(LABELS);
+  // `artifacts: true`: this runner checks out Artifacts runs (train
+  // lanes, probes, replays) with the claim's short-lived read token.
+  const { job, checkout, secrets, secretsError, selection, needs, needsTruncated, needsWarnings } = await client.nextClaim(LABELS, { artifacts: true });
   if (!job) return false;
   console.log(JSON.stringify({ msg: "picked up job", jobId: job.id, name: job.name, repo: job.repo, sha: job.sha }));
   // Fail closed on corrupt or newer-format definitions: substituting an
@@ -124,12 +127,20 @@ async function pollOnce(): Promise<boolean> {
       mkdirSync(srcdir, { recursive: true });
       await extractTar(srcdir, blob);
     } else {
-      await checkoutRepo({
-        repo: job.repo,
-        sha: job.sha,
-        dir: srcdir,
-        token: process.env["GITHUB_TOKEN"],
-      });
+      if (checkout) {
+        // Artifacts run: clone from the remote the claim named, with its
+        // read token (header-scoped to that origin, never in argv).
+        if (!isArtifactsRemote(checkout.url)) throw new Error("claim named a checkout remote that is not an Artifacts git remote");
+        console.log(JSON.stringify({ msg: "artifacts checkout", jobId: job.id, repo: job.repo }));
+        await checkoutRepo({ repo: job.repo, sha: job.sha, dir: srcdir, token: checkout.token, username: checkout.username }, checkout.url);
+      } else {
+        await checkoutRepo({
+          repo: job.repo,
+          sha: job.sha,
+          dir: srcdir,
+          token: process.env["GITHUB_TOKEN"],
+        });
+      }
     }
     // Smart test selection: the claim carries the server's safety-net
     // decision; `select` walks the checkout's import graph here (the

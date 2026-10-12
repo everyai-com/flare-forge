@@ -62,7 +62,7 @@ import {
   type TrainRow,
 } from "./intents";
 import type { TournamentRepoHandle } from "./tournaments";
-import { changedFiles } from "./verdict";
+import { changedFiles, firstParent } from "./verdict";
 import { recordNotesTip, writeWhyNotes, type ProvenanceGit } from "./provenance";
 import {
   agentIdentity,
@@ -1843,7 +1843,15 @@ export async function resolveConflictFor(
   let replayFootprint: string[] | null = null;
   if (deps.artifacts) {
     const fork = opts.forkRepo ?? pre.forkRepo ?? "";
-    const diff = fork ? await changedFiles(deps.artifacts, fork, base, sha.toLowerCase()) : null;
+    let diff = fork ? await changedFiles(deps.artifacts, fork, base, sha.toLowerCase()) : null;
+    // Trunk moved while the replay was built (a race runs for minutes):
+    // today's trunk head is not on the replay fork. Diff the replay
+    // commit against the trunk it was replayed on (its first parent),
+    // which is exactly the replay's own footprint (seen live).
+    if (!diff && fork) {
+      const parent = await firstParent(deps.artifacts, fork, sha.toLowerCase());
+      if (parent) diff = await changedFiles(deps.artifacts, fork, parent, sha.toLowerCase());
+    }
     if (!diff) return { error: "footprint-unavailable", message: "could not diff the replay against trunk; retry" };
     replayFootprint = diff.changed.slice(0, 500);
   }

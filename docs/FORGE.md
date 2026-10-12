@@ -996,6 +996,57 @@ The number of rounds is capped at ⌈log₂ max_per_train⌉ + 5.
   only). Successful forge MCP writes keep only the semantic `forge.*`
   audit row (the generic `mcp.<tool>` row stays for failures).
 
+### Live run: the full loop on real Artifacts (wrangler dev, 2026-10-12)
+
+> Provenance: agent-run 2026-10-12 08:30-10:43 UTC. Local Worker
+> (`wrangler dev`, local D1/DOs/queues/Workflows) with the **real**
+> `ARTIFACTS` binding on the `flare-forge-preview` namespace, one BYO
+> runner (`npm run runner`, macOS arm64) as the CI executor, trunk
+> created by `npm run forge:demo -- --repo bookshelf-e2e4 --namespace
+> flare-forge-preview --recreate`, swarm `npm run forge:agents -- --mode
+> scripted --count 6`. Trunk history checked by cloning it from
+> Artifacts. Cron ticks fired by hand (`/cdn-cgi/local/scheduled`):
+> `wrangler dev` does not run crons.
+
+| Beat | Result |
+|---|---|
+| 13 intents declared, 12 claimed (own `i-<id>` fork + 1 h token each), pushed, verified diff, ready | p50 13.6 s per intent, 0 errors; risk 3-4 (no false drift) |
+| Protected path (`src/auth/**`) | `awaiting_plan`, waits for a human |
+| Trains: lanes cut, CI on each lane's exact merged SHA (runner checks out from Artifacts) | 10 intents landed ~70 s after the last went ready; trunk `main` on Artifacts has one squashed commit per intent with `Flare-Intent` / `Flare-Agent` trailers and 11 `refs/notes/why` notes |
+| Semantic red (default page size 30 vs cap 25: each green alone) | CI red on the combined SHA; the culprit went to `failed`; main never red |
+| Textual conflict on `src/middleware/logging.ts` | Detected, raced by `flare-replay` (3 AI replays, all CI-green), then resolved through the replay fork and landed: trunk logs `requestId, durationMs` |
+| `why src/lib/store.ts:62` | `exact: true`, `source: notes`: line → commit → intent → goal → reasoning → CI evidence (run success, train lane 5) → session |
+
+Bugs this run found and fixed (all with regression tests):
+- BYO runners could never claim Artifacts runs (train lanes, probes,
+  replays): seats-only by design, while DEMO.md told people to use
+  "Use my computer". Runners now advertise `artifacts=1` and get a
+  10-minute read token for that repo with the claim.
+- An intent's base was fixed at declare time; a fresh fork snapshots
+  trunk at claim time, so every change landed in between read as this
+  intent's drift (risk 24 on 8 files). Claims now record the fork's head.
+- A race whose trunk moved while it ran reported "race winner was not
+  green" for an all-green race: the footprint diff used today's trunk
+  head, which is not on the race fork. Resolution now diffs the replay
+  against its first parent; the failure reason names the real error.
+- `resolve_conflict` without `forkRepo` failed `push_unverified` for a
+  replay pushed to the claim's replay fork (the SDK had no way to pass
+  it). The server now falls back to the conflict's replay fork; the SDK
+  takes `forkRepo`.
+- One transient Artifacts error on fork failed the claim (2 of 13
+  claims in one run). Claims retry once and log the cause.
+- `forge:demo`'s first API call after the long git bootstrap hit a dead
+  keep-alive socket ("fetch failed"). Seeding retries transport errors.
+- The scripted resolver keyed the replay plan on the landed side; trains
+  open conflicts with `intentA` = the dropped intent (or `trunk` as the
+  other side). It now plans on the dropped intent in either landing
+  order, and `g1-request-id` gained the reverse replay variant.
+
+Still not verified live: the push-trigger Workflow on these repos (no
+Artifacts events reach `wrangler dev`; the trigger itself was verified on
+prod with a clone event), bisect of a multi-intent red lane, and the
+public `/watch` page.
+
 ### Live run (wrangler dev, 2026-10-10)
 
 Trunk: the Artifacts mirror `everyai-com-flare-actions` (namespace

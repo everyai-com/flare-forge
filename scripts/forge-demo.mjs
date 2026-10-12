@@ -246,6 +246,20 @@ export function nextCommands(o, url) {
   ];
 }
 
+/** Retry `fn` on transport errors only (never on API errors). */
+export async function withNetworkRetry(fn, attempts = 3, delayMs = 1500) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const transport = e instanceof TypeError && /fetch failed|network|socket|ECONNRESET/i.test(String(e.message) + String(e.cause ?? ""));
+      if (!transport || i >= attempts) throw e;
+      console.log(`  network error (${e.message}); retrying (${i}/${attempts - 1})`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
+
 export async function main(argv) {
   const o = demoOptions(argv);
   if (o.help) {
@@ -294,8 +308,11 @@ export async function main(argv) {
   bootstrapTrunk(o);
   if (o.seed) {
     console.log("[3/3] goals" + (o.declare ? " + intents" : ""));
-    await seedGoals(o, cfg);
-    if (o.declare) await declareSeeded(o, cfg);
+    // The trunk step runs long git operations; an idle keep-alive socket
+    // to the API can be gone by now ("fetch failed"). Seeding is
+    // idempotent (goals are reused by text), so retry network errors.
+    await withNetworkRetry(() => seedGoals(o, cfg));
+    if (o.declare) await withNetworkRetry(() => declareSeeded(o, cfg));
   } else console.log("[3/3] seeding skipped (--no-seed)");
   console.log("");
   for (const l of nextCommands(o, cfg.url)) console.log(l);

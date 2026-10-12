@@ -270,7 +270,9 @@ export class FlareForge {
   claimConflict(conflictId: string, opts: { agent?: string } = {}): Promise<ForgeJson & { nextSteps: ForgeNextStep[] }> {
     return this.req("claimConflict", "POST", `/v1/forge/conflicts/${this.id(conflictId)}/claim`, opts);
   }
-  resolveConflict(conflictId: string, sha: string, opts: { agent?: string } = {}): Promise<ForgeJson & { nextSteps: ForgeNextStep[] }> {
+  // forkRepo: the replay fork claim_conflict returned (replay.forkRepo);
+  // optional, the server falls back to this conflict's latest replay fork.
+  resolveConflict(conflictId: string, sha: string, opts: { agent?: string; forkRepo?: string } = {}): Promise<ForgeJson & { nextSteps: ForgeNextStep[] }> {
     return this.req("resolveConflict", "POST", `/v1/forge/conflicts/${this.id(conflictId)}/resolve`, { sha, ...opts });
   }
   listTrains(repo: string, state?: string): Promise<{ trains: ForgeJson[] }> {

@@ -5,7 +5,7 @@ import { FlareApiError, type FlareApiErrorBody } from "./api-error.ts";
 
 export { executeSteps, parseDefinition } from "./execute.ts";
 export type { ExecStep, ExecuteOptions, StepResult, StepsOutcome } from "./execute.ts";
-export { checkoutRepo, gitAvailable } from "./checkout.ts";
+export { checkoutRepo, gitAvailable, isArtifactsRemote } from "./checkout.ts";
 export type { CheckoutOptions } from "./checkout.ts";
 export { parseJobSpec, matrixEnv } from "./spec.ts";
 export type { JobArtifactsSpec, JobCacheSpec, JobServiceSpec, JobSpec, JobTestSelectionSpec } from "./spec.ts";
@@ -707,6 +707,25 @@ export type {
 
 // Tolerant claim-decision reader: unknown shapes read as null (no
 // selection) so old runners keep working against newer servers.
+export interface FlareClaimCheckout {
+  url: string;
+  token: string;
+  username: string;
+  expiresInSeconds: number;
+}
+
+export function parseClaimCheckout(v: unknown): FlareClaimCheckout | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.url !== "string" || typeof o.token !== "string" || !o.token) return null;
+  return {
+    url: o.url,
+    token: o.token,
+    username: typeof o.username === "string" && o.username ? o.username : "x",
+    expiresInSeconds: typeof o.expiresInSeconds === "number" ? o.expiresInSeconds : 0,
+  };
+}
+
 function parseClaimSelection(raw: unknown): FlareClaimSelection | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
@@ -789,8 +808,11 @@ export class FlareClient {
   // not be decrypted, the smart test selection decision (null when
   // the job didn't opt in), and the settled needs context (results +
   // outputs for the declared bases).
-  async nextClaim(labels: string[] = []): Promise<{
+  async nextClaim(labels: string[] = [], opts: { artifacts?: boolean } = {}): Promise<{
     job: FlareJob | null;
+    // Artifacts runs only (claimed with `artifacts: true`): the remote
+    // and a short-lived read token for this job's checkout.
+    checkout: FlareClaimCheckout | null;
     secrets: Record<string, string>;
     secretsError: boolean;
     selection: FlareClaimSelection | null;
@@ -798,11 +820,15 @@ export class FlareClient {
     needsTruncated: boolean;
     needsWarnings: string[];
   }> {
-    const qs = labels.length > 0 ? `?labels=${encodeURIComponent(labels.join(","))}` : "";
+    const params: string[] = [];
+    if (labels.length > 0) params.push(`labels=${encodeURIComponent(labels.join(","))}`);
+    if (opts.artifacts) params.push("artifacts=1");
+    const qs = params.length ? `?${params.join("&")}` : "";
     const res = await this.call(`/v1/jobs/next${qs}`);
     if (!res.ok) await this.throwApiError("nextJob", res);
     const data = (await res.json()) as {
       job: FlareJob | null;
+      checkout?: unknown;
       secrets?: Record<string, string>;
       secretsError?: boolean;
       selection?: unknown;
@@ -818,6 +844,7 @@ export class FlareClient {
     }
     return {
       job: data.job,
+      checkout: parseClaimCheckout(data.checkout),
       secrets,
       secretsError: data.secretsError === true,
       selection: parseClaimSelection(data.selection),

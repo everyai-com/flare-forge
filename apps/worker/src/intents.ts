@@ -641,6 +641,9 @@ async function revokeForkTokens(handle: TournamentRepoHandle): Promise<number | 
 // fork from a prior claim is reused, with every token on it revoked
 // first) and mint a fork-scoped write token (1 h). A fork/token failure releases the claim back to its prior
 // state. The agent never receives a trunk token (§3.2 invariant 1).
+const FORK_ATTEMPTS = 2;
+const FORK_RETRY_DELAY_MS = 750;
+
 export async function claimIntent(
   db: Db,
   artifacts: ForgeArtifacts,
@@ -677,24 +680,37 @@ export async function claimIntent(
   let remote = "";
   let reused = from === "expired";
   let trunk: TournamentRepoHandle | null = null;
-  try {
-    trunk = await artifacts.get(current.repo);
+  // One retry on a transient Artifacts failure (seen live: a fork call
+  // that drops mid-flight). A fork that did land answers "already
+  // exists" on the retry and is reused, so retrying is safe.
+  let lastError = "";
+  for (let attempt = 1; attempt <= FORK_ATTEMPTS && !remote && !reused; attempt++) {
     try {
-      const forked = await trunk.fork(forkRepo, { defaultBranchOnly: true });
-      remote = forked.remote;
+      trunk = await artifacts.get(current.repo);
+      try {
+        const forked = await trunk.fork(forkRepo, { defaultBranchOnly: true });
+        remote = forked.remote;
+      } catch (err) {
+        if (!isAlreadyExists(err)) throw err;
+        reused = true;
+      }
     } catch (err) {
-      if (!isAlreadyExists(err)) throw err;
-      reused = true;
+      lastError = String(err instanceof Error ? err.message : err).slice(0, 200);
+      console.log(JSON.stringify({ level: "warn", msg: "forge fork failed", intent: current.id, fork: forkRepo, attempt, error: lastError }));
+      if (attempt < FORK_ATTEMPTS) await new Promise((r) => setTimeout(r, FORK_RETRY_DELAY_MS));
+    } finally {
+      dispose(trunk);
+      trunk = null;
     }
-  } catch {
+  }
+  if (!remote && !reused) {
     await release();
-    return { error: "fork-failed", message: "could not fork trunk" };
-  } finally {
-    dispose(trunk);
+    return { error: "fork-failed", message: lastError ? `could not fork trunk: ${lastError}` : "could not fork trunk" };
   }
 
   let token = "";
   let revoked = 0;
+  let forkBase = "";
   let fork: TournamentRepoHandle | null = null;
   try {
     fork = await artifacts.get(forkRepo);
@@ -713,6 +729,17 @@ export async function claimIntent(
     const out = await fork.createToken("write", FORK_TOKEN_TTL_SECONDS);
     const plaintext = typeof out === "string" ? out : out.plaintext;
     token = typeof plaintext === "string" ? plaintext : "";
+    if (!reused) {
+      // A fresh fork snapshots trunk NOW, not at declare time: record its
+      // head as the intent's base, or every change that landed between
+      // declare and claim reads as this intent's drift (seen live).
+      try {
+        const [tip] = await fork.log({ ref: "main", limit: 1 });
+        if (tip && /^[0-9a-f]{40}$/.test(tip.hash)) forkBase = tip.hash;
+      } catch {
+        // Unknown base: keep the declare-time one.
+      }
+    }
     if (!remote) {
       // Reused fork: the handle may expose its remote URL.
       const r: unknown = "remote" in fork ? fork.remote : undefined;
@@ -726,6 +753,13 @@ export async function claimIntent(
   if (!token) {
     await release();
     return { error: "token-failed", message: "could not mint a fork write token" };
+  }
+  if (forkBase && forkBase !== current.baseSha) {
+    await db
+      .prepare("UPDATE intents SET base_sha = ?, updated_at = ? WHERE id = ? AND state = 'claimed' AND agent = ?")
+      .bind(forkBase, nowIso(), current.id, a.value)
+      .run()
+      .catch(() => undefined);
   }
   await appendForgeLedger(db, {
     repo: current.repo,

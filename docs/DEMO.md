@@ -108,7 +108,8 @@ provision managed seats so train CI runs without your laptop.
 2. **Give trains a computer.** Trains run `flare.yml` on the exact
    merged SHA. If setup provisioned seats, skip this step. Otherwise go
    to dashboard Home, click **Use my computer**, and paste the one line
-   it shows:
+   it shows (the runner checks train lanes out from Artifacts with a
+   short-lived read token it gets with each claim):
 
    ```sh
    curl -fsSL https://<your-flare>.workers.dev/runner.sh | sh -s <PAIR-CODE>

@@ -664,14 +664,20 @@ export async function pollRaces(deps: ReplayDeps, repo: string): Promise<{ resol
         .prepare("SELECT fork_repo FROM attempts WHERE tournament_id = ? AND verdict_rank = 1")
         .bind(t.id)
         .first<{ fork_repo: string }>();
+      let reason = "race winner was not green";
       if (run && run.status === "success" && winner) {
         const res = await resolveConflictFor(deps, row.id, REPLAY_AGENT, t.resolved_sha, { forkRepo: winner.fork_repo, llmReplay: true });
         if (!("error" in res)) {
           out.resolved += 1;
           continue;
         }
+        // Green winner, failed resolution: say why (the old message
+        // blamed CI for a footprint read failure).
+        reason = `race winner was green but could not be resolved: ${res.error}: ${res.message}`.slice(0, 300);
+      } else if (run && run.status === "success") {
+        reason = "race decided without a ranked winner";
       }
-      await releaseClaim(deps, conflict, row.intent_a, "race winner was not green");
+      await releaseClaim(deps, conflict, row.intent_a, reason);
       out.failed += 1;
       continue;
     }
