@@ -5,7 +5,7 @@
 
 import { DEFAULT_CONSTANTS } from "./constants.ts";
 import { pullBreakdown, type PollProjection } from "./pull.ts";
-import { MODE_LABELS, type Mode, type ModeMetrics, type SimResult } from "./sim.ts";
+import { GIT_MODE_LABELS, MODE_LABELS, type Mode, type ModeMetrics, type SimResult } from "./sim.ts";
 
 export interface BenchMetrics {
   landed: number;
@@ -324,8 +324,7 @@ function renderTable(head: readonly string[], rows: string[][], markdown: boolea
   return [line(head), widths.map((w) => "-".repeat(w)).join("  "), ...rows.map(line)].join("\n");
 }
 
-const shortLabel = (r: PullCurveRow): string =>
-  r.variant === "forge-fetch-cache" ? "Forge + fetch cache (design, not shipped)" : r.mode === "baseline" ? "Baseline (PR flow, same Artifacts repo)" : r.mode === "trains" ? "Forge, trains only" : "Forge, full";
+const shortLabel = (r: PullCurveRow): string => (r.variant ? r.label : GIT_MODE_LABELS[r.mode]);
 
 export function formatPullCurve(docs: readonly BenchDoc[], opts: { markdown?: boolean } = {}): string {
   const rows = pullCurve(docs);

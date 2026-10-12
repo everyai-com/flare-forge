@@ -47,7 +47,7 @@ export const MODES = ["baseline", "trains", "forge"] as const;
 export type Mode = (typeof MODES)[number];
 
 export const MODE_LABELS: Record<Mode, string> = {
-  baseline: "Baseline: branch + PR + serial queue (PR flow on the same Artifacts repo)",
+  baseline: "Baseline: branch + PR + serial queue",
   trains: "Forge, trains only",
   forge: "Forge, full",
 };
@@ -59,6 +59,14 @@ export interface HumanMinutes {
   audit: number;
   escalation: number;
 }
+
+// Labels for the git traffic (pull model) tables: every mode runs on the
+// same Artifacts repo; the baseline uses branches instead of forks.
+export const GIT_MODE_LABELS: Record<Mode, string> = {
+  baseline: "Baseline: PR flow on the same Artifacts repo",
+  trains: "Forge, trains only",
+  forge: "Forge, full",
+};
 
 // SIMULATED Artifacts git operations by kind. fork/clone/fetch/push are
 // the billable kinds (the pricing page names create, push, pull, clone);
