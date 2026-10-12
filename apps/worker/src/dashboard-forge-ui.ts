@@ -88,6 +88,7 @@ tbody tr.clickable:hover, .run-row:hover, .run-row.selected { background: var(--
 .fx-spark { width: 64px; height: 18px; flex: none; }
 .fx-spark polyline { fill: none; stroke: var(--soft); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .fx-counters.stale .fx-cval { color: var(--muted); }
+#fxLiveCounters { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .fx-live-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: start; }
 html.ui-simple #fxLive[data-live-empty="1"] .fx-big3,
 html.ui-simple #fxLive[data-live-empty="1"] .fx-skey,
@@ -543,6 +544,7 @@ html:not(.ui-simple) .fx-simple-only { display: none !important; }
 .fx-big[data-tone="landed"] { border-top-color: var(--st-landed); }
 .fx-big .v { font-size: 34px; line-height: 38px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .fx-big .l { font-size: 13.5px; color: var(--soft); }
+.fx-ops-line { margin: 0 0 10px; font-size: 13px; color: var(--soft); }
 .fx-skey { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0 0 12px; font-size: 12.5px; color: var(--soft); }
 .fx-main-ok { font-size: 13.5px; font-weight: 600; }
 .fx-main-ok.ok { color: var(--st-landed); }
@@ -716,6 +718,9 @@ body.fx-stagemode .fx-live-grid { grid-template-columns: minmax(0, 1fr) 380px; }
   .fx-inbox-grid { grid-template-columns: 170px minmax(0, 1fr); }
   .fx-inbox-grid .fx-detail { grid-column: 1 / -1; position: static; max-height: none; }
   .fx-counters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #fxLiveCounters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #fxLiveCounters .fx-counter:nth-child(4) { border-left: 1px solid var(--line); border-top: none; }
+  #fxLiveCounters .fx-counter:nth-child(5) { border-left: none; }
   .fx-counter:nth-child(4) { border-left: none; }
   .fx-counter:nth-child(n+4) { border-top: 1px solid var(--line); }
 }
@@ -742,6 +747,8 @@ body.fx-stagemode .fx-live-grid { grid-template-columns: minmax(0, 1fr) 380px; }
 }
 @media (max-width: 640px) {
   .fx-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #fxLiveCounters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #fxLiveCounters .fx-counter:nth-child(4) { border-top: 1px solid var(--line); }
   .fx-clabel { white-space: normal; }
   .fx-notice { font-size: 12px; }
   .fx-md-list .fx-panel-head .fx-path:last-child { display: none; }

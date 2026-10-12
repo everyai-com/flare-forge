@@ -13,6 +13,7 @@
 // endpoint is missing (404/501), and it always labels them as demo data.
 // No number here is a measurement. Text must stay free of backticks and
 // dollar-brace sequences (DASHBOARD_HTML embeds it; see dashboard.test.ts).
+import { simulatedOpsEconomics } from "./forge-ops";
 
 export interface FixtureRiskTerm {
   term: "protected_path" | "footprint_size" | "drift" | "llm_replay" | "weak_evidence" | "reviewer_disagrees";
@@ -351,7 +352,9 @@ function bookshelfSnapshot() {
     repo: BOOKSHELF,
     head: { sha: HEAD, at: "2026-10-12T14:00:12Z" },
     policy: { protected: ["src/auth/**", "migrations/**"], auto_land_max_risk: 30, audit_sample: 0.05 },
-    counters: { agents: 7, intents: 7, overlaps_caught: 2, conflicts_open: 1, landed_today: 5, main_red_minutes: 0, human_seconds_today: 90 },
+    counters: { agents: 7, intents: 7, overlaps_caught: 2, conflicts_open: 1, landed_today: 5, main_red_minutes: 0, human_seconds_today: 90, artifacts_ops: 84, ops_per_landed: 16.8 },
+    // SIMULATED (fixture): 12 intents x the sim's 7 ops, 5 landed.
+    ops: simulatedOpsEconomics(12, 5),
     series: {
       agents: [1, 3, 4, 6, 8, 8, 7, 7],
       intents: [2, 4, 7, 9, 11, 10, 9, 7],
@@ -386,7 +389,8 @@ function monorepoSpec() {
     sim: true,
     head: { sha: "3c9e1a0", at: "2026-10-12T14:00:00Z" },
     policy: { protected: ["apps/api/auth/**", "infra/migrations/**"], auto_land_max_risk: 30, audit_sample: 0.05 },
-    counters: { agents: 10000, intents: 6118, overlaps_caught: 1628, conflicts_open: 2, landed_today: 4318, main_red_minutes: 0, human_seconds_today: 270 },
+    counters: { agents: 10000, intents: 6118, overlaps_caught: 1628, conflicts_open: 2, landed_today: 4318, main_red_minutes: 0, human_seconds_today: 270, artifacts_ops: 73052, ops_per_landed: 16.9 },
+    ops: simulatedOpsEconomics(6118 + 4318, 4318),
     series: {
       agents: [1200, 2600, 4100, 6400, 8200, 9300, 9900, 10000],
       intents: [900, 1900, 3100, 4300, 5200, 5800, 6050, 6118],

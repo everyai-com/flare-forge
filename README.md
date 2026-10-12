@@ -28,11 +28,38 @@ This repo is Flare Forge's entry for Cloudflare's
 ["Build the next Git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/)
 competition (Workers + Artifacts, submissions close Oct 14, 2026).
 
-1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live)
-2. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)).
-3. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
+1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live) (demo data, rendered in your tab).
+2. **Watch a real swarm** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf), or ask your own Claude Code what the agents are doing:
+
+   ```bash
+   claude mcp add --transport http flare-forge-watch https://flare-actions.everyai-com.workers.dev/v1/public/forge/mcp
+   ```
+
+   Then: *"What are the agents doing in bookshelf right now, and what has it cost in Artifacts operations?"*
+3. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)). The run ends with a `report.json`: timings plus the ops ledger.
+4. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
 
 Artifacts gives every agent a repo. Forge gives every repo one plan.
+
+### What it costs at 10,000 agents
+
+Artifacts bills operations from Oct 14, 2026 ($0.15 per 1,000 past
+10,000 a month). Forge answers "who is touching `src/auth`?" from a
+Durable Object, with zero git operations, so its git traffic grows
+with the number of changes, not with time. The **ops ledger** counts
+every Artifacts operation from Cloudflare's own events (created,
+forked, imported, deleted, pushed, cloned, fetched), attributes each
+to its intent or to trunk, and prices it per landed change
+([docs/FORGE.md](docs/FORGE.md#ops-ledger)). It is on the live map,
+in `forge snapshot`, in `report_push` / `mark_ready`, and in the
+public MCP.
+
+| | Ops per landed change | $ per 10,000 changes | Status |
+|---|---|---|---|
+| Forge, Bookshelf swarm on the hosted deployment | *pending live run* | *pending* | Measured from Cloudflare events once the live run lands ([plan §4](docs/FORGE-PRODUCT-PLAN.md#4-the-last-mile-list-ranked-by-score-moved)) |
+| Forge, simulator model | 7 per intent (train traffic not included) | $10.50 | **SIMULATED** (`apps/sim` assumption) |
+| An agent that fetches every 30 s to stay fresh | Forge's figure + 16 | | **Projected**, not measured |
+
 The product plan, the repo decision and the schedule to submission are
 in [docs/FORGE-PRODUCT-PLAN.md](docs/FORGE-PRODUCT-PLAN.md); the full
 engineering plan is [docs/COMPETITION-PLAN.md](docs/COMPETITION-PLAN.md).

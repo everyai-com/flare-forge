@@ -13,6 +13,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import type { WorkerEnv } from "./env";
+import { meteredArtifacts } from "./coordinator";
 import { validateRepo } from "./intents";
 import { MemoryFS } from "./memory-fs";
 import { artifactsRemoteFor } from "./promote";
@@ -62,7 +63,9 @@ export function trainDepsFromEnv(env: WorkerEnv, opts: { launch?: boolean } = {}
   const wf = opts.launch === false ? null : workflowOf(env);
   const deps: ReplayDeps = {
     db: env.DB,
-    artifacts: env.ARTIFACTS ?? null,
+    // Metered: the train's binding reads and token mints feed the
+    // repo's ops ledger (forge-ops.ts).
+    artifacts: meteredArtifacts(env).artifacts,
     namespace,
     remoteFor: (repo) => artifactsRemoteFor(env.ARTIFACTS_ACCOUNT_ID ?? "", namespace, repo),
     git,

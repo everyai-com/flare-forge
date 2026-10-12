@@ -30,6 +30,7 @@ import {
   type Train,
   type TrainState,
 } from "./intents-core";
+import { opsEconomics, type IntentOps, type OpsEconomics, type OpsTotals } from "./forge-ops";
 
 // Intents that still hold (or may soon hold) a footprint. Drafts count:
 // overlaps must surface before any code is written (plan §3.3).
@@ -125,7 +126,14 @@ export interface ForgeSnapshot {
     landed_today: number;
     main_red_minutes: number;
     human_minutes: number;
+    // Billable Artifacts operations since the ledger began, and that
+    // over changes landed since then (null = no ledger / no landing).
+    artifacts_ops: number | null;
+    ops_per_landed: number | null;
   };
+  // The ops ledger (forge-ops.ts): measured from Cloudflare's Artifacts
+  // events, priced at list. Null on the D1 fallback (no Coordinator).
+  ops: OpsEconomics | null;
   cells: SnapshotCell[];
   dots: SnapshotDot[];
   track: { current: SnapshotTrain | null; recent: SnapshotTrain[] };
@@ -220,6 +228,9 @@ export interface ForgeCoordinatorPort {
   // Re-read one intent from D1 into the hot index after another module
   // moved its state (claim, ready, approve-plan, conflicts). D1 = no-op.
   sync?(repo: string, intentId: string): Promise<void>;
+  // One intent's Artifacts operations so far (forge-ops.ts); absent or
+  // null = no ledger on this deployment.
+  intentOps?(repo: string, intentId: string): Promise<IntentOps | null>;
 }
 
 // Stream C: provenance (why.ts): line -> commit -> notes -> intent.
@@ -363,6 +374,8 @@ export function buildSnapshot(input: {
   now?: string;
   edges?: SnapshotEdge[];
   ver?: number | null;
+  // Ledger totals plus changes landed since the ledger began.
+  ops?: { totals: OpsTotals; landedSince: number } | null;
 }): ForgeSnapshot {
   const byCell = new Map<string, Intent[]>();
   const dots: SnapshotDot[] = [];
@@ -426,6 +439,7 @@ export function buildSnapshot(input: {
   const current = trains.find((t) => !TRAIN_TERMINAL.includes(t.state)) ?? null;
   const recent = trains.filter((t) => TRAIN_TERMINAL.includes(t.state)).slice(0, 5);
   const leased = input.intents.filter((x) => x.agent && x.state !== "draft" && x.state !== "awaiting_plan");
+  const ops = input.ops ? opsEconomics(input.ops.totals, input.ops.landedSince) : null;
   return {
     repo: input.repo,
     generatedAt: input.now ?? nowIso(),
@@ -440,7 +454,10 @@ export function buildSnapshot(input: {
       // red by construction. Reported, not assumed: trains own the CAS.
       main_red_minutes: 0,
       human_minutes: 0,
+      artifacts_ops: ops ? ops.billable : null,
+      ops_per_landed: ops ? ops.perLandedChange : null,
     },
+    ops,
     cells,
     dots,
     track: { current: current ? snapTrain(current) : null, recent: recent.map(snapTrain) },

@@ -498,7 +498,7 @@ export const PUBLIC_MCP_TOOLS: Array<{ name: string; description: string; op: Fo
   {
     name: "forge_snapshot",
     description:
-      "Read-only: the live map of a public Flare Forge repo — counters (agents, intents, overlaps caught, conflicts, landed today), directory cells, one dot per live intent, the train track and trunk head. Use it to answer 'what are the agents doing right now?'.",
+      "Read-only: the live map of a public Flare Forge repo — counters (agents, intents, overlaps caught, conflicts, landed today, Artifacts ops), directory cells, one dot per live intent, the train track, trunk head and the ops ledger (Cloudflare Artifacts operations per landed change, in dollars at list price). Use it to answer 'what are the agents doing right now?' and 'what does this cost?'.",
     op: snapshotOp,
   },
   {

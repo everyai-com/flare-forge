@@ -30,3 +30,8 @@ export class WorkerEntrypoint {
 }
 
 export const env = {};
+
+// Runtime `waitUntil` import: tests settle the promise and ignore it.
+export function waitUntil(promise: Promise<unknown>): void {
+  promise.catch(() => {});
+}

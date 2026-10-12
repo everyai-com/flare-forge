@@ -153,13 +153,14 @@ number they can check against Cloudflare's own metrics).
 | Forge core: intents, Coordinator DO, trains, replay, races, `why`, MCP (14 tools), REST, SDK, CLI, skill | Shipped | `npm test` 108 files / 1371 tests at `56a3c84`; FORGE.md, FORGE-AGENTS.md |
 | Dashboard live map, inbox, why panel, demo fixture mode, guided tour | Shipped | `GET /dashboard?demo=1` on prod returns 200 |
 | Benchmark | **SIMULATED only** (seed 7, `7b37655`) | FORGE-BENCH.md says so on every table; no live harness run recorded |
-| Artifacts ops | **An assumption** (7 per intent) in `apps/sim/src/constants.ts` | Not measured anywhere |
+| Artifacts ops | **Ledger built** (2026-10-12, branch `forge/ops-ledger`): Cloudflare's own events + binding meter, per intent, per landed change, priced. **Not yet measured live**: needs the deploy + item 1. The sim's 7-per-intent assumption stays labelled SIMULATED | `forge-ops.test.ts` (22 tests), binding meter exercised in `wrangler dev` against the real `ARTIFACTS` binding (2026-10-12) |
 | Live run against a deployed worker + real Artifacts | A `wrangler dev` run on 2026-10-10 (FORGE.md "Live run") | DEMO.md provenance: "Nothing here has been run against a deployed Worker or Artifacts yet" |
 | Spectator mode (`/watch`, public read-only MCP) | Code shipped, **not enabled on prod** | `GET /watch` and `GET /v1/public/forge/mcp` return 404 on prod |
 | Demo tooling (`forge:demo`, `forge:agents`, `forge:director`) | Dry-run verified only | DEMO.md provenance |
 | Publishable CLI | `npm publish` not yet run by a human | COMPETITION-PLAN status board |
 | Eligibility | Open: US/Canada resident, 18+, in SF on Oct 21 | Status board: Varun to confirm with git-competition@cloudflare.com |
-| README "start here", video, submission | Not done | This document, §5 |
+| README "start here" | Written (2026-10-12): hosted URL, spectator link + public MCP one-liner, `forge:demo`, concept, ops table with the live row marked *pending* | Links to `/watch` work only once item 2 enables spectator mode on prod |
+| Video, submission | Not done | This document, §5 |
 | Repo | `flare-forge` created, private, history pushed | This session |
 
 The honest summary: the product is built and tested; **nothing has been
