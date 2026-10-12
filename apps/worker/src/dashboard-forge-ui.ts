@@ -544,6 +544,36 @@ html:not(.ui-simple) .fx-simple-only { display: none !important; }
 .fx-big[data-tone="landed"] { border-top-color: var(--st-landed); }
 .fx-big .v { font-size: 34px; line-height: 38px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .fx-big .l { font-size: 13.5px; color: var(--soft); }
+/* Judge view (demo, /watch): legible at 1080p video scale, idle paths recede. */
+body.fx-judge .fx-dot { margin: -8px 0 0 -8px; }
+body.fx-judge .fx-dot-core { width: 16px; height: 16px; }
+body.fx-judge .fx-dot-tag { font: 650 13px/18px var(--mono); padding: 0 6px; }
+body.fx-judge .fx-cell-label { font: 600 13px/18px var(--mono); color: var(--ink); }
+body.fx-judge .fx-cell-meta { font: 500 12px/16px var(--mono); }
+body.fx-judge .fx-cell[data-agents="0"]:not(.overlap):not(.conflict) { background: transparent; border-style: dashed; }
+body.fx-judge .fx-cell[data-agents="0"]:not(.overlap):not(.conflict) .fx-cell-label { color: var(--faint); font-weight: 500; }
+body.fx-judge .fx-cell[data-agents="0"] .fx-cell-meta { display: none; }
+body.fx-judge .fx-stage { height: 22px; font: 500 12px var(--mono); }
+body.fx-judge #modeBtn, body.fx-judge #paletteBtn, body.fx-judge #fxJsonLink, body.fx-judge #fxKeysBtn, body.fx-judge #fxThemeBtn { display: none !important; }
+body.fx-judge #fxNotice[data-screen="live"] { display: none !important; }
+.fx-story-chip a { margin-left: 8px; color: var(--st-working); }
+.fx-story { margin: 0 0 12px; }
+.fx-story[hidden] { display: none; }
+.fx-story-beats { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.fx-beat { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 12px 14px; min-width: 0; transition: border-color 300ms ease, box-shadow 300ms ease; }
+.fx-beat[data-active="1"] { border-color: var(--st-working); box-shadow: 0 0 0 3px var(--tint-working); }
+.fx-beat-n { font: 600 12px/1 var(--mono); color: var(--muted); letter-spacing: 0.06em; }
+.fx-beat-t { margin: 6px 0 4px; font-size: 16px; font-weight: 650; color: var(--ink); line-height: 1.25; }
+.fx-beat-d { margin: 0; font-size: 13.5px; color: var(--soft); line-height: 1.4; }
+.fx-beat-p { margin: 8px 0 0; font: 600 13px/1.3 var(--mono); color: var(--st-landed); }
+.fx-narrate { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 0; padding: 9px 14px; border-radius: 8px; background: var(--tint-working); color: var(--ink); font-size: 14.5px; line-height: 1.4; min-height: 22px; }
+.fx-narrate[data-idle="1"] { background: transparent; color: var(--muted); padding-left: 0; }
+.fx-narrate .fx-narrate-k { font: 600 12px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--st-working); flex: none; }
+.fx-story-chip { display: inline-flex; gap: 6px; align-items: baseline; margin: 8px 0 0; font: 500 12.5px/1.3 var(--mono); color: var(--soft); }
+.fx-story-chip b { color: var(--ink); font-weight: 650; }
+.fx-story-chip .sim { color: var(--st-human); }
+html.ui-simple #fxStory:not([hidden]) ~ #fxLiveSimple .fx-meaning, html.ui-simple #fxStory:not([hidden]) ~ #fxLiveSimple .fx-ops-line { display: none; }
+@media (max-width: 900px) { .fx-story-beats { grid-template-columns: minmax(0, 1fr); } .fx-beat-d { display: none; } }
 .fx-ops-line { margin: 0 0 10px; font-size: 13px; color: var(--soft); }
 .fx-skey { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0 0 12px; font-size: 12.5px; color: var(--soft); }
 .fx-main-ok { font-size: 13.5px; font-weight: 600; }
@@ -815,6 +845,7 @@ export const FORGE_PANE_HTML = String.raw`
 </div>
 <div class="fx-notice" id="fxNotice" hidden></div>
 <div class="fx-screen" id="fxLive" data-screen="live" hidden>
+<section class="fx-story" id="fxStory" aria-label="What Forge does" hidden></section>
 <div class="fx-simple-only" id="fxLiveSimple" role="region" aria-label="At a glance"></div>
 <ul class="fx-counters fx-pro-only" id="fxLiveCounters" aria-label="Live counters"></ul>
 <div class="fx-live-grid">

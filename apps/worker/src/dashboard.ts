@@ -69,21 +69,28 @@ export const DASHBOARD_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script id="uiModeScript">
-/* ui-mode: Simple (default) or Pro, set before first paint. ?mode= overrides and persists. */
+/* ui-mode: Simple (default) or Pro, set before first paint. ?mode= overrides and persists.
+   Demo and stage visitors (judges) default to Pro: it keeps Forge's own words
+   (intent, train, trunk) on screen. An explicit stored choice still wins. */
 (function () {
   var m = "simple";
   try {
-    var q = new URLSearchParams(location.search).get("mode");
+    var sp = new URLSearchParams(location.search);
+    var q = sp.get("mode");
+    var dm = sp.get("demo");
+    var judge = dm === "1" || dm === "true" || dm === "scale" || sp.get("stage") === "1" || location.pathname === "/watch";
+    var stored = localStorage.getItem("flare-ui-mode");
     if (q === "pro" || q === "simple") { m = q; localStorage.setItem("flare-ui-mode", q); }
-    else if (localStorage.getItem("flare-ui-mode") === "pro") m = "pro";
+    else if (stored === "pro") m = "pro";
+    else if (judge && stored !== "simple") m = "pro";
   } catch (e) { /* storage blocked: stay Simple */ }
   document.documentElement.classList.add(m === "pro" ? "ui-pro" : "ui-simple");
 })();
 </script>
-<meta name="description" content="Flare Actions dashboard: agent tournaments, CI runs, merge queue, and settings.">
+<meta name="description" content="Flare Forge: many AI agents on one repo. Agents declare intent before they edit, overlaps come back before code exists, and only CI-verified trains move main.">
 <meta name="theme-color" content="#0a0a0a">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23fafafa'/%3E%3Ctext x='16' y='23' font-family='system-ui,sans-serif' font-size='19' font-weight='800' fill='black' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
-<title>Flare Actions</title>
+<title>Flare Forge</title>
 <link rel="alternate" type="application/json" id="fxAltLink" href="/v1/forge/snapshot">
 <style>
 :root { color-scheme: dark; --bg: #0a0a0a; --card: #111113; --sidebar: #0a0a0a; --line: #1f1f23; --line-strong: #2e2e33; --ink: #fafafa; --soft: #a1a1aa; --muted: #71717a; --faint: #3f3f46; --accent: #fafafa; --accent-hover: #e4e4e7; --accent-ink: #7aa8f0; --danger: #f87171; --ok: #4ade80; --warn: #fbbf24; --info: #7db4f7; --hover: #17171a; --input-bg: #0a0a0a; --ring: #52525b; }
@@ -546,7 +553,7 @@ html.ui-simple #authPane.auth-more #authMoreRow { display: none !important; }
 </head>
 <body>
 <header>
-<h1 class="brand-head"><span class="brand-mark">F</span><span>Flare Actions</span></h1>
+<h1 class="brand-head"><span class="brand-mark">F</span><span>Flare Forge</span></h1>
 <nav class="side-nav" id="sideNav" aria-label="Primary">
 <button id="tabHome" class="side-link" data-tab="home" type="button" data-simple-nav="primary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7.2 8 2.5l5.5 4.7V13a.5.5 0 0 1-.5.5H9.6V10H6.4v3.5H3a.5.5 0 0 1-.5-.5z"/></svg><span data-simple="label">Home</span></button>
 ${FORGE_NAV_HTML}
@@ -567,7 +574,7 @@ ${FORGE_NAV_BENCH_HTML}
 <main><div class="wrap">
 <section id="authPane" class="card s-pane auth-card" hidden>
 <div class="auth-narrow">
-<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Actions</span></div>
+<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Forge</span></div>
 <div class="auth-meaning simple-only">
 <h2 data-simple="head">Your code, always checked</h2>
 <p class="muted" data-simple="text">Your AI agents work together without breaking each other's code.</p>
@@ -623,7 +630,7 @@ ${FORGE_AUTH_DEMO_HTML}
 </section>
 <section id="invitePane" class="card s-pane auth-card" hidden>
 <div class="auth-narrow">
-<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Actions</span></div>
+<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Forge</span></div>
 <h2 data-simple="head">You've been invited 👋</h2>
 <p class="muted" id="inviteInfo"></p>
 <form id="inviteForm" class="auth-form">
@@ -637,7 +644,7 @@ ${FORGE_AUTH_DEMO_HTML}
 </section>
 <section id="resetPane" class="card s-pane auth-card" hidden>
 <div class="auth-narrow">
-<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Actions</span></div>
+<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Forge</span></div>
 <h2 data-simple="head">Reset your password</h2>
 <p class="muted"><span class="pro-only">If that account exists, we'll email a single-use reset link (1 hour).</span><span class="simple-only" data-simple="text">We'll email you a link. It works once, for one hour.</span></p>
 <form id="resetRequestForm" class="auth-form">
@@ -652,7 +659,7 @@ ${FORGE_AUTH_DEMO_HTML}
 </section>
 <section id="resetConfirmPane" class="card s-pane auth-card" hidden>
 <div class="auth-narrow">
-<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Actions</span></div>
+<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Forge</span></div>
 <h2 data-simple="head">Choose a new password</h2>
 <form id="resetConfirmForm" class="auth-form">
 <label class="field"><span>New password</span><input id="resetPw1" type="password" placeholder="8+ characters" autocomplete="new-password"></label>
@@ -664,11 +671,11 @@ ${FORGE_AUTH_DEMO_HTML}
 </section>
 <section id="magicConfirmPane" class="card s-pane auth-card" hidden>
 <div class="auth-narrow">
-<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Actions</span></div>
+<div class="brand"><span class="brand-mark">F</span><span class="brand-name">Flare Forge</span></div>
 <h2 data-simple="head">Finish logging in</h2>
 <p class="muted"><span class="pro-only">This link works once. Continue only if you requested it.</span><span class="simple-only" data-simple="text">This link works once. Go on only if you asked for it.</span></p>
 <form id="magicConfirmForm" class="auth-form">
-<button type="submit" class="btn-block">Continue to Flare Actions</button>
+<button type="submit" class="btn-block">Continue to Flare Forge</button>
 </form>
 <p id="magicConfirmErr" class="err"></p>
 </div>
@@ -2534,7 +2541,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     settingsPane.hidden = name !== "settings";
     teamPane.hidden = name !== "settings";
     currentTab = name;
-    document.title = (tabTitle(name) || "Dashboard") + " · Flare Actions";
+    document.title = (tabTitle(name) || "Dashboard") + " · Flare Forge";
     var panes = { home: homePane, runs: runsPane, tournaments: tournamentsPane, repos: reposPane, merge: mergePane, settings: settingsPane };
     if (panes[name]) {
       panes[name].classList.remove("pane-enter");
@@ -2663,7 +2670,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     err.textContent = "";
     list.textContent = "";
     document.getElementById("tournamentDetail").hidden = true;
-    document.title = "Races · Flare Actions";
+    document.title = "Races · Flare Forge";
     list.className = "t-enter";
     skeleton(list, 3, "skel-row");
     api("/v1/tournaments").then(function (b) {
@@ -2944,7 +2951,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     api("/v1/tournaments/" + encodeURIComponent(id)).then(function (b) {
       document.getElementById("tournamentsList").textContent = "";
       document.getElementById("tournamentDetail").hidden = false;
-      document.title = String(b.tournament.intent).slice(0, 60) + " · Flare Actions";
+      document.title = String(b.tournament.intent).slice(0, 60) + " · Flare Forge";
       syncHash();
       renderTournamentWhy(b);
       renderTournamentReview(b);
@@ -2969,7 +2976,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     list.textContent = "";
     document.getElementById("repoDetail").hidden = true;
     currentRepo = "";
-    document.title = tabTitle("repos") + " · Flare Actions";
+    document.title = tabTitle("repos") + " · Flare Forge";
     list.className = "t-enter";
     skeleton(list, 4, "skel-row");
     api("/v1/repos?limit=50").then(function (b) {
@@ -3031,7 +3038,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     repoSimple = { runs: null, pipeline: null, info: null };
     document.getElementById("reposList").textContent = "";
     document.getElementById("repoDetail").hidden = false;
-    document.title = name + " · Flare Actions";
+    document.title = name + " · Flare Forge";
     syncHash();
     skeleton(document.getElementById("repoHead"), 1, "skel-line");
     skeleton(document.getElementById("repoFiles"), 3, "skel-row");
@@ -3781,7 +3788,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
       box.textContent = "";
       box.hidden = false;
       runDetailOpenId = data.run.id;
-      document.title = (data.run.repo || "run") + " @ " + String(data.run.sha || "").slice(0, 7) + " · Flare Actions";
+      document.title = (data.run.repo || "run") + " @ " + String(data.run.sha || "").slice(0, 7) + " · Flare Forge";
       syncHash();
       var head = el("h2");
       if (uiSimple()) {
@@ -3961,7 +3968,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
       var back = el("button", uiSimple() ? SC.l_back : "Back to runs");
       back.id = "backToRuns";
       back.className = "ghost";
-      back.addEventListener("click", function () { box.hidden = true; runDetailOpenId = null; selectedRunId = null; document.title = tabTitle("runs") + " · Flare Actions"; loadRuns(); syncHash(); });
+      back.addEventListener("click", function () { box.hidden = true; runDetailOpenId = null; selectedRunId = null; document.title = tabTitle("runs") + " · Flare Forge"; loadRuns(); syncHash(); });
       box.appendChild(back);
       if (scroll) box.scrollIntoView();
     }).catch(function () {});

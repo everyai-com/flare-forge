@@ -94,7 +94,7 @@ describe("repo scoping", () => {
 
 describe("dashboard", () => {
   it("serves a page wired to the admin and runs APIs", () => {
-    expect(DASHBOARD_HTML).toContain("<title>Flare Actions</title>");
+    expect(DASHBOARD_HTML).toContain("<title>Flare Forge</title>");
     expect(DASHBOARD_HTML).toContain("/v1/admin/tokens");
     expect(DASHBOARD_HTML).toContain("/v1/admin/users");
     expect(DASHBOARD_HTML).toContain("/v1/admin/settings");
