@@ -5135,6 +5135,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ForgeOverlap'
+                  ops:
+                    $ref: '#/components/schemas/ForgeIntentOps'
                   inbox:
                     type: array
                     items:
@@ -5195,6 +5197,8 @@ paths:
                       - human
                   train:
                     type: object
+                  ops:
+                    $ref: '#/components/schemas/ForgeIntentOps'
                   nextSteps:
                     $ref: '#/components/schemas/ForgeNextSteps'
         '401':
@@ -7137,6 +7141,94 @@ components:
           type: string
         command:
           type: string
+    ForgeOpsLedger:
+      type: object
+      description: >-
+        The ops ledger (forge-ops.ts). Event counts come from Cloudflare's
+        own Artifacts events (created, forked, imported, deleted, pushed,
+        cloned, fetched); binding counts are the reads and token mints
+        Forge makes through the ARTIFACTS binding. usd is list price
+        ($0.15 per 1,000) before the 10,000-op monthly allowance, over
+        the documented billable kinds. `projected` is a projection,
+        never a measurement. `simulated: true` marks fixture data.
+      properties:
+        status:
+          type: string
+          enum: [measured, empty]
+        since:
+          type: string
+          nullable: true
+        events:
+          type: object
+          additionalProperties:
+            type: integer
+        binding:
+          type: object
+          additionalProperties:
+            type: integer
+        bySubject:
+          type: object
+          additionalProperties:
+            type: integer
+        billable:
+          type: integer
+        total:
+          type: integer
+        landed:
+          type: integer
+        perLandedChange:
+          type: number
+          nullable: true
+        usd:
+          type: number
+        usdPerLandedChange:
+          type: number
+          nullable: true
+        upperBound:
+          type: object
+          properties:
+            ops:
+              type: integer
+            usd:
+              type: number
+        projected:
+          type: object
+          properties:
+            naivePerLandedChange:
+              type: number
+              nullable: true
+            naiveFetchesPerChange:
+              type: integer
+            at10kChanges:
+              type: object
+              nullable: true
+            assumption:
+              type: string
+        pricing:
+          type: object
+        note:
+          type: string
+        simulated:
+          type: boolean
+    ForgeIntentOps:
+      type: object
+      nullable: true
+      description: One intent's Artifacts operations so far (push events reach the ledger about 3 s after the push).
+      properties:
+        intentId:
+          type: string
+        events:
+          type: object
+          additionalProperties:
+            type: integer
+        binding:
+          type: object
+          additionalProperties:
+            type: integer
+        billable:
+          type: integer
+        usd:
+          type: number
     ForgeSnapshot:
       type: object
       properties:
@@ -7166,6 +7258,18 @@ components:
               type: integer
             human_minutes:
               type: integer
+            artifacts_ops:
+              type: integer
+              nullable: true
+              description: Billable Cloudflare Artifacts operations since the ops ledger began (null = no ledger).
+            ops_per_landed:
+              type: number
+              nullable: true
+              description: artifacts_ops divided by changes landed since the ledger began.
+        ops:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ForgeOpsLedger'
         cells:
           type: array
           items:

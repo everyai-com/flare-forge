@@ -565,12 +565,14 @@ How batching works:
 
 ### Push trigger (`ForgePushWorkflow`)
 
-The namespace-wide `cf.artifacts.repo.pushed` event trigger
-(`triggers.events` in `wrangler.jsonc`, namespace `flare-tournaments`)
-targets the Workflow `flare-forge-push`. It is the **primary**
+Seven namespace-wide event triggers (`triggers.events` in
+`wrangler.jsonc`, namespace `flare-tournaments`: `pushed`, `cloned`,
+`fetched`, `created`, `forked`, `imported`, `deleted`) target the
+Workflow `flare-forge-push`. Every event first runs a **meter op**
+step that records it in the [ops ledger](#ops-ledger). Push events
+then run the reconcile step below: the trigger is the **primary**
 live-footprint signal, and the agent's `report_push` is the fast path
-and fallback. Each event runs one durable step (3 retries, exponential
-backoff):
+and fallback. Each step retries 3 times with exponential backoff:
 
 1. **Parse** the envelope.
 2. **Keep branch pushes only.** Skip `refs/notes/*`, tags, deletes and
@@ -595,6 +597,80 @@ writes production trunks or forks (AGENTS.md: previews never point at
 prod resources). Event triggers are namespace-filtered and Workflow
 names are account-global, so previews get no push trigger; preview
 forks rely on `report_push`.
+
+### Ops ledger
+
+> Provenance: agent-drafted 2026-10-12. Event shapes checked against
+> developers.cloudflare.com/artifacts/guides/event-subscriptions and
+> prices against /artifacts/platform/pricing (both fetched 2026-10-12);
+> behaviour covered by `forge-ops.test.ts` and `forge-adapters.test.ts`.
+> No live numbers yet: the first ones come from the prod live run
+> (FORGE-PRODUCT-PLAN.md §4 item 1).
+
+Artifacts bills operations from 2026-10-14: $0.15 per 1,000 past
+10,000 a month, plus $0.50 per GB-month past 1 GB. The pricing page
+names create, push, pull and clone as examples. Forge's claim is that
+coordination costs **zero** git operations (the Coordinator answers
+`whats_happening` from SQLite), so a repo's git traffic is O(intent),
+not O(time). The ledger (`apps/worker/src/forge-ops.ts`) measures it.
+
+**Two sources, never mixed:**
+
+| Source | What | How |
+|---|---|---|
+| `event` | `create`, `fork`, `import`, `delete`, `push`, `clone`, `fetch` | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days |
+| `binding` | `read` (readFile, readCommit, readTree, log, ...), `token` (createToken) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
+
+Repo creation through the binding arrives as an event, so it is not
+metered twice. Dollars use the documented kinds only (create, fork,
+import, push, clone, fetch); `upperBound` adds deletes and every
+binding call at the same price, because the pricing page does not say
+whether binding reads bill.
+
+**Attribution** is by Artifacts repo name: `i-<12>` is an intent fork
+(D1 `intents.fork_repo`), `s-<12>-...` a session fork of that intent,
+`r-<12>-<n>` a replay fork (the conflict id prefix), and anything else
+is trunk when D1 has an intent or goal for it. Trunk pushes to
+`refs/heads/forge/*` count as `lane`. A fork event is charged to the
+new fork when its intent is already known, else to the source repo
+with the fork's role. Names that match no Forge repo (tournament
+forks, other tenants of the namespace) are logged and dropped, never
+guessed.
+
+**Storage** is the repo's Coordinator: `fc_ops` (per subject, intent,
+kind, origin), `fc_ops_total` (repo totals, read on every live-counter
+publish), `fc_ops_seen` (event ids). RPC: `recordOps(repo, entries,
+eventId)` and `opsLedger(repo, intentId?)`.
+
+**Where it shows up:**
+
+- `GET /v1/forge/snapshot` (and `/v1/public/forge/snapshot`, the
+  public MCP's `forge_snapshot`): `counters.artifacts_ops`,
+  `counters.ops_per_landed` and an `ops` object (`ForgeOpsLedger` in
+  `openapi.yaml`): totals by kind and subject, `billable`, `landed`
+  (changes landed since the ledger began), `perLandedChange`, `usd`,
+  `upperBound`, and a `projected` block.
+- The live map: the Pro "Artifacts ops" counter and one plain sentence
+  in Simple mode; feed deltas update `artifacts_ops` live.
+- `report_push` and `mark_ready`: `ops` for that intent. Push events
+  reach the ledger about 3 s after the push, so a `report_push` payload
+  can trail its own push by one op.
+- `forge snapshot` (CLI) prints one line; `forge:agents` writes it into
+  `report.json` with the run's timings.
+
+`perLandedChange` divides every billable op since the ledger began by
+the changes landed since then, so in-flight work counts against the
+landed ones (it reads high early in a run and settles as work lands).
+`projected` is labelled as a projection: the same work plus one fetch
+every 30 s over an 8-minute session per change (the sim's work median)
+for an agent with no coordination layer, and the measured ratio scaled
+to 10,000 changes. Fixture snapshots (`?demo=1`) carry
+`simulated: true` and the sim's 7-ops-per-intent assumption.
+
+Cross-check against Cloudflare: the Artifacts metrics for the
+namespace should match the `event` totals summed over the repos, minus
+names the ledger dropped (the `forge op metered` log line records each
+skip with its reason).
 
 ### Benchmark: index at 100k intents
 

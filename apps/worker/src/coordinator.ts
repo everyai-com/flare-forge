@@ -8,10 +8,11 @@
 // alarms. Callers use `coordinatorFor(env, repo)` (typed RPC facade) and
 // `handleForgeFeedUpgrade(request, env, repo)` (auth is the caller's
 // job). RPC contracts: docs/FORGE.md "Coordinator".
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, waitUntil as ctxWaitUntil } from "cloudflare:workers";
 import type { WorkerEnv } from "./env";
 import type { Intent, RiskTerm } from "./intents-core";
 import { validateRepo } from "./intents";
+import { attributeTally, forgeOpsLookups, meterArtifacts, OpsTally, type OpEntry } from "./forge-ops";
 import {
   declare as coreDeclare,
   ensureIndexSchema,
@@ -22,6 +23,8 @@ import {
   indexPush as coreIndexPush,
   hydratedAt,
   nextAlarmAt,
+  opsLedger as coreOpsLedger,
+  recordRepoOps as coreRecordOps,
   release as coreRelease,
   reportPush as coreReportPush,
   setMeta,
@@ -38,6 +41,7 @@ import {
   type FeedOp,
   type HappeningResult,
   type HeartbeatResult,
+  type OpsLedgerView,
   type ReportPushInput,
   type ReportPushResult,
   type SimilarView,
@@ -208,6 +212,17 @@ export class RepoCoordinator extends DurableObject<WorkerEnv> {
 
   async whatsHappening(repo: string, paths?: string[]): Promise<HappeningResult> {
     return coreWhatsHappening(await this.ready(repo), paths);
+  }
+
+  // Ops ledger (forge-ops.ts): ForgePushWorkflow records Cloudflare's
+  // Artifacts events (eventId dedupes retries); binding meters record
+  // reads and token mints (eventId null).
+  async recordOps(repo: string, entries: unknown, eventId: string | null): Promise<{ ok: true; recorded: boolean; entries: number }> {
+    return coreRecordOps(await this.ready(repo), entries, eventId);
+  }
+
+  async opsLedger(repo: string, intentId?: string): Promise<OpsLedgerView> {
+    return coreOpsLedger(await this.ready(repo), intentId);
   }
 
   // Force a rebuild from D1 (operator / reconcile tool).
@@ -397,6 +412,8 @@ export function coordinatorFor(env: CoordinatorEnv, repo: string) {
     snapshot: (opts?: { maxIntents?: number; forFeed?: boolean }) => stub.snapshot(repo, opts),
     whatsHappening: (paths?: string[]) => stub.whatsHappening(repo, paths),
     hydrate: () => stub.hydrate(repo),
+    recordOps: (entries: OpEntry[], eventId: string | null) => stub.recordOps(repo, entries, eventId),
+    opsLedger: (intentId?: string) => stub.opsLedger(repo, intentId),
   };
 }
 
@@ -427,3 +444,72 @@ export async function handleForgeFeedUpgrade(
   const stub = env.FORGE_FEED.get(env.FORGE_FEED.idFromName(repo));
   return stub.fetch(new Request(request.url, { method: "GET", headers }));
 }
+
+// ---------------------------------------------------------------------------
+// Binding meter (forge-ops.ts): reads + token mints through ARTIFACTS
+// ---------------------------------------------------------------------------
+
+// Coalesces the binding calls of one burst (a request, a workflow step)
+// into one attributed flush per repo.
+const METER_FLUSH_DELAY_MS = 100;
+
+export interface MeteredArtifacts {
+  artifacts: Artifacts | null;
+  // Await in contexts that end right after (workflow steps); request
+  // paths flush on their own through waitUntil.
+  flush(): Promise<void>;
+}
+
+// Wraps env.ARTIFACTS for one execution context. `schedule` defaults to
+// the runtime's waitUntil (`cloudflare:workers`), so the flush outlives
+// the response. Metering is best-effort: a failed flush logs and drops.
+export function meteredArtifacts(
+  env: { ARTIFACTS?: Artifacts | null; DB: WorkerEnv["DB"]; COORDINATOR?: DurableObjectNamespace<RepoCoordinator> | null },
+  schedule: ((p: Promise<unknown>) => void) | null = ctxWaitUntil,
+): MeteredArtifacts {
+  const binding = env.ARTIFACTS ?? null;
+  const ns = env.COORDINATOR ?? null;
+  if (!binding || !ns) return { artifacts: binding, flush: async () => {} };
+  const tally = new OpsTally();
+  let pending: Promise<void> | null = null;
+  const flush = async (): Promise<void> => {
+    const drained = tally.drain();
+    if (!drained.length) return;
+    try {
+      const { byRepo, dropped } = await attributeTally(forgeOpsLookups(env.DB), drained);
+      await Promise.all(
+        [...byRepo].map(([repo, entries]) => coordinatorFor({ COORDINATOR: ns }, repo).recordOps(entries, null)),
+      );
+      if (dropped) log("info", "forge ops meter dropped unattributed calls", { dropped });
+    } catch (e) {
+      log("warn", "forge ops meter flush failed", { error: String(e) });
+    }
+  };
+  const kick = (): void => {
+    if (pending || !schedule || tally.size === 0) return;
+    pending = new Promise<void>((resolve) => setTimeout(resolve, METER_FLUSH_DELAY_MS))
+      .then(flush)
+      .finally(() => {
+        pending = null;
+        // Calls that arrived mid-flush get their own burst.
+        kick();
+      });
+    try {
+      schedule(pending);
+    } catch {
+      // Outside a request context: the explicit flush() still drains.
+    }
+  };
+  const artifacts = meterArtifacts(binding, (repoName, kind) => {
+    tally.add(repoName, kind);
+    kick();
+  });
+  return {
+    artifacts,
+    flush: async () => {
+      if (pending) await pending;
+      await flush();
+    },
+  };
+}
+

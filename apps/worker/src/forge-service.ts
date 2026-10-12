@@ -86,6 +86,7 @@ import {
   type WhyPort,
 } from "./forge-ports";
 import type { GoalPlanner } from "./forge-planner";
+import type { IntentOps } from "./forge-ops";
 import { forkSession, readSession, SESSION_DEFAULT_STEPS, SESSION_MAX_STEPS, type SessionArtifacts } from "./session";
 import { agentClient, agentLabel, bisectView, conflictSide, evidenceOf, runBriefs, trackView, trainView, whyTitle, type DetailNode } from "./forge-views";
 import { benchPayload } from "./forge-bench-data";
@@ -949,7 +950,7 @@ export async function reportPushOp(deps: ForgeServiceDeps, p: ForgePrincipal, ar
   if (isForgeError(pushed)) return fromForgeError(pushed);
   const { overlaps } = await deps.coordinator.reportPush(intent.repo, pushed.intent);
   await auditWrite(deps, p, "intent.push", `${intent.repo} ${intent.id} ${sha.value}`);
-  const inbox = await deliver(deps, intent.id);
+  const [inbox, ops] = await Promise.all([deliver(deps, intent.id), intentOpsOf(deps, intent.repo, intent.id)]);
   const steps: NextStep[] = [];
   for (const o of overlaps.slice(0, 3)) {
     steps.push({
@@ -970,10 +971,19 @@ export async function reportPushOp(deps: ForgeServiceDeps, p: ForgePrincipal, ar
     risk: { score: pushed.risk, terms: riskView(pushed.riskTerms) },
     overlaps,
     untrustedFields: { overlaps: PEER_INTENT_FIELDS },
+    ops,
     inbox,
     mailboxNotice: inbox.length ? MAILBOX_NOTICE : undefined,
     nextSteps: steps,
   });
+}
+
+// This intent's Artifacts operations so far (forge-ops.ts). Push events
+// reach the ledger ~3 s after the push, so a report_push payload can
+// trail its own push by one op. Null = no ledger here.
+async function intentOpsOf(deps: ForgeServiceDeps, repo: string, intentId: string): Promise<IntentOps | null> {
+  if (!deps.coordinator.intentOps) return null;
+  return deps.coordinator.intentOps(repo, intentId).catch(() => null);
 }
 
 export async function markReadyOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
@@ -991,13 +1001,14 @@ export async function markReadyOp(deps: ForgeServiceDeps, p: ForgePrincipal, arg
   const outcome = await deps.trains.markReady(intent.repo, ready, policy);
   await auditWrite(deps, p, "intent.ready", `${intent.repo} ${intent.id} route=${outcome.route}`);
   await syncIndex(deps, intent.repo, intent.id);
-  const inbox = await deliver(deps, intent.id);
+  const [inbox, ops] = await Promise.all([deliver(deps, intent.id), intentOpsOf(deps, intent.repo, intent.id)]);
   return ok({
     intent: ready,
     risk: { score: ready.risk, terms: riskView(ready.riskTerms) },
     route: outcome.route,
     policy: { autoLandMaxRisk: policy.autoLandMaxRisk, auditSample: policy.auditSample },
     train: { queued: outcome.queued, held: outcome.held ?? false, trainId: outcome.trainId, position: outcome.position, note: outcome.note },
+    ops,
     inbox,
     mailboxNotice: inbox.length ? MAILBOX_NOTICE : undefined,
     nextSteps: [

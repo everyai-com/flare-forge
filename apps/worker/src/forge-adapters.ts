@@ -19,7 +19,7 @@
 // mapping without a runtime (the `cloudflare:workers` import in
 // coordinator.ts / train-workflow.ts is aliased to a stub there).
 import { coordinatorFor, handleForgeFeedUpgrade } from "./coordinator";
-import type { CoordinatorError, CoordinatorSnapshot, DeclareResult, HappeningResult, OverlapView, ReportPushResult, SimilarView } from "./coordinator-core";
+import type { CoordinatorError, CoordinatorSnapshot, DeclareResult, HappeningResult, OpsLedgerView, OverlapView, ReportPushResult, SimilarView } from "./coordinator-core";
 import { getSetting, type Db } from "./db";
 import type { WorkerEnv } from "./env";
 import {
@@ -70,6 +70,7 @@ export interface CoordinatorRpc {
   release(intentId: string): Promise<boolean>;
   snapshot(opts?: { maxIntents?: number; forFeed?: boolean }): Promise<CoordinatorSnapshot>;
   whatsHappening(paths?: string[]): Promise<HappeningResult>;
+  opsLedger?(intentId?: string): Promise<OpsLedgerView>;
 }
 
 function isCoordinatorError(v: unknown): v is CoordinatorError {
@@ -229,9 +230,15 @@ export function coordinatorPortOver(input: {
           const snap = await c.snapshot();
           const now = new Date().toISOString();
           const today = `${now.slice(0, 10)}T00:00:00.000Z`;
-          const [conflictsOpen, landedToday] = await Promise.all([
+          const opsTotals = snap.counters.ops ?? null;
+          const [conflictsOpen, landedToday, landedSince] = await Promise.all([
             count(input.db, "SELECT COUNT(*) AS n FROM conflicts WHERE repo = ? AND state IN ('open', 'claimed')", repo),
             count(input.db, "SELECT COUNT(*) AS n FROM intents WHERE repo = ? AND state = 'landed' AND updated_at >= ?", repo, today),
+            // Ops per landed change divides by changes landed since the
+            // ledger's first op (in-flight work stays in the numerator).
+            opsTotals?.since
+              ? count(input.db, "SELECT COUNT(*) AS n FROM intents WHERE repo = ? AND state = 'landed' AND updated_at >= ?", repo, opsTotals.since)
+              : Promise.resolve(0),
           ]);
           return buildSnapshot({
             repo,
@@ -246,6 +253,7 @@ export function coordinatorPortOver(input: {
             now,
             edges: snap.edges.map((e) => ({ id: e.id, a: e.a, b: e.b, pairs: e.pairs, origin: e.origin })),
             ver: snap.ver,
+            ops: opsTotals ? { totals: opsTotals, landedSince } : null,
           });
         },
         () => fallback.snapshot(repo, opts),
@@ -258,6 +266,16 @@ export function coordinatorPortOver(input: {
       }
     },
     sync,
+    async intentOps(repo, intentId) {
+      try {
+        const c = clientFor(repo);
+        if (!c.opsLedger) return null;
+        return (await c.opsLedger(intentId)).intent;
+      } catch (err) {
+        log("warn", "forge coordinator ops read failed", { repo, intent: intentId, error: errText(err) });
+        return null;
+      }
+    },
   };
 }
 

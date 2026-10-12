@@ -70,7 +70,10 @@ export function dashboardIntent(l: LiveIntent): Record<string, unknown> {
 }
 
 export function dashboardCounters(c: LiveCounters): Record<string, unknown> {
-  return { ...c, overlaps_caught: c.overlapsCaught };
+  // `artifacts_ops` matches the REST snapshot counter (billable ops);
+  // ops-per-landed needs D1's landed count, so it rides the REST
+  // snapshot only.
+  return { ...c, overlaps_caught: c.overlapsCaught, ...(c.ops ? { artifacts_ops: c.ops.billable } : {}) };
 }
 
 export function dashboardSnapshot(s: CoordinatorSnapshot): DashboardSnapshot {

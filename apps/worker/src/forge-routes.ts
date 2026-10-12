@@ -48,6 +48,7 @@ import {
   type ForgePrincipal,
   type ForgeServiceDeps,
 } from "./forge-service";
+import { meteredArtifacts } from "./coordinator";
 import type { FeedPort, ForgeCoordinatorPort, TrainPort, WhyPort } from "./forge-ports";
 import type { GoalPlanner } from "./forge-planner";
 
@@ -70,7 +71,9 @@ export interface ForgeAdapters {
 }
 
 export function forgeDepsFromEnv(env: WorkerEnv, adapters: ForgeAdapters = {}): ForgeServiceDeps {
-  const artifacts: ForgeArtifacts | null = env.ARTIFACTS ?? null;
+  // Reads and token mints through the binding feed the repo's ops
+  // ledger (forge-ops.ts), flushed after the response.
+  const artifacts: ForgeArtifacts | null = meteredArtifacts(env, adapters.waitUntil ?? undefined).artifacts;
   return forgeServiceDeps({
     db: env.DB,
     artifacts,

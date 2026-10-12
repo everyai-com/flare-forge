@@ -13,6 +13,7 @@ import {
   type ForgeNextStep,
 } from "flare-actions-runner-sdk";
 import { printJson } from "./json.ts";
+import { opsLine, type OpsEconomics } from "../../worker/src/forge-ops.ts";
 import { applyForgeInit, ForgeInitError, PLACEHOLDER_URL, planForgeGlobal, planForgeInit } from "./forge-init.ts";
 import { missingConfigMessage, missingConfigVars, resolveToken, suggestCommand, type EnvLocation } from "./hints.ts";
 
@@ -70,6 +71,27 @@ export const FORGE_USAGE = [
 ].join("\n");
 
 class UsageError extends Error {}
+
+// The snapshot's ops ledger (worker forge-ops.ts), when the server has one.
+function opsOf(v: unknown): Pick<OpsEconomics, "billable" | "landed" | "perLandedChange" | "usd" | "status" | "projected"> | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  const projected = o.projected as Record<string, unknown> | undefined;
+  if (typeof o.billable !== "number" || typeof o.usd !== "number" || (o.status !== "measured" && o.status !== "empty") || !projected) return null;
+  return {
+    billable: o.billable,
+    landed: typeof o.landed === "number" ? o.landed : 0,
+    perLandedChange: typeof o.perLandedChange === "number" ? o.perLandedChange : null,
+    usd: o.usd,
+    status: o.status,
+    projected: {
+      naivePerLandedChange: typeof projected.naivePerLandedChange === "number" ? projected.naivePerLandedChange : null,
+      naiveFetchesPerChange: typeof projected.naiveFetchesPerChange === "number" ? projected.naiveFetchesPerChange : 0,
+      at10kChanges: null,
+      assumption: typeof projected.assumption === "string" ? projected.assumption : "",
+    },
+  };
+}
 
 const FORGE_VERB_NAMES = ["goal", "declare", "claim", "push", "heartbeat", "ready", "note", "inbox", "status", "why", "conflicts", "trains", "snapshot", "done", "abandon", "fork", "approve", "connect-agent", "init"];
 
@@ -519,7 +541,9 @@ export async function runForge(argv: string[], d: ForgeCliDeps): Promise<number>
       if (!repo) throw new UsageError("forge snapshot <repo>");
       const out = await d.forge().snapshot(repo);
       emit(d, "snapshot", out, () => {
-        d.out(Object.entries(out.counters).map(([k, v]) => `${k} ${v}`).join(" · "));
+        d.out(Object.entries(out.counters).filter(([, v]) => v !== null).map(([k, v]) => `${k} ${v}`).join(" · "));
+        const ops = opsOf(out.ops);
+        if (ops) d.out(opsLine(ops));
         for (const c of out.cells as Array<{ path: string; state: string; intents: string[] }>) d.out(`  ${c.path.padEnd(28)} ${c.state.padEnd(13)} ${c.intents.length} intent(s)`);
         const head = typeof out.headSha === "string" ? out.headSha : typeof out.head === "string" ? out.head : "";
         d.out(`main ${head.slice(0, 12) || "-"}`);

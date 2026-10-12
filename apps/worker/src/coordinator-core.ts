@@ -46,6 +46,16 @@ import {
   type IntentMessageRow,
   type IntentRow,
 } from "./intents";
+import {
+  intentOps,
+  OPS_SCHEMA,
+  opsTotals,
+  recordOps as ledgerRecord,
+  topIntentOps,
+  validOpEntries,
+  type IntentOps,
+  type OpsTotals,
+} from "./forge-ops";
 
 // ---------------------------------------------------------------------------
 // Storage seam
@@ -159,6 +169,8 @@ export const INDEX_SCHEMA: readonly string[] = [
 
 export function ensureIndexSchema(sql: SqlStore): void {
   for (const stmt of INDEX_SCHEMA) sql.exec(stmt);
+  // The ops ledger (forge-ops.ts) lives next to the index.
+  for (const stmt of OPS_SCHEMA) sql.exec(stmt);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +271,8 @@ export interface LiveCounters {
   declared: number;
   expired: number;
   byState: Partial<Record<IntentState, number>>;
+  // Artifacts operations recorded for this repo (forge-ops.ts).
+  ops?: OpsTotals;
 }
 
 export type FeedOp =
@@ -746,6 +760,7 @@ export function counters(sql: SqlStore): LiveCounters {
     declared: metaInt(sql, "c:declared"),
     expired: metaInt(sql, "c:expired"),
     byState,
+    ops: opsTotals(sql),
   };
 }
 
@@ -1310,6 +1325,37 @@ export function whatsHappening(deps: CoordinatorDeps, paths?: readonly unknown[]
     if (row) items.push(toItem(row, pairs.slice(0, COORDINATOR_LIMITS.pairsPerOverlap).map((p) => ({ mine: p.mine, theirs: p.theirs }))));
   }
   return { items, invalid, truncated: truncated || ranked.length > top.length };
+}
+
+// Ops ledger: count Artifacts operations attributed to this repo (an
+// event id dedupes workflow retries), then push the new totals to the
+// live map.
+export function recordRepoOps(deps: CoordinatorDeps, entries: unknown, eventId: string | null): { ok: true; recorded: boolean; entries: number } {
+  const valid = validOpEntries(entries);
+  if (!valid.length) return { ok: true, recorded: false, entries: 0 };
+  const recorded = ledgerRecord(deps.sql, valid, eventId, deps.now());
+  if (recorded) {
+    try {
+      deps.publish([{ op: "upsert", kind: "counters", id: "repo", ver: nextVersion(deps.sql), fields: counters(deps.sql) }]);
+    } catch (e) {
+      deps.log("warn", "coordinator publish failed", { error: String(e) });
+    }
+  }
+  return { ok: true, recorded, entries: valid.length };
+}
+
+export interface OpsLedgerView {
+  totals: OpsTotals;
+  intent: IntentOps | null;
+  top: Array<{ intentId: string; ops: number }>;
+}
+
+export function opsLedger(deps: CoordinatorDeps, intentId?: string): OpsLedgerView {
+  return {
+    totals: opsTotals(deps.sql),
+    intent: intentId ? intentOps(deps.sql, intentId) : null,
+    top: topIntentOps(deps.sql),
+  };
 }
 
 export function snapshot(deps: CoordinatorDeps, maxIntents?: number): CoordinatorSnapshot {

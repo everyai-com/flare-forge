@@ -27,6 +27,7 @@ import { pathToFileURL } from "node:url";
 import { applyToDir } from "../examples/forge-demo/agents/apply.mjs";
 import { FORGE_AGENT_PROMPT } from "../packages/runner-sdk/src/forge.ts";
 import { commitWithTrailers } from "../packages/runner-sdk/src/provenance.ts";
+import { opsLine } from "../apps/worker/src/forge-ops.ts";
 import {
   assignAgents,
   basicHeader,
@@ -307,11 +308,12 @@ export async function runScripted(o, cfg, board, dir) {
     crew.map(async (c, n) => {
       await sleep(n * Math.min(o.pace, 400)); // stagger so declares arrive in order
       for (const it of c.intents) {
+        const t0 = Date.now();
         try {
-          results.push({ agent: c.agent, seedId: it.id, ...(await runScriptedIntent(ctx, c.agent, it)) });
+          results.push({ agent: c.agent, seedId: it.id, ...(await runScriptedIntent(ctx, c.agent, it)), ms: Date.now() - t0 });
         } catch (e) {
           board.set(c.agent, { intent: it.id, state: "error", detail: e instanceof Error ? e.message : String(e) });
-          results.push({ agent: c.agent, seedId: it.id, state: "error" });
+          results.push({ agent: c.agent, seedId: it.id, state: "error", ms: Date.now() - t0 });
         }
       }
     }),
@@ -503,6 +505,51 @@ export async function runReal(o, cfg, board, dir) {
 }
 
 // ---------------------------------------------------------------------------
+// Run report: timings + the repo's ops ledger, written next to the logs
+// (report.json) so DEMO.md quotes a file, not a memory.
+// ---------------------------------------------------------------------------
+
+export function summarizeRun({ o, startedAt, finishedAt, results, snapshot }) {
+  const ms = results.map((r) => r.ms).filter((n) => typeof n === "number").sort((a, b) => a - b);
+  const pct = (p) => (ms.length ? ms[Math.min(ms.length - 1, Math.floor((p / 100) * ms.length))] : null);
+  const byState = {};
+  for (const r of results) byState[r.state ?? "unknown"] = (byState[r.state ?? "unknown"] ?? 0) + 1;
+  return {
+    version: 1,
+    repo: o.repo,
+    mode: o.mode,
+    agents: o.count,
+    run: o.run,
+    startedAt: new Date(startedAt).toISOString(),
+    finishedAt: new Date(finishedAt).toISOString(),
+    wallSeconds: Math.round((finishedAt - startedAt) / 100) / 10,
+    intents: { total: results.length, byState, p50Ms: pct(50), p90Ms: pct(90), maxMs: ms.length ? ms[ms.length - 1] : null },
+    results,
+    counters: snapshot?.counters ?? null,
+    ops: snapshot?.ops ?? null,
+  };
+}
+
+export function reportLines(r) {
+  const out = [`run ${r.run}: ${r.intents.total} intent(s) in ${r.wallSeconds}s wall (${Object.entries(r.intents.byState).map(([k, v]) => `${v} ${k}`).join(", ") || "none"})`];
+  if (r.intents.p50Ms !== null) out.push(`per intent: p50 ${(r.intents.p50Ms / 1000).toFixed(1)}s, p90 ${(r.intents.p90Ms / 1000).toFixed(1)}s, max ${(r.intents.maxMs / 1000).toFixed(1)}s`);
+  if (r.ops && typeof r.ops.billable === "number") out.push(opsLine(r.ops));
+  else out.push("Artifacts ops: no ledger on this deployment (deploy a build with forge-ops.ts)");
+  return out;
+}
+
+async function writeReport(o, cfg, dir, startedAt, results) {
+  let snapshot = null;
+  try {
+    snapshot = await forgeClient(cfg, "forge-report").snapshot(o.repo);
+  } catch {
+    // The report still records timings.
+  }
+  const report = summarizeRun({ o, startedAt, finishedAt: Date.now(), results, snapshot });
+  writeFileSync(join(dir, "report.json"), JSON.stringify(report, null, 2));
+  for (const l of reportLines(report)) console.log(l);
+  console.log(`report: ${join(dir, "report.json")} (ops trail pushes by ~3 s; re-check with: npm run cli -- forge snapshot ${o.repo})`);
+}
 
 export async function main(argv) {
   const o = agentOptions(argv);
@@ -537,17 +584,21 @@ export async function main(argv) {
   const dir = logsDir(o.run);
   const board = new Board({ plain: o.plain, title: `forge:agents ${o.mode} — ${o.repo} — run ${o.run}`, logDir: dir });
   board.start();
+  const startedAt = Date.now();
+  let results = [];
   try {
     if (o.mode === "real") await runReal(o, cfg, board, dir);
     else {
-      const results = await runScripted(o, cfg, board, dir);
+      results = await runScripted(o, cfg, board, dir);
       const ids = results.filter((r) => r.state === "ready").map((r) => r.seedId);
       if (o.resolve && ids.includes("g1-request-id") && ids.includes("g3-log-latency")) await resolveDesignedConflicts(o, cfg, board, dir);
     }
   } finally {
     board.stop();
   }
+  if (o.mode === "real") results = [...board.rows.entries()].map(([agent, r]) => ({ agent, seedId: r.intent, state: r.state }));
   console.log(`\nlogs: ${dir}`);
+  await writeReport(o, cfg, dir, startedAt, results);
   return [...board.rows.values()].some((r) => r.state === "error") ? 1 : 0;
 }
 

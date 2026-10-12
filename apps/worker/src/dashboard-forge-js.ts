@@ -55,6 +55,9 @@ export const FORGE_JS = String.raw`
     live_n_landed: "plans landed today",
     live_main_ok: "The main version never broke.",
     live_main_bad: "The main version was broken for {n} minutes.",
+    live_ops: "Cloudflare Artifacts bill so far: {n} operations ({m} at list price).",
+    live_ops_per: "That is {n} operations per landed plan.",
+    live_ops_sim: "Pretend numbers: 7 operations per plan is an assumption here, not a measurement.",
     map_h: "Project map",
     key_working: "working",
     key_same: "two agents, same files",
@@ -1165,8 +1168,18 @@ export const FORGE_JS = String.raw`
     { key: "overlaps_caught", label: "Overlaps caught", series: "overlaps_caught", rate: "overlaps_per_min", unit: "at declare" },
     { key: "conflicts_open", label: "Conflicts open", kind: "conflicts" },
     { key: "landed_today", label: "Landed today", series: "landed_today", rate: "landed_per_min" },
-    { key: "main_red_minutes", label: "Main red (integration)", kind: "invariant", info: "Minutes main spent red. main only moves to a SHA CI verified green as that exact SHA, so this stays 0." }
+    { key: "main_red_minutes", label: "Main red (integration)", kind: "invariant", info: "Minutes main spent red. main only moves to a SHA CI verified green as that exact SHA, so this stays 0." },
+    { key: "artifacts_ops", label: "Artifacts ops", kind: "ops", info: "Billable Cloudflare Artifacts operations (create, fork, import, push, clone, fetch) counted from Cloudflare's own events since the ledger began, per landed change, at list price ($0.15 per 1,000). Answering who-is-touching-what costs zero git operations." }
   ];
+  // Ops ledger line pieces (REST snapshot ops field, forge-ops.ts).
+  function fxOpsSub(o) {
+    var out = [];
+    if (!o) return out;
+    if (o.perLandedChange !== null && o.perLandedChange !== undefined) out.push(fxNum(o.perLandedChange) + " / landed change");
+    if (typeof o.usd === "number") out.push("$" + o.usd.toFixed(2));
+    if (o.simulated) out.push("SIMULATED");
+    return out;
+  }
   function fxSpark(values) {
     var s = svgEl("svg", { "class": "fx-spark", viewBox: "0 0 64 18", preserveAspectRatio: "none", "aria-hidden": "true" });
     if (!values || values.length < 2) return s;
@@ -1221,6 +1234,9 @@ export const FORGE_JS = String.raw`
         } else if (c.kind === "conflicts") {
           out.tone = n ? "bad" : "ok";
           out.sub = [n ? "✕ replaying" : "✓ none open"];
+        } else if (c.kind === "ops") {
+          if (n === undefined || n === null) { out.text = "—"; out.sub = ["no ledger on this deployment"]; }
+          else out.sub = fxOpsSub(s.ops);
         } else {
           out.sub = [fxSpark(s.series[c.series])];
           if (c.rate && s.rates[c.rate] !== undefined) out.sub.push("▲ " + s.rates[c.rate] + "/min");
@@ -1284,6 +1300,13 @@ export const FORGE_JS = String.raw`
       stats.appendChild(h("li", { cls: "fx-big", "data-metric": d[0], "data-value": n, "data-tone": d[2] }, [h("span", { cls: "v", text: fxNum(n) }), h("span", { cls: "l", text: fxS(d[1]) })]));
     });
     box.appendChild(stats);
+    var ops = s.ops;
+    if (ops && (ops.status === "measured" || ops.simulated)) {
+      var opsText = fxS("live_ops", fxNum(ops.billable || 0), "$" + Number(ops.usd || 0).toFixed(2));
+      if (ops.perLandedChange !== null && ops.perLandedChange !== undefined) opsText += " " + fxS("live_ops_per", fxNum(ops.perLandedChange));
+      if (ops.simulated) opsText += " " + fxS("live_ops_sim");
+      box.appendChild(h("p", { cls: "fx-ops-line", "data-metric": "artifacts_ops", "data-value": ops.billable || 0, text: opsText }));
+    }
     var red = Number(c.main_red_minutes) || 0;
     var key = h("div", { cls: "fx-skey", "aria-label": "Key" }, [
       h("span", { cls: "fx-main-ok " + (red ? "bad" : "ok"), "data-metric": "main_red_minutes", "data-value": red }, [h("span", { "aria-hidden": "true", text: red ? "✕ " : "✓ " }), red ? fxS("live_main_bad", fxNum(red)) : fxS("live_main_ok")]),

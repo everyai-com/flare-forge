@@ -64,7 +64,9 @@ describe("forge ports: pure helpers", () => {
       source: "d1",
       now: "2026-10-10T00:00:00.000Z",
     });
-    expect(snap.counters).toEqual({ agents: 2, intents: 3, overlaps_caught: 3, conflicts_open: 1, landed_today: 2, main_red_minutes: 0, human_minutes: 0 });
+    // The D1 fallback has no Coordinator, so no ops ledger.
+    expect(snap.counters).toEqual({ agents: 2, intents: 3, overlaps_caught: 3, conflicts_open: 1, landed_today: 2, main_red_minutes: 0, human_minutes: 0, artifacts_ops: null, ops_per_landed: null });
+    expect(snap.ops).toBeNull();
     const api = snap.cells.find((c) => c.path === "src/api");
     expect(api).toMatchObject({ state: "overlap", overlap_with: [["a", "b"]], protected: false });
     expect(snap.cells.find((c) => c.path === "src/auth")).toMatchObject({ state: "awaiting_plan", protected: true });
