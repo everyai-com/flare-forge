@@ -185,7 +185,7 @@ set; this list is what's left on top of it.
 | 5 | **`why` on Forge's own repo**: mirror `flare-forge` into Artifacts, land one intent through a train, run `flare why` on a line of `intents-core.ts` in the video | 50% | 1–2 h after item 1 | Cut if item 1 is still red on Tue night |
 | 6 | **Video** (8:30 cut, COMPETITION-PLAN §9), captioned | All | 5–6 h | Never cut |
 | 7 | **Fresh-account dry run** of the judge path from the public repo | 25% UX | 1 h | Never cut |
-| 8 | `npm publish --workspace apps/cli`, MCP registry listing, GitHub repo description for `flare-actions` back to Actions | Hygiene | 30 min, human | Publish before the video; the rest can follow |
+| 8 | `npm login && npm run publish:cli` (not `npm publish --workspace`: it strips the bins), MCP registry listing, GitHub repo description for `flare-actions` back to Actions | Hygiene | 30 min, human | Publish before the video; the rest can follow |
 | 9 | GitHub bridge land-out (mirror in exists; land back as a PR) | Adoption | 1 day | Post-submission (§6) |
 
 ### Item 3 in one paragraph (the ops ledger)
