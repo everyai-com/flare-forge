@@ -117,7 +117,9 @@ Every metric is per mode, at a given N.
 | **Main red: integration min** | Main red because a landed trunk state was **not** the exact SHA CI verified and the combination carries an interaction defect. Computed at every landing (trains: `SpeculativeChain` CAS check, counted in `unverified_landings`; baseline: nothing landed between CI start and land), not assumed. **0 for trains/Forge by construction**. The modeled baseline is a test-then-merge queue, so it is 0 as well; a merge-then-test baseline would not be, but is not modeled. |
 | Human min | review × 10 min + re-review × 3 + plan approval × 5 + audit × 5 + escalation × 10. The full breakdown is in the JSON. |
 | CI runs | Branch/fork CI, plus queue or lane CI, plus probe runs, plus flake reruns. Lanes invalidated by a red lane ahead of them count their (wasted) run. |
-| $ / 1k agents | Estimated Artifacts operations × $0.15 per 1k operations. The operation model is in the constants table. Not reported for the baseline (no Artifacts). |
+| $ / 1k agents | Simulated billable Artifacts git ops (fork + clone + fetch + push) × $0.15 per 1k ops, per 1,000 agents. The op model is in the constants table. Since the pull model (section 2.3) every mode runs on the same Artifacts repo, so the baseline is reported too; the tables in section 2 predate it (old per-intent estimate, baseline `n/a`). |
+| Git ops / landed | Pull model: simulated billable git ops per landed change. By kind in the JSON (`git_ops_per_landed`), with ls-remote and token mints apart (`binding_calls_per_landed`, billing undocumented). No polling. |
+| $ / 10k changes | Git ops / landed × 10,000 × $0.15 per 1k ops. `poll_projection` in the JSON adds **projected** polling on top (section 2.3). |
 
 The JSON also carries `speculative_groups` (groups cut on an in-flight
 group), `invalidated_lanes`, `bisections` and `unverified_landings`.
@@ -154,8 +156,17 @@ number; it is a knob you can change.
 | Lane-ref pool | 32: chain ≤ 24, probes 8 | `train-core.ts` |
 | Human minutes per item | Review 10, re-review 3, plan 5, audit 5, escalation 10 | Assumption |
 | Give-up limits | 3 rebases, 3 fixes, 8 conflicts in total | Assumption |
-| Artifacts ops | 7 per intent (fork, token, clone 2, push 2, revoke) + 2 per extra push + 2 per lane item + 6 per lane landing | Assumption |
-| Artifacts price | $0.15 per 1k ops | COMPETITION-PLAN §4. Check against current pricing |
+| Git: clone / fork per intent | clone 1 (all modes); fork 1 (trains, Forge; the baseline uses branches of the same repo) | `apps/sim/src/harness/git.ts` (clone `depth: 1`, once); Forge forks once per intent |
+| Git: agent push | push 1 per agent push (first push + each rework); the baseline also fetches 1 before each push (`pull --rebase`) | Assumption for the baseline fetch |
+| Git: rework / replay / restack | rebase fetch 1 (conflict, interaction fix, escalation; not a defect fix); replay fetch 2 per attempt (trunk + fork) + push 1 on success; restack fetch 1 | Assumption; replay fetches read from the train/replay code |
+| Git: serial queue (baseline) | fetch 1 per serve (bounces included), push 1 per merge ref, push 1 to fast-forward main | Assumption |
+| Git: train build | fetch 1 per group (+1 for the speculative parent lane ref), fetch 1 per item from its fork, push 1 per lane ref; plus 1 ls-remote | `apps/worker/src/train.ts` `buildGroup`. **Lower bound**: `fetchCovering` deepening retries are ignored |
+| Git: train landing | fetch 1 (lane ref), push 2 (main + notes); plus 1 ls-remote | `train.ts` `fastForwardMain` |
+| Git: bisect probe | fetch 1 + 1 per item, push 1 | `train-core.ts` probes |
+| ls-remote, token mints | counted, reported apart | Artifacts billing for them is undocumented |
+| Polling (projected) | `git fetch` every 30 / 60 / 300 s, while working .. until landed or abandoned; Forge agents sync from Feed events (0 polls) | Assumption; applied post-hoc, see 2.3 |
+| Fetch cache (`forgeFetchCache`) | off; on = the train caches each item's fork fetch across speculative rebuilds and a replay fetches trunk once | **Design, not shipped** |
+| Artifacts price | $0.15 per 1k ops | Artifacts pricing page (names create, push, pull, clone as examples), checked 2026-10-12 |
 
 ## 2. Results (SIMULATED)
 
@@ -242,6 +253,108 @@ HEAD**, reported because they explain two design decisions):
   before invalidating speculative work. It made trains only slower
   (2,060 → 3,028 min to 80%): most reds are real interaction defects,
   and a retry delays their bisect by a CI round. Not shipped.
+
+### 2.3 Pull traffic: git ops per landed change, N × mode
+
+> Provenance: agent-drafted on 2026-10-12 (branch `forge/pull-sim`).
+> Tables generated with
+> `node --experimental-strip-types scripts/forge-bench.mjs --pull --agents 10,100,1000,10000 --seed 7 --json --markdown`
+> on 2026-10-12 at commit `6b2907d` (raw output:
+> `docs/bench/forge-sim-seed7-pull.json`, key `pull_curve`). Nothing in
+> this section is measured.
+
+Artifacts bills git operations ($0.15 per 1,000; the pricing page names
+create, push, pull and clone as examples). This section asks how that
+traffic scales with swarm size. Three kinds of number, never mixed:
+
+| Label | What | Where |
+|---|---|---|
+| **MEASURED** | Cloudflare's own Artifacts events for a real repo, per landed change | The ops ledger (`apps/worker/src/forge-ops.ts`, FORGE.md "Ops ledger"). **No live run recorded yet.** |
+| **SIMULATED** | Git ops by kind, counted by `sim.ts` at the events it already models (clone, fork, pushes, rebases, replays, train builds, landings, probes) under the `git` constants above | Table A |
+| **PROJECTED** | Table A plus polling: an agent without an event feed runs `git fetch` every S seconds. Applied **post-hoc** over two windows: while the agent works (lower bound) and until its change lands or is abandoned (upper bound) | Table B |
+
+All three modes run on the same Artifacts repo: the baseline is the PR
+flow on branches of that repo (no forks), so it has real git ops now
+(it used to be `n/a`). ls-remote and token mints are counted but kept
+out of the billable total; their billing is undocumented.
+
+**Table A: SIMULATED billable git ops per landed change (no polling), seed 7.**
+
+| N | Mode | Landed | Min in system | fork | clone | fetch | push | Billable / landed | [ls-remote] | [token] | $ / 10k changes |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10 | Baseline: PR flow on the same Artifacts repo | 10 | 1h 32m | 0.0 | 1.0 | 2.1 | 3.1 | 6.2 | 0.0 | 0.0 | $9.30 |
+| 10 | Forge, trains only | 10 | 1h 27m | 1.0 | 1.0 | 2.9 | 4.1 | 9.0 | 1.9 | 5.9 | $13.50 |
+| 10 | Forge, full | 10 | 40m | 1.0 | 1.0 | 3.9 | 4.6 | 10.5 | 1.8 | 6.8 | $15.75 |
+| 10 | Forge + fetch cache (design, not shipped) | 10 | 40m | 1.0 | 1.0 | 3.4 | 4.6 | 10.0 | 1.8 | 6.3 | $15.00 |
+| 100 | Baseline: PR flow on the same Artifacts repo | 100 | 10h 23m | 0.0 | 1.0 | 2.3 | 3.1 | 6.4 | 0.0 | 0.0 | $9.60 |
+| 100 | Forge, trains only | 100 | 1h 34m | 1.0 | 1.0 | 2.1 | 2.9 | 6.9 | 0.7 | 4.3 | $10.41 |
+| 100 | Forge, full | 100 | 53m | 1.0 | 1.0 | 2.8 | 2.4 | 7.2 | 0.6 | 4.7 | $10.86 |
+| 100 | Forge + fetch cache (design, not shipped) | 100 | 53m | 1.0 | 1.0 | 1.8 | 2.4 | 6.2 | 0.6 | 3.7 | $9.29 |
+| 1,000 | Baseline: PR flow on the same Artifacts repo | 988 | 4d 1h | 0.0 | 1.0 | 2.8 | 3.3 | 7.1 | 0.0 | 0.0 | $10.67 |
+| 1,000 | Forge, trains only | 986 | 6h 6m | 1.0 | 1.0 | 2.9 | 2.2 | 7.1 | 0.3 | 4.3 | $10.69 |
+| 1,000 | Forge, full | 998 | 4h 25m | 1.0 | 1.0 | 6.8 | 2.8 | 11.6 | 0.3 | 8.6 | $17.40 |
+| 1,000 | Forge + fetch cache (design, not shipped) | 998 | 4h 25m | 1.0 | 1.0 | 2.8 | 2.8 | 7.6 | 0.3 | 5.1 | $11.40 |
+| 10,000 | Baseline: PR flow on the same Artifacts repo | 8,860 | 41d 0h | 0.0 | 1.1 | 4.7 | 4.0 | 9.9 | 0.0 | 0.0 | $14.78 |
+| 10,000 | Forge, trains only | 8,708 | 2d 14h | 1.1 | 1.1 | 4.3 | 3.1 | 9.7 | 0.3 | 5.3 | $14.53 |
+| 10,000 | Forge, full | 9,820 | 37h 21m | 1.0 | 1.0 | 8.1 | 3.2 | 13.3 | 0.3 | 9.4 | $20.01 |
+| 10,000 | Forge + fetch cache (design, not shipped) | 9,820 | 37h 21m | 1.0 | 1.0 | 4.1 | 3.2 | 9.4 | 0.3 | 6.6 | $14.06 |
+
+**Table B: PROJECTED, Table A plus polling.** Range = poll while
+working .. poll until landed or abandoned. Forge syncs from Feed events,
+so it adds 0 polls.
+
+| N | Mode | poll 30s: ops / landed | poll 30s: $ / 10k | poll 60s: ops / landed | poll 60s: $ / 10k | poll 300s: ops / landed | poll 300s: $ / 10k |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 10 | Baseline: PR flow on the same Artifacts repo | 23.9 .. 189 | $35.79 .. $284 | 15.0 .. 97.8 | $22.54 .. $147 | 8.0 .. 24.5 | $11.95 .. $36.79 |
+| 10 | Forge, trains only | 26.7 .. 183 | $39.99 .. $275 | 17.8 .. 96.1 | $26.74 .. $144 | 10.8 .. 26.4 | $16.15 .. $39.63 |
+| 10 | Forge, full (events, 0 polls) | 10.5 | $15.75 | 10.5 | $15.75 | 10.5 | $15.75 |
+| 10 | Forge + fetch cache (design, not shipped) (events, 0 polls) | 10.0 | $15.00 | 10.0 | $15.00 | 10.0 | $15.00 |
+| 100 | Baseline: PR flow on the same Artifacts repo | 26.6 .. 1,251 | $39.95 .. $1,877 | 16.5 .. 629 | $24.78 .. $943 | 8.4 .. 131 | $12.64 .. $196 |
+| 100 | Forge, trains only | 26.9 .. 194 | $40.41 .. $291 | 16.9 .. 101 | $25.41 .. $151 | 8.9 .. 25.7 | $13.41 .. $38.49 |
+| 100 | Forge, full (events, 0 polls) | 7.2 | $10.86 | 7.2 | $10.86 | 7.2 | $10.86 |
+| 100 | Forge + fetch cache (design, not shipped) (events, 0 polls) | 6.2 | $9.29 | 6.2 | $9.29 | 6.2 | $9.29 |
+| 1,000 | Baseline: PR flow on the same Artifacts repo | 28.7 .. 11,881 | $43.00 .. $17,821 | 17.9 .. 5,944 | $26.83 .. $8,916 | 9.3 .. 1,194 | $13.90 .. $1,792 |
+| 1,000 | Forge, trains only | 29.4 .. 750 | $44.11 .. $1,125 | 18.3 .. 378 | $27.40 .. $568 | 9.3 .. 81.4 | $14.03 .. $122 |
+| 1,000 | Forge, full (events, 0 polls) | 11.6 | $17.40 | 11.6 | $17.40 | 11.6 | $17.40 |
+| 1,000 | Forge + fetch cache (design, not shipped) (events, 0 polls) | 7.6 | $11.40 | 7.6 | $11.40 | 7.6 | $11.40 |
+| 10,000 | Baseline: PR flow on the same Artifacts repo | 39.7 .. 133,322 | $59.51 .. $199,982 | 24.8 .. 66,666 | $37.15 .. $99,999 | 12.8 .. 13,341 | $19.25 .. $20,012 |
+| 10,000 | Forge, trains only | 40.9 .. 8,683 | $61.41 .. $13,024 | 25.3 .. 4,346 | $37.97 .. $6,519 | 12.8 .. 877 | $19.22 .. $1,316 |
+| 10,000 | Forge, full (events, 0 polls) | 13.3 | $20.01 | 13.3 | $20.01 | 13.3 | $20.01 |
+| 10,000 | Forge + fetch cache (design, not shipped) (events, 0 polls) | 9.4 | $14.06 | 9.4 | $14.06 | 9.4 | $14.06 |
+
+What this says, and what it doesn't:
+
+- **Without polling, Forge spends more git ops per landed change than
+  the baseline**: 13.3 vs 9.9 at 10k agents, 11.6 vs 7.1 at 1k (Table
+  A). The extra is fetches (8.1 vs 4.7 per landed change at 10k): LLM
+  replays (12,203 attempts at 2 fetches each, about 2.5 per landed
+  change) and speculative lane rebuilds (5,117 lanes invalidated by a
+  red lane ahead of them, re-cut, and every item refetched from its
+  fork). Forge
+  lands more changes (9,820 vs 8,860 at 10k), but per landed change it
+  is not cheaper on git traffic.
+- **Forge wins only against agents that poll.** At 10k agents, an
+  agent polling every 60 s only while it works already costs 24.8 ops
+  per landed change (Forge: 13.3). Polling until landed costs
+  thousands, because the serial queue keeps changes in the system for
+  weeks (41 days mean at 10k); that upper bound is driven by queue
+  wait, not by git. At a 300 s interval and only while working, the
+  baseline (12.8) is roughly level with Forge (13.3).
+- **Polling is post-hoc.** The simulator does not make polling agents
+  fresher, so they do not conflict less here. Agents that poll would
+  rebase earlier and might conflict less; that effect is not modelled.
+- **Train fetches are a lower bound** (`fetchCovering` deepening
+  retries are ignored), and every per-event count is an input, listed
+  in the constants table.
+- **Optimisation opportunity: cache fork fetches across lane
+  rebuilds.** The "Forge + fetch cache (design, not shipped)" rows turn
+  on `forgeFetchCache`: the train fetches an item's head once per
+  version, so a speculative rebuild of the same head is free, and a
+  replay fetches trunk once. Forge's no-poll figure drops to 9.4 ops per
+  landed change at 10k (from 13.3; baseline 9.9) and 7.6 at 1k (from
+  11.6; baseline 7.1). Landings are unchanged (same seed, same
+  decisions); only fetches move. Not shipped: `train.ts` builds each
+  group in a fresh MemoryFS today.
 
 ### What the simulated numbers say, and what they don't
 
@@ -428,16 +541,21 @@ keys are snake_case: `changes_per_min`, `median_declare_to_land_min`,
 `escaped_defects`, `escaped_defect_min`, `main_red_integration_min`
 (replaces the old `red_main_min`), `unverified_landings`,
 `speculative_groups`, `invalidated_lanes`, `human_min`,
-`dollars_per_1k_agents`, and so on.
+`dollars_per_1k_agents`, and so on. Since the pull model each mode also
+carries `git_ops`, `git_ops_per_landed`, `billable_ops_per_landed`,
+`binding_calls_per_landed`, `usd_per_10k_changes`,
+`mean_min_in_system` and `poll_projection` (section 2.3).
 
 ## 4. Files
 
 | Path | Role |
 |---|---|
 | `apps/sim/src/{prng,constants,workload,sim,report}.ts` | Simulator. Pure, and runs under Node strip-types and vitest |
+| `apps/sim/src/pull.ts` | Pull model: git ops per landed change by kind, polling projections (section 2.3) |
 | `apps/sim/src/harness/{api,pool,plan,git}.ts` | Harness logic. Runtime-free, with an injectable HTTP layer and git |
 | `apps/sim/src/{pool-do,index,env}.ts` | The Worker and its Durable Objects |
 | `apps/sim/src/sim.test.ts`, `apps/sim/src/harness/pool.test.ts` | Tests. Pool logic runs against a fake Forge API |
 | `scripts/forge-bench.mjs` | CLI for both layers (`npm run forge:bench`) |
 | `docs/bench/forge-sim-seed7.json` | Committed simulated output |
 | `docs/bench/forge-sim-seed7-{d1,td3,mp32,pi0}.json` | Committed sensitivity runs (section 2.2) |
+| `docs/bench/forge-sim-seed7-pull.json` | Committed pull-traffic run (section 2.3), with `pull_curve` |

@@ -1,0 +1,2537 @@
+{
+  "kind": "simulated",
+  "note": "SIMULATED: outputs of apps/sim/src/sim.ts under the constants below; not measurements.",
+  "generated_at": "2026-10-12",
+  "sha": "6b2907d",
+  "command": "node --experimental-strip-types scripts/forge-bench.mjs --pull --agents 10,100,1000,10000 --seed 7",
+  "seed": 7,
+  "constants": {
+    "arrivalWindowMin": 10,
+    "repoFiles": 100000,
+    "filesPerDir": 20,
+    "zipfS": 0.7,
+    "footprintExtraMean": 1.5,
+    "footprintMax": 12,
+    "protectedDirFraction": 0.02,
+    "pDrift": 0.1,
+    "work": {
+      "median": 8,
+      "sigma": 0.6
+    },
+    "ci": {
+      "median": 10,
+      "sigma": 0.3
+    },
+    "reviewLatency": {
+      "median": 30,
+      "sigma": 0.8
+    },
+    "rereviewLatency": {
+      "median": 15,
+      "sigma": 0.8
+    },
+    "planApprovalLatency": {
+      "median": 30,
+      "sigma": 0.8
+    },
+    "replay": {
+      "median": 3,
+      "sigma": 0.5
+    },
+    "mergeMin": 0.5,
+    "trainMergeBaseMin": 0.5,
+    "trainMergePerItemMin": 0.02,
+    "reworkFactor": 0.5,
+    "pConflictPerSharedFile": 0.35,
+    "pDefect": 0.05,
+    "pDefectCaught": 0.9,
+    "pInteraction": 0.02,
+    "pFlake": 0.05,
+    "pWeakEvidence": 0.15,
+    "pReviewerDisagrees": 0.06,
+    "replaySuccess": 0.6,
+    "mttrMin": 30,
+    "afterWaitMaxMin": 15,
+    "cutScanLimit": 2000,
+    "maxRebases": 3,
+    "maxFixes": 3,
+    "maxConflicts": 8,
+    "reviewMin": 10,
+    "rereviewMin": 3,
+    "planApprovalMin": 5,
+    "auditMin": 5,
+    "escalationMin": 10,
+    "git": {
+      "clonePerIntent": 1,
+      "forkPerIntent": 1,
+      "baselineFetchBeforePush": 1,
+      "fetchPerRebase": 1,
+      "fetchPerReplayAttempt": 2,
+      "pushPerReplay": 1,
+      "fetchPerRestack": 1,
+      "queueFetchPerServe": 1,
+      "queuePushPerServe": 1,
+      "baselineLandPush": 1,
+      "trainFetchPerGroup": 1,
+      "trainFetchSpeculative": 1,
+      "trainFetchPerItem": 1,
+      "trainPushPerLane": 1,
+      "landFetch": 1,
+      "landPush": 2,
+      "probeFetchBase": 1,
+      "probeFetchPerItem": 1,
+      "probePush": 1,
+      "pollIntervalsSec": [
+        30,
+        60,
+        300
+      ],
+      "pollWindows": [
+        "whileWorking",
+        "untilLanded"
+      ],
+      "forgeSync": "events"
+    },
+    "dollarsPer1kOps": 0.15,
+    "forgeFetchCache": false,
+    "trainsSpeculationDepth": 1,
+    "policy": {
+      "protected": [
+        "src/auth/**",
+        "migrations/**"
+      ],
+      "autoLandMaxRisk": 30,
+      "auditSample": 0.05,
+      "lanes": {
+        "maxPerTrain": 50,
+        "maxParallel": 8,
+        "speculationDepth": 3
+      },
+      "replay": {
+        "maxAttempts": 2,
+        "raceK": 1
+      }
+    }
+  },
+  "constant_sources": {
+    "arrivalWindowMin": "COMPETITION-PLAN.md §4 scale math (10k agents in 10 min)",
+    "repoFiles": "assumption (a large monorepo)",
+    "zipfS": "assumption; calibrated so ~22% of intents overlap a live intent at 1k agents (51% at 10k, 75% at 100k)",
+    "pDrift": "assumption",
+    "work": "assumption (agent session, median 8 min)",
+    "ci": "assumption (median 10 min suite)",
+    "reviewLatency": "assumption; reviewers modeled as unlimited (favors the baselines)",
+    "pConflictPerSharedFile": "assumption; overlap is necessary, not sufficient, for a textual conflict",
+    "pFlake": "assumption (per CI run); Google reports ~1.5% of test runs flaky (2016 testing blog)",
+    "pDefect": "assumption (reaches CI with a real bug; 90% caught by the intent's own CI)",
+    "pInteraction": "assumption (semantic conflict caught only on the combined SHA)",
+    "replaySuccess": "Merge-Bench (COMPETITION-PLAN.md §13), default 0.6",
+    "mttrMin": "assumption (detect + revert)",
+    "afterWaitMaxMin": "assumption (planner wait budget)",
+    "reviewMin": "assumption (human minutes per small agent PR)",
+    "policy": "DEFAULT_POLICY from intents-core.ts (lanes 50 per group x 8 parallel, speculation depth 3) + protected src/auth/**, migrations/**",
+    "trainsSpeculationDepth": "1: trains-only models the pre-speculation executor (one group in flight per repo)",
+    "dollarsPer1kOps": "Artifacts pricing page ($0.15 / 1,000 ops; names create, push, pull, clone as examples); checked 2026-10-12",
+    "forgeFetchCache": "design, not shipped: train caches item fork fetches across speculative rebuilds; replays fetch trunk once",
+    "git.clonePerIntent": "apps/sim/src/harness/git.ts (clone depth=1, once per intent)",
+    "git.forkPerIntent": "Forge claim_intent forks once per intent (trains + forge modes); the baseline works on branches of the same repo",
+    "git.baselineFetchBeforePush": "assumption: baseline agent runs pull --rebase before every push",
+    "git.fetchPerRebase": "assumption: one trunk fetch per author rebase (conflict, interaction fix, escalation); a defect fix needs none",
+    "git.fetchPerReplayAttempt": "train/replay code fetches trunk + the intent fork per attempt (2); 1 with forgeFetchCache",
+    "git.pushPerReplay": "a successful replay pushes the re-derived head once",
+    "git.fetchPerRestack": "assumption: a restack fetches the predecessor's current head once",
+    "git.queueFetchPerServe": "assumption: the serial queue fetches trunk once per serve (bounces included)",
+    "git.queuePushPerServe": "assumption: the queue pushes the updated branch / merge ref for CI",
+    "git.baselineLandPush": "assumption: fast-forward main = one push",
+    "git.trainFetchPerGroup": "apps/worker/src/train.ts buildGroup: fetchCovering(main) once per group (+1 for the speculative parent lane ref)",
+    "git.trainFetchPerItem": "apps/worker/src/train.ts buildGroup: one fork fetch per item; LOWER BOUND (fetchCovering deepening retries ignored)",
+    "git.trainPushPerLane": "apps/worker/src/train.ts: force-push each lane ref",
+    "git.landPush": "apps/worker/src/train.ts fastForwardMain: fetch lane ref 1, push main + push notes 2 (plus an ls-remote, reported apart)",
+    "git.probe": "train-core bisect probes: fetch trunk 1 + each item 1, push the probe ref 1",
+    "git.pollIntervalsSec": "assumption: projected agent poll intervals (git fetch every 30 / 60 / 300 s)",
+    "git.pollWindows": "assumption: polls while working (lower bound) .. until landed or abandoned (upper bound); applied post-hoc, so fresher agents are NOT modelled as conflicting less",
+    "git.forgeSync": "Forge agents sync from Feed events: 0 polls",
+    "git.lsRemote/token": "ls-remote and token mints counted apart: Artifacts billing for them is undocumented"
+  },
+  "runs": [
+    {
+      "run": "sim-s7-n10",
+      "measured_at": "2026-10-12",
+      "sha": "6b2907d",
+      "kind": "simulated",
+      "simulated": true,
+      "agents": 10,
+      "seed": 7,
+      "repo_files": 100000,
+      "overlap_at_declare": 0,
+      "command": "node --experimental-strip-types scripts/forge-bench.mjs --pull --agents 10,100,1000,10000 --seed 7",
+      "modes": [
+        {
+          "mode": "baseline",
+          "label": "Baseline: branch + PR + serial queue",
+          "metrics": {
+            "landed": 10,
+            "abandoned": 0,
+            "changes_per_min": 0.06,
+            "median_declare_to_land_min": 83.63,
+            "p95_declare_to_land_min": 154.34,
+            "time_to_80pct_landed_min": 129.23,
+            "makespan_min": 160.96,
+            "conflicts_hit": 0,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 0,
+            "escaped_defect_min": 0,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 0,
+            "human_min": 100,
+            "human_breakdown_min": {
+              "review": 100,
+              "rereview": 0,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 26,
+            "trains": 0,
+            "bisections": 0,
+            "artifacts_ops": 62,
+            "dollars_per_1k_agents": 0.93,
+            "git_ops": {
+              "fork": 0,
+              "clone": 10,
+              "fetch": 21,
+              "push": 31,
+              "ls_remote": 0,
+              "token": 0
+            },
+            "git_ops_per_landed": {
+              "fork": 0,
+              "clone": 1,
+              "fetch": 2.1,
+              "push": 3.1
+            },
+            "billable_ops_per_landed": 6.2,
+            "binding_calls_per_landed": {
+              "ls_remote": 0,
+              "token": 0
+            },
+            "usd_per_10k_changes": 9.3,
+            "mean_min_in_system": 91.62,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 17.66,
+                  "ops_per_landed": 23.86,
+                  "usd_per_10k_changes": 35.79
+                },
+                "until_landed": {
+                  "polls_per_landed": 183.24,
+                  "ops_per_landed": 189.44,
+                  "usd_per_10k_changes": 284.15
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 8.83,
+                  "ops_per_landed": 15.03,
+                  "usd_per_10k_changes": 22.54
+                },
+                "until_landed": {
+                  "polls_per_landed": 91.62,
+                  "ops_per_landed": 97.82,
+                  "usd_per_10k_changes": 146.73
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 1.77,
+                  "ops_per_landed": 7.97,
+                  "usd_per_10k_changes": 11.95
+                },
+                "until_landed": {
+                  "polls_per_landed": 18.32,
+                  "ops_per_landed": 24.52,
+                  "usd_per_10k_changes": 36.79
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "trains",
+          "label": "Forge, trains only",
+          "metrics": {
+            "landed": 10,
+            "abandoned": 0,
+            "changes_per_min": 0.06,
+            "median_declare_to_land_min": 70.55,
+            "p95_declare_to_land_min": 159.34,
+            "time_to_80pct_landed_min": 119.84,
+            "makespan_min": 165.96,
+            "conflicts_hit": 0,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 0,
+            "escaped_defect_min": 0,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 0,
+            "human_min": 100,
+            "human_breakdown_min": {
+              "review": 100,
+              "rereview": 0,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 21,
+            "trains": 10,
+            "bisections": 0,
+            "artifacts_ops": 90,
+            "dollars_per_1k_agents": 1.35,
+            "git_ops": {
+              "fork": 10,
+              "clone": 10,
+              "fetch": 29,
+              "push": 41,
+              "ls_remote": 19,
+              "token": 59
+            },
+            "git_ops_per_landed": {
+              "fork": 1,
+              "clone": 1,
+              "fetch": 2.9,
+              "push": 4.1
+            },
+            "billable_ops_per_landed": 9,
+            "binding_calls_per_landed": {
+              "ls_remote": 1.9,
+              "token": 5.9
+            },
+            "usd_per_10k_changes": 13.5,
+            "mean_min_in_system": 87.11,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 17.66,
+                  "ops_per_landed": 26.66,
+                  "usd_per_10k_changes": 39.99
+                },
+                "until_landed": {
+                  "polls_per_landed": 174.23,
+                  "ops_per_landed": 183.23,
+                  "usd_per_10k_changes": 274.84
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 8.83,
+                  "ops_per_landed": 17.83,
+                  "usd_per_10k_changes": 26.74
+                },
+                "until_landed": {
+                  "polls_per_landed": 87.11,
+                  "ops_per_landed": 96.11,
+                  "usd_per_10k_changes": 144.17
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 1.77,
+                  "ops_per_landed": 10.77,
+                  "usd_per_10k_changes": 16.15
+                },
+                "until_landed": {
+                  "polls_per_landed": 17.42,
+                  "ops_per_landed": 26.42,
+                  "usd_per_10k_changes": 39.63
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "forge",
+          "label": "Forge, full",
+          "metrics": {
+            "landed": 10,
+            "abandoned": 0,
+            "changes_per_min": 0.19,
+            "median_declare_to_land_min": 40.93,
+            "p95_declare_to_land_min": 52.97,
+            "time_to_80pct_landed_min": 48.25,
+            "makespan_min": 54.01,
+            "conflicts_hit": 0,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 0,
+            "escaped_defect_min": 0,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 6,
+            "invalidated_lanes": 4,
+            "human_min": 0,
+            "human_breakdown_min": {
+              "review": 0,
+              "rereview": 0,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 10,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 27,
+            "trains": 15,
+            "bisections": 0,
+            "artifacts_ops": 105,
+            "dollars_per_1k_agents": 1.58,
+            "git_ops": {
+              "fork": 10,
+              "clone": 10,
+              "fetch": 39,
+              "push": 46,
+              "ls_remote": 18,
+              "token": 68
+            },
+            "git_ops_per_landed": {
+              "fork": 1,
+              "clone": 1,
+              "fetch": 3.9,
+              "push": 4.6
+            },
+            "billable_ops_per_landed": 10.5,
+            "binding_calls_per_landed": {
+              "ls_remote": 1.8,
+              "token": 6.8
+            },
+            "usd_per_10k_changes": 15.75,
+            "mean_min_in_system": 39.56,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 10.5,
+                  "usd_per_10k_changes": 15.75
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 10.5,
+                  "usd_per_10k_changes": 15.75
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 10.5,
+                  "usd_per_10k_changes": 15.75
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 10.5,
+                  "usd_per_10k_changes": 15.75
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 10.5,
+                  "usd_per_10k_changes": 15.75
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 10.5,
+                  "usd_per_10k_changes": 15.75
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        }
+      ]
+    },
+    {
+      "run": "sim-s7-n100",
+      "measured_at": "2026-10-12",
+      "sha": "6b2907d",
+      "kind": "simulated",
+      "simulated": true,
+      "agents": 100,
+      "seed": 7,
+      "repo_files": 100000,
+      "overlap_at_declare": 0.07,
+      "command": "node --experimental-strip-types scripts/forge-bench.mjs --pull --agents 10,100,1000,10000 --seed 7",
+      "modes": [
+        {
+          "mode": "baseline",
+          "label": "Baseline: branch + PR + serial queue",
+          "metrics": {
+            "landed": 100,
+            "abandoned": 0,
+            "changes_per_min": 0.08,
+            "median_declare_to_land_min": 630.4,
+            "p95_declare_to_land_min": 1145.06,
+            "time_to_80pct_landed_min": 980.68,
+            "makespan_min": 1215.69,
+            "conflicts_hit": 5,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 0,
+            "escaped_defect_min": 0,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 0,
+            "human_min": 1015,
+            "human_breakdown_min": {
+              "review": 1000,
+              "rereview": 15,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 225,
+            "trains": 0,
+            "bisections": 0,
+            "artifacts_ops": 640,
+            "dollars_per_1k_agents": 0.96,
+            "git_ops": {
+              "fork": 0,
+              "clone": 100,
+              "fetch": 225,
+              "push": 315,
+              "ls_remote": 0,
+              "token": 0
+            },
+            "git_ops_per_landed": {
+              "fork": 0,
+              "clone": 1,
+              "fetch": 2.25,
+              "push": 3.15
+            },
+            "billable_ops_per_landed": 6.4,
+            "binding_calls_per_landed": {
+              "ls_remote": 0,
+              "token": 0
+            },
+            "usd_per_10k_changes": 9.6,
+            "mean_min_in_system": 622.51,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 20.23,
+                  "ops_per_landed": 26.63,
+                  "usd_per_10k_changes": 39.95
+                },
+                "until_landed": {
+                  "polls_per_landed": 1245.02,
+                  "ops_per_landed": 1251.42,
+                  "usd_per_10k_changes": 1877.13
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 10.12,
+                  "ops_per_landed": 16.52,
+                  "usd_per_10k_changes": 24.78
+                },
+                "until_landed": {
+                  "polls_per_landed": 622.51,
+                  "ops_per_landed": 628.91,
+                  "usd_per_10k_changes": 943.36
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 2.02,
+                  "ops_per_landed": 8.42,
+                  "usd_per_10k_changes": 12.64
+                },
+                "until_landed": {
+                  "polls_per_landed": 124.5,
+                  "ops_per_landed": 130.9,
+                  "usd_per_10k_changes": 196.35
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "trains",
+          "label": "Forge, trains only",
+          "metrics": {
+            "landed": 100,
+            "abandoned": 0,
+            "changes_per_min": 0.52,
+            "median_declare_to_land_min": 77.45,
+            "p95_declare_to_land_min": 164.73,
+            "time_to_80pct_landed_min": 124.18,
+            "makespan_min": 192.61,
+            "conflicts_hit": 5,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 0,
+            "escaped_defect_min": 0,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 11,
+            "human_min": 1015,
+            "human_breakdown_min": {
+              "review": 1000,
+              "rereview": 15,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 184,
+            "trains": 70,
+            "bisections": 2,
+            "artifacts_ops": 694,
+            "dollars_per_1k_agents": 1.04,
+            "git_ops": {
+              "fork": 100,
+              "clone": 100,
+              "fetch": 208,
+              "push": 286,
+              "ls_remote": 65,
+              "token": 426
+            },
+            "git_ops_per_landed": {
+              "fork": 1,
+              "clone": 1,
+              "fetch": 2.08,
+              "push": 2.86
+            },
+            "billable_ops_per_landed": 6.94,
+            "binding_calls_per_landed": {
+              "ls_remote": 0.65,
+              "token": 4.26
+            },
+            "usd_per_10k_changes": 10.41,
+            "mean_min_in_system": 93.6,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 20,
+                  "ops_per_landed": 26.94,
+                  "usd_per_10k_changes": 40.41
+                },
+                "until_landed": {
+                  "polls_per_landed": 187.2,
+                  "ops_per_landed": 194.14,
+                  "usd_per_10k_changes": 291.21
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 10,
+                  "ops_per_landed": 16.94,
+                  "usd_per_10k_changes": 25.41
+                },
+                "until_landed": {
+                  "polls_per_landed": 93.6,
+                  "ops_per_landed": 100.54,
+                  "usd_per_10k_changes": 150.81
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 2,
+                  "ops_per_landed": 8.94,
+                  "usd_per_10k_changes": 13.41
+                },
+                "until_landed": {
+                  "polls_per_landed": 18.72,
+                  "ops_per_landed": 25.66,
+                  "usd_per_10k_changes": 38.49
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "forge",
+          "label": "Forge, full",
+          "metrics": {
+            "landed": 100,
+            "abandoned": 0,
+            "changes_per_min": 0.66,
+            "median_declare_to_land_min": 40.27,
+            "p95_declare_to_land_min": 98.93,
+            "time_to_80pct_landed_min": 72.16,
+            "makespan_min": 150.63,
+            "conflicts_hit": 0,
+            "conflicts_avoided": 2,
+            "stacked_intents": 7,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 0,
+            "escaped_defect_min": 0,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 13,
+            "invalidated_lanes": 28,
+            "human_min": 110,
+            "human_breakdown_min": {
+              "review": 70,
+              "rereview": 0,
+              "plan_approval": 35,
+              "audit": 5,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 92,
+              "audit": 1,
+              "human": 7
+            },
+            "ci_runs": 180,
+            "trains": 68,
+            "bisections": 1,
+            "artifacts_ops": 724,
+            "dollars_per_1k_agents": 1.09,
+            "git_ops": {
+              "fork": 100,
+              "clone": 100,
+              "fetch": 281,
+              "push": 243,
+              "ls_remote": 56,
+              "token": 471
+            },
+            "git_ops_per_landed": {
+              "fork": 1,
+              "clone": 1,
+              "fetch": 2.81,
+              "push": 2.43
+            },
+            "billable_ops_per_landed": 7.24,
+            "binding_calls_per_landed": {
+              "ls_remote": 0.56,
+              "token": 4.71
+            },
+            "usd_per_10k_changes": 10.86,
+            "mean_min_in_system": 52.52,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 7.24,
+                  "usd_per_10k_changes": 10.86
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 7.24,
+                  "usd_per_10k_changes": 10.86
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 7.24,
+                  "usd_per_10k_changes": 10.86
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 7.24,
+                  "usd_per_10k_changes": 10.86
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 7.24,
+                  "usd_per_10k_changes": 10.86
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 7.24,
+                  "usd_per_10k_changes": 10.86
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        }
+      ]
+    },
+    {
+      "run": "sim-s7-n1000",
+      "measured_at": "2026-10-12",
+      "sha": "6b2907d",
+      "kind": "simulated",
+      "simulated": true,
+      "agents": 1000,
+      "seed": 7,
+      "repo_files": 100000,
+      "overlap_at_declare": 0.21,
+      "command": "node --experimental-strip-types scripts/forge-bench.mjs --pull --agents 10,100,1000,10000 --seed 7",
+      "modes": [
+        {
+          "mode": "baseline",
+          "label": "Baseline: branch + PR + serial queue",
+          "metrics": {
+            "landed": 988,
+            "abandoned": 12,
+            "changes_per_min": 0.09,
+            "median_declare_to_land_min": 5721.35,
+            "p95_declare_to_land_min": 11008.72,
+            "time_to_80pct_landed_min": 9435.9,
+            "makespan_min": 11607.82,
+            "conflicts_hit": 205,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 4,
+            "escaped_defect_min": 120,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 0,
+            "human_min": 10636,
+            "human_breakdown_min": {
+              "review": 10000,
+              "rereview": 636,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 2392,
+            "trains": 0,
+            "bisections": 0,
+            "artifacts_ops": 7025,
+            "dollars_per_1k_agents": 1.05,
+            "git_ops": {
+              "fork": 0,
+              "clone": 1000,
+              "fetch": 2727,
+              "push": 3298,
+              "ls_remote": 0,
+              "token": 0
+            },
+            "git_ops_per_landed": {
+              "fork": 0,
+              "clone": 1.012,
+              "fetch": 2.76,
+              "push": 3.338
+            },
+            "billable_ops_per_landed": 7.11,
+            "binding_calls_per_landed": {
+              "ls_remote": 0,
+              "token": 0
+            },
+            "usd_per_10k_changes": 10.67,
+            "mean_min_in_system": 5865.54,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 21.56,
+                  "ops_per_landed": 28.67,
+                  "usd_per_10k_changes": 43
+                },
+                "until_landed": {
+                  "polls_per_landed": 11873.56,
+                  "ops_per_landed": 11880.67,
+                  "usd_per_10k_changes": 17821
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 10.78,
+                  "ops_per_landed": 17.89,
+                  "usd_per_10k_changes": 26.83
+                },
+                "until_landed": {
+                  "polls_per_landed": 5936.78,
+                  "ops_per_landed": 5943.89,
+                  "usd_per_10k_changes": 8915.83
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 2.16,
+                  "ops_per_landed": 9.27,
+                  "usd_per_10k_changes": 13.9
+                },
+                "until_landed": {
+                  "polls_per_landed": 1187.36,
+                  "ops_per_landed": 1194.47,
+                  "usd_per_10k_changes": 1791.7
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "trains",
+          "label": "Forge, trains only",
+          "metrics": {
+            "landed": 986,
+            "abandoned": 14,
+            "changes_per_min": 1.31,
+            "median_declare_to_land_min": 338.96,
+            "p95_declare_to_land_min": 626.9,
+            "time_to_80pct_landed_min": 556.59,
+            "makespan_min": 753.88,
+            "conflicts_hit": 253,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 4,
+            "escaped_defect_min": 112.57,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 116,
+            "human_min": 10774,
+            "human_breakdown_min": {
+              "review": 10000,
+              "rereview": 774,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 1811,
+            "trains": 469,
+            "bisections": 56,
+            "artifacts_ops": 7025,
+            "dollars_per_1k_agents": 1.05,
+            "git_ops": {
+              "fork": 1000,
+              "clone": 1000,
+              "fetch": 2855,
+              "push": 2170,
+              "ls_remote": 253,
+              "token": 4260
+            },
+            "git_ops_per_landed": {
+              "fork": 1.014,
+              "clone": 1.014,
+              "fetch": 2.896,
+              "push": 2.201
+            },
+            "billable_ops_per_landed": 7.125,
+            "binding_calls_per_landed": {
+              "ls_remote": 0.257,
+              "token": 4.32
+            },
+            "usd_per_10k_changes": 10.69,
+            "mean_min_in_system": 366.11,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 22.28,
+                  "ops_per_landed": 29.41,
+                  "usd_per_10k_changes": 44.11
+                },
+                "until_landed": {
+                  "polls_per_landed": 742.61,
+                  "ops_per_landed": 749.73,
+                  "usd_per_10k_changes": 1124.6
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 11.14,
+                  "ops_per_landed": 18.27,
+                  "usd_per_10k_changes": 27.4
+                },
+                "until_landed": {
+                  "polls_per_landed": 371.3,
+                  "ops_per_landed": 378.43,
+                  "usd_per_10k_changes": 567.64
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 2.23,
+                  "ops_per_landed": 9.35,
+                  "usd_per_10k_changes": 14.03
+                },
+                "until_landed": {
+                  "polls_per_landed": 74.26,
+                  "ops_per_landed": 81.39,
+                  "usd_per_10k_changes": 122.08
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "forge",
+          "label": "Forge, full",
+          "metrics": {
+            "landed": 998,
+            "abandoned": 2,
+            "changes_per_min": 1.59,
+            "median_declare_to_land_min": 257.58,
+            "p95_declare_to_land_min": 475.5,
+            "time_to_80pct_landed_min": 436.11,
+            "makespan_min": 629.19,
+            "conflicts_hit": 337,
+            "conflicts_avoided": 52,
+            "stacked_intents": 132,
+            "replays_attempted": 507,
+            "replays_succeeded": 309,
+            "escaped_defects": 4,
+            "escaped_defect_min": 120,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 103,
+            "invalidated_lanes": 584,
+            "human_min": 2180,
+            "human_breakdown_min": {
+              "review": 890,
+              "rereview": 150,
+              "plan_approval": 300,
+              "audit": 290,
+              "escalation": 550
+            },
+            "routes": {
+              "auto": 1186,
+              "audit": 58,
+              "human": 139
+            },
+            "ci_runs": 2427,
+            "trains": 962,
+            "bisections": 62,
+            "artifacts_ops": 11576,
+            "dollars_per_1k_agents": 1.74,
+            "git_ops": {
+              "fork": 1000,
+              "clone": 1000,
+              "fetch": 6815,
+              "push": 2761,
+              "ls_remote": 337,
+              "token": 8546
+            },
+            "git_ops_per_landed": {
+              "fork": 1.002,
+              "clone": 1.002,
+              "fetch": 6.829,
+              "push": 2.767
+            },
+            "billable_ops_per_landed": 11.599,
+            "binding_calls_per_landed": {
+              "ls_remote": 0.338,
+              "token": 8.563
+            },
+            "usd_per_10k_changes": 17.4,
+            "mean_min_in_system": 264.73,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 11.6,
+                  "usd_per_10k_changes": 17.4
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 11.6,
+                  "usd_per_10k_changes": 17.4
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 11.6,
+                  "usd_per_10k_changes": 17.4
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 11.6,
+                  "usd_per_10k_changes": 17.4
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 11.6,
+                  "usd_per_10k_changes": 17.4
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 11.6,
+                  "usd_per_10k_changes": 17.4
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        }
+      ]
+    },
+    {
+      "run": "sim-s7-n10000",
+      "measured_at": "2026-10-12",
+      "sha": "6b2907d",
+      "kind": "simulated",
+      "simulated": true,
+      "agents": 10000,
+      "seed": 7,
+      "repo_files": 100000,
+      "overlap_at_declare": 0.5041,
+      "command": "node --experimental-strip-types scripts/forge-bench.mjs --pull --agents 10,100,1000,10000 --seed 7",
+      "modes": [
+        {
+          "mode": "baseline",
+          "label": "Baseline: branch + PR + serial queue",
+          "metrics": {
+            "landed": 8860,
+            "abandoned": 1140,
+            "changes_per_min": 0.08,
+            "median_declare_to_land_min": 53166.8,
+            "p95_declare_to_land_min": 101834.59,
+            "time_to_80pct_landed_min": 96454.73,
+            "makespan_min": 107713.42,
+            "conflicts_hit": 7818,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 53,
+            "escaped_defect_min": 1590,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 0,
+            "human_min": 120580,
+            "human_breakdown_min": {
+              "review": 100000,
+              "rereview": 20580,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 27801,
+            "trains": 0,
+            "bisections": 0,
+            "artifacts_ops": 87286,
+            "dollars_per_1k_agents": 1.31,
+            "git_ops": {
+              "fork": 0,
+              "clone": 10000,
+              "fetch": 41552,
+              "push": 35734,
+              "ls_remote": 0,
+              "token": 0
+            },
+            "git_ops_per_landed": {
+              "fork": 0,
+              "clone": 1.129,
+              "fetch": 4.69,
+              "push": 4.033
+            },
+            "billable_ops_per_landed": 9.852,
+            "binding_calls_per_landed": {
+              "ls_remote": 0,
+              "token": 0
+            },
+            "usd_per_10k_changes": 14.78,
+            "mean_min_in_system": 59057.09,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 29.82,
+                  "ops_per_landed": 39.68,
+                  "usd_per_10k_changes": 59.51
+                },
+                "until_landed": {
+                  "polls_per_landed": 133311.71,
+                  "ops_per_landed": 133321.56,
+                  "usd_per_10k_changes": 199982.34
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 14.91,
+                  "ops_per_landed": 24.76,
+                  "usd_per_10k_changes": 37.15
+                },
+                "until_landed": {
+                  "polls_per_landed": 66655.85,
+                  "ops_per_landed": 66665.7,
+                  "usd_per_10k_changes": 99998.56
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 2.98,
+                  "ops_per_landed": 12.83,
+                  "usd_per_10k_changes": 19.25
+                },
+                "until_landed": {
+                  "polls_per_landed": 13331.17,
+                  "ops_per_landed": 13341.02,
+                  "usd_per_10k_changes": 20011.53
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "trains",
+          "label": "Forge, trains only",
+          "metrics": {
+            "landed": 8708,
+            "abandoned": 1292,
+            "changes_per_min": 1.16,
+            "median_declare_to_land_min": 3109.62,
+            "p95_declare_to_land_min": 6777.15,
+            "time_to_80pct_landed_min": 6511.76,
+            "makespan_min": 7482.18,
+            "conflicts_hit": 8715,
+            "conflicts_avoided": 0,
+            "stacked_intents": 0,
+            "replays_attempted": 0,
+            "replays_succeeded": 0,
+            "escaped_defects": 52,
+            "escaped_defect_min": 1323.03,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 0,
+            "invalidated_lanes": 1318,
+            "human_min": 122809,
+            "human_breakdown_min": {
+              "review": 100000,
+              "rereview": 22809,
+              "plan_approval": 0,
+              "audit": 0,
+              "escalation": 0
+            },
+            "routes": {
+              "auto": 0,
+              "audit": 0,
+              "human": 0
+            },
+            "ci_runs": 23789,
+            "trains": 4874,
+            "bisections": 505,
+            "artifacts_ops": 84334,
+            "dollars_per_1k_agents": 1.27,
+            "git_ops": {
+              "fork": 10000,
+              "clone": 10000,
+              "fetch": 37175,
+              "push": 27159,
+              "ls_remote": 2630,
+              "token": 46486
+            },
+            "git_ops_per_landed": {
+              "fork": 1.148,
+              "clone": 1.148,
+              "fetch": 4.269,
+              "push": 3.119
+            },
+            "billable_ops_per_landed": 9.685,
+            "binding_calls_per_landed": {
+              "ls_remote": 0.302,
+              "token": 5.338
+            },
+            "usd_per_10k_changes": 14.53,
+            "mean_min_in_system": 3776.28,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 31.26,
+                  "ops_per_landed": 40.94,
+                  "usd_per_10k_changes": 61.41
+                },
+                "until_landed": {
+                  "polls_per_landed": 8673.12,
+                  "ops_per_landed": 8682.81,
+                  "usd_per_10k_changes": 13024.21
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 15.63,
+                  "ops_per_landed": 25.31,
+                  "usd_per_10k_changes": 37.97
+                },
+                "until_landed": {
+                  "polls_per_landed": 4336.56,
+                  "ops_per_landed": 4346.25,
+                  "usd_per_10k_changes": 6519.37
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "poll",
+                "while_working": {
+                  "polls_per_landed": 3.13,
+                  "ops_per_landed": 12.81,
+                  "usd_per_10k_changes": 19.22
+                },
+                "until_landed": {
+                  "polls_per_landed": 867.31,
+                  "ops_per_landed": 877,
+                  "usd_per_10k_changes": 1315.5
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        },
+        {
+          "mode": "forge",
+          "label": "Forge, full",
+          "metrics": {
+            "landed": 9820,
+            "abandoned": 180,
+            "changes_per_min": 2.02,
+            "median_declare_to_land_min": 2103.19,
+            "p95_declare_to_land_min": 4266.28,
+            "time_to_80pct_landed_min": 3739.3,
+            "makespan_min": 4858.88,
+            "conflicts_hit": 8309,
+            "conflicts_avoided": 945,
+            "stacked_intents": 1990,
+            "replays_attempted": 12203,
+            "replays_succeeded": 7306,
+            "escaped_defects": 59,
+            "escaped_defect_min": 1406.35,
+            "main_red_integration_min": 0,
+            "unverified_landings": 0,
+            "speculative_groups": 697,
+            "invalidated_lanes": 5117,
+            "human_min": 37693,
+            "human_breakdown_min": {
+              "review": 12500,
+              "rereview": 4878,
+              "plan_approval": 2510,
+              "audit": 3745,
+              "escalation": 14060
+            },
+            "routes": {
+              "auto": 15276,
+              "audit": 749,
+              "human": 2876
+            },
+            "ci_runs": 28846,
+            "trains": 8628,
+            "bisections": 614,
+            "artifacts_ops": 131025,
+            "dollars_per_1k_agents": 1.97,
+            "git_ops": {
+              "fork": 10000,
+              "clone": 10000,
+              "fetch": 79470,
+              "push": 31555,
+              "ls_remote": 2839,
+              "token": 92023
+            },
+            "git_ops_per_landed": {
+              "fork": 1.018,
+              "clone": 1.018,
+              "fetch": 8.093,
+              "push": 3.213
+            },
+            "billable_ops_per_landed": 13.343,
+            "binding_calls_per_landed": {
+              "ls_remote": 0.289,
+              "token": 9.371
+            },
+            "usd_per_10k_changes": 20.01,
+            "mean_min_in_system": 2240.8,
+            "poll_projection": [
+              {
+                "interval_s": 30,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 13.34,
+                  "usd_per_10k_changes": 20.01
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 13.34,
+                  "usd_per_10k_changes": 20.01
+                }
+              },
+              {
+                "interval_s": 60,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 13.34,
+                  "usd_per_10k_changes": 20.01
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 13.34,
+                  "usd_per_10k_changes": 20.01
+                }
+              },
+              {
+                "interval_s": 300,
+                "sync": "events",
+                "while_working": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 13.34,
+                  "usd_per_10k_changes": 20.01
+                },
+                "until_landed": {
+                  "polls_per_landed": 0,
+                  "ops_per_landed": 13.34,
+                  "usd_per_10k_changes": 20.01
+                }
+              }
+            ]
+          },
+          "projected": false,
+          "simulated": true
+        }
+      ]
+    }
+  ],
+  "pull_note": "pull_curve: SIMULATED git ops by kind per landed change; poll_projection is PROJECTED (git fetch every interval_s, applied post-hoc). Rows with variant forge-fetch-cache are a design, not shipped.",
+  "pull_curve": [
+    {
+      "agents": 10,
+      "mode": "baseline",
+      "label": "Baseline: branch + PR + serial queue",
+      "landed": 10,
+      "mean_min_in_system": 91.62,
+      "git_ops_per_landed": {
+        "fork": 0,
+        "clone": 1,
+        "fetch": 2.1,
+        "push": 3.1
+      },
+      "billable_ops_per_landed": 6.2,
+      "binding_calls_per_landed": {
+        "ls_remote": 0,
+        "token": 0
+      },
+      "usd_per_10k_changes": 9.3,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 17.66,
+            "ops_per_landed": 23.86,
+            "usd_per_10k_changes": 35.79
+          },
+          "until_landed": {
+            "polls_per_landed": 183.24,
+            "ops_per_landed": 189.44,
+            "usd_per_10k_changes": 284.15
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 8.83,
+            "ops_per_landed": 15.03,
+            "usd_per_10k_changes": 22.54
+          },
+          "until_landed": {
+            "polls_per_landed": 91.62,
+            "ops_per_landed": 97.82,
+            "usd_per_10k_changes": 146.73
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 1.77,
+            "ops_per_landed": 7.97,
+            "usd_per_10k_changes": 11.95
+          },
+          "until_landed": {
+            "polls_per_landed": 18.32,
+            "ops_per_landed": 24.52,
+            "usd_per_10k_changes": 36.79
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10,
+      "mode": "trains",
+      "label": "Forge, trains only",
+      "landed": 10,
+      "mean_min_in_system": 87.11,
+      "git_ops_per_landed": {
+        "fork": 1,
+        "clone": 1,
+        "fetch": 2.9,
+        "push": 4.1
+      },
+      "billable_ops_per_landed": 9,
+      "binding_calls_per_landed": {
+        "ls_remote": 1.9,
+        "token": 5.9
+      },
+      "usd_per_10k_changes": 13.5,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 17.66,
+            "ops_per_landed": 26.66,
+            "usd_per_10k_changes": 39.99
+          },
+          "until_landed": {
+            "polls_per_landed": 174.23,
+            "ops_per_landed": 183.23,
+            "usd_per_10k_changes": 274.84
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 8.83,
+            "ops_per_landed": 17.83,
+            "usd_per_10k_changes": 26.74
+          },
+          "until_landed": {
+            "polls_per_landed": 87.11,
+            "ops_per_landed": 96.11,
+            "usd_per_10k_changes": 144.17
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 1.77,
+            "ops_per_landed": 10.77,
+            "usd_per_10k_changes": 16.15
+          },
+          "until_landed": {
+            "polls_per_landed": 17.42,
+            "ops_per_landed": 26.42,
+            "usd_per_10k_changes": 39.63
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10,
+      "mode": "forge",
+      "label": "Forge, full",
+      "landed": 10,
+      "mean_min_in_system": 39.56,
+      "git_ops_per_landed": {
+        "fork": 1,
+        "clone": 1,
+        "fetch": 3.9,
+        "push": 4.6
+      },
+      "billable_ops_per_landed": 10.5,
+      "binding_calls_per_landed": {
+        "ls_remote": 1.8,
+        "token": 6.8
+      },
+      "usd_per_10k_changes": 15.75,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10.5,
+            "usd_per_10k_changes": 15.75
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10.5,
+            "usd_per_10k_changes": 15.75
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10.5,
+            "usd_per_10k_changes": 15.75
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10.5,
+            "usd_per_10k_changes": 15.75
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10.5,
+            "usd_per_10k_changes": 15.75
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10.5,
+            "usd_per_10k_changes": 15.75
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10,
+      "mode": "forge",
+      "label": "Forge + fetch cache (design, not shipped)",
+      "variant": "forge-fetch-cache",
+      "landed": 10,
+      "mean_min_in_system": 39.56,
+      "git_ops_per_landed": {
+        "fork": 1,
+        "clone": 1,
+        "fetch": 3.4,
+        "push": 4.6
+      },
+      "billable_ops_per_landed": 10,
+      "binding_calls_per_landed": {
+        "ls_remote": 1.8,
+        "token": 6.3
+      },
+      "usd_per_10k_changes": 15,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10,
+            "usd_per_10k_changes": 15
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10,
+            "usd_per_10k_changes": 15
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10,
+            "usd_per_10k_changes": 15
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10,
+            "usd_per_10k_changes": 15
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10,
+            "usd_per_10k_changes": 15
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 10,
+            "usd_per_10k_changes": 15
+          }
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "mode": "baseline",
+      "label": "Baseline: branch + PR + serial queue",
+      "landed": 100,
+      "mean_min_in_system": 622.51,
+      "git_ops_per_landed": {
+        "fork": 0,
+        "clone": 1,
+        "fetch": 2.25,
+        "push": 3.15
+      },
+      "billable_ops_per_landed": 6.4,
+      "binding_calls_per_landed": {
+        "ls_remote": 0,
+        "token": 0
+      },
+      "usd_per_10k_changes": 9.6,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 20.23,
+            "ops_per_landed": 26.63,
+            "usd_per_10k_changes": 39.95
+          },
+          "until_landed": {
+            "polls_per_landed": 1245.02,
+            "ops_per_landed": 1251.42,
+            "usd_per_10k_changes": 1877.13
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 10.12,
+            "ops_per_landed": 16.52,
+            "usd_per_10k_changes": 24.78
+          },
+          "until_landed": {
+            "polls_per_landed": 622.51,
+            "ops_per_landed": 628.91,
+            "usd_per_10k_changes": 943.36
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 2.02,
+            "ops_per_landed": 8.42,
+            "usd_per_10k_changes": 12.64
+          },
+          "until_landed": {
+            "polls_per_landed": 124.5,
+            "ops_per_landed": 130.9,
+            "usd_per_10k_changes": 196.35
+          }
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "mode": "trains",
+      "label": "Forge, trains only",
+      "landed": 100,
+      "mean_min_in_system": 93.6,
+      "git_ops_per_landed": {
+        "fork": 1,
+        "clone": 1,
+        "fetch": 2.08,
+        "push": 2.86
+      },
+      "billable_ops_per_landed": 6.94,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.65,
+        "token": 4.26
+      },
+      "usd_per_10k_changes": 10.41,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 20,
+            "ops_per_landed": 26.94,
+            "usd_per_10k_changes": 40.41
+          },
+          "until_landed": {
+            "polls_per_landed": 187.2,
+            "ops_per_landed": 194.14,
+            "usd_per_10k_changes": 291.21
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 10,
+            "ops_per_landed": 16.94,
+            "usd_per_10k_changes": 25.41
+          },
+          "until_landed": {
+            "polls_per_landed": 93.6,
+            "ops_per_landed": 100.54,
+            "usd_per_10k_changes": 150.81
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 2,
+            "ops_per_landed": 8.94,
+            "usd_per_10k_changes": 13.41
+          },
+          "until_landed": {
+            "polls_per_landed": 18.72,
+            "ops_per_landed": 25.66,
+            "usd_per_10k_changes": 38.49
+          }
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "mode": "forge",
+      "label": "Forge, full",
+      "landed": 100,
+      "mean_min_in_system": 52.52,
+      "git_ops_per_landed": {
+        "fork": 1,
+        "clone": 1,
+        "fetch": 2.81,
+        "push": 2.43
+      },
+      "billable_ops_per_landed": 7.24,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.56,
+        "token": 4.71
+      },
+      "usd_per_10k_changes": 10.86,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.24,
+            "usd_per_10k_changes": 10.86
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.24,
+            "usd_per_10k_changes": 10.86
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.24,
+            "usd_per_10k_changes": 10.86
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.24,
+            "usd_per_10k_changes": 10.86
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.24,
+            "usd_per_10k_changes": 10.86
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.24,
+            "usd_per_10k_changes": 10.86
+          }
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "mode": "forge",
+      "label": "Forge + fetch cache (design, not shipped)",
+      "variant": "forge-fetch-cache",
+      "landed": 100,
+      "mean_min_in_system": 52.52,
+      "git_ops_per_landed": {
+        "fork": 1,
+        "clone": 1,
+        "fetch": 1.76,
+        "push": 2.43
+      },
+      "billable_ops_per_landed": 6.19,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.56,
+        "token": 3.66
+      },
+      "usd_per_10k_changes": 9.29,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 6.19,
+            "usd_per_10k_changes": 9.29
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 6.19,
+            "usd_per_10k_changes": 9.29
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 6.19,
+            "usd_per_10k_changes": 9.29
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 6.19,
+            "usd_per_10k_changes": 9.29
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 6.19,
+            "usd_per_10k_changes": 9.29
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 6.19,
+            "usd_per_10k_changes": 9.29
+          }
+        }
+      ]
+    },
+    {
+      "agents": 1000,
+      "mode": "baseline",
+      "label": "Baseline: branch + PR + serial queue",
+      "landed": 988,
+      "mean_min_in_system": 5865.54,
+      "git_ops_per_landed": {
+        "fork": 0,
+        "clone": 1.012,
+        "fetch": 2.76,
+        "push": 3.338
+      },
+      "billable_ops_per_landed": 7.11,
+      "binding_calls_per_landed": {
+        "ls_remote": 0,
+        "token": 0
+      },
+      "usd_per_10k_changes": 10.67,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 21.56,
+            "ops_per_landed": 28.67,
+            "usd_per_10k_changes": 43
+          },
+          "until_landed": {
+            "polls_per_landed": 11873.56,
+            "ops_per_landed": 11880.67,
+            "usd_per_10k_changes": 17821
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 10.78,
+            "ops_per_landed": 17.89,
+            "usd_per_10k_changes": 26.83
+          },
+          "until_landed": {
+            "polls_per_landed": 5936.78,
+            "ops_per_landed": 5943.89,
+            "usd_per_10k_changes": 8915.83
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 2.16,
+            "ops_per_landed": 9.27,
+            "usd_per_10k_changes": 13.9
+          },
+          "until_landed": {
+            "polls_per_landed": 1187.36,
+            "ops_per_landed": 1194.47,
+            "usd_per_10k_changes": 1791.7
+          }
+        }
+      ]
+    },
+    {
+      "agents": 1000,
+      "mode": "trains",
+      "label": "Forge, trains only",
+      "landed": 986,
+      "mean_min_in_system": 366.11,
+      "git_ops_per_landed": {
+        "fork": 1.014,
+        "clone": 1.014,
+        "fetch": 2.896,
+        "push": 2.201
+      },
+      "billable_ops_per_landed": 7.125,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.257,
+        "token": 4.32
+      },
+      "usd_per_10k_changes": 10.69,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 22.28,
+            "ops_per_landed": 29.41,
+            "usd_per_10k_changes": 44.11
+          },
+          "until_landed": {
+            "polls_per_landed": 742.61,
+            "ops_per_landed": 749.73,
+            "usd_per_10k_changes": 1124.6
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 11.14,
+            "ops_per_landed": 18.27,
+            "usd_per_10k_changes": 27.4
+          },
+          "until_landed": {
+            "polls_per_landed": 371.3,
+            "ops_per_landed": 378.43,
+            "usd_per_10k_changes": 567.64
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 2.23,
+            "ops_per_landed": 9.35,
+            "usd_per_10k_changes": 14.03
+          },
+          "until_landed": {
+            "polls_per_landed": 74.26,
+            "ops_per_landed": 81.39,
+            "usd_per_10k_changes": 122.08
+          }
+        }
+      ]
+    },
+    {
+      "agents": 1000,
+      "mode": "forge",
+      "label": "Forge, full",
+      "landed": 998,
+      "mean_min_in_system": 264.73,
+      "git_ops_per_landed": {
+        "fork": 1.002,
+        "clone": 1.002,
+        "fetch": 6.829,
+        "push": 2.767
+      },
+      "billable_ops_per_landed": 11.599,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.338,
+        "token": 8.563
+      },
+      "usd_per_10k_changes": 17.4,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 11.6,
+            "usd_per_10k_changes": 17.4
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 11.6,
+            "usd_per_10k_changes": 17.4
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 11.6,
+            "usd_per_10k_changes": 17.4
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 11.6,
+            "usd_per_10k_changes": 17.4
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 11.6,
+            "usd_per_10k_changes": 17.4
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 11.6,
+            "usd_per_10k_changes": 17.4
+          }
+        }
+      ]
+    },
+    {
+      "agents": 1000,
+      "mode": "forge",
+      "label": "Forge + fetch cache (design, not shipped)",
+      "variant": "forge-fetch-cache",
+      "landed": 998,
+      "mean_min_in_system": 264.73,
+      "git_ops_per_landed": {
+        "fork": 1.002,
+        "clone": 1.002,
+        "fetch": 2.833,
+        "push": 2.767
+      },
+      "billable_ops_per_landed": 7.603,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.338,
+        "token": 5.075
+      },
+      "usd_per_10k_changes": 11.4,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.6,
+            "usd_per_10k_changes": 11.4
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.6,
+            "usd_per_10k_changes": 11.4
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.6,
+            "usd_per_10k_changes": 11.4
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.6,
+            "usd_per_10k_changes": 11.4
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.6,
+            "usd_per_10k_changes": 11.4
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 7.6,
+            "usd_per_10k_changes": 11.4
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10000,
+      "mode": "baseline",
+      "label": "Baseline: branch + PR + serial queue",
+      "landed": 8860,
+      "mean_min_in_system": 59057.09,
+      "git_ops_per_landed": {
+        "fork": 0,
+        "clone": 1.129,
+        "fetch": 4.69,
+        "push": 4.033
+      },
+      "billable_ops_per_landed": 9.852,
+      "binding_calls_per_landed": {
+        "ls_remote": 0,
+        "token": 0
+      },
+      "usd_per_10k_changes": 14.78,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 29.82,
+            "ops_per_landed": 39.68,
+            "usd_per_10k_changes": 59.51
+          },
+          "until_landed": {
+            "polls_per_landed": 133311.71,
+            "ops_per_landed": 133321.56,
+            "usd_per_10k_changes": 199982.34
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 14.91,
+            "ops_per_landed": 24.76,
+            "usd_per_10k_changes": 37.15
+          },
+          "until_landed": {
+            "polls_per_landed": 66655.85,
+            "ops_per_landed": 66665.7,
+            "usd_per_10k_changes": 99998.56
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 2.98,
+            "ops_per_landed": 12.83,
+            "usd_per_10k_changes": 19.25
+          },
+          "until_landed": {
+            "polls_per_landed": 13331.17,
+            "ops_per_landed": 13341.02,
+            "usd_per_10k_changes": 20011.53
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10000,
+      "mode": "trains",
+      "label": "Forge, trains only",
+      "landed": 8708,
+      "mean_min_in_system": 3776.28,
+      "git_ops_per_landed": {
+        "fork": 1.148,
+        "clone": 1.148,
+        "fetch": 4.269,
+        "push": 3.119
+      },
+      "billable_ops_per_landed": 9.685,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.302,
+        "token": 5.338
+      },
+      "usd_per_10k_changes": 14.53,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 31.26,
+            "ops_per_landed": 40.94,
+            "usd_per_10k_changes": 61.41
+          },
+          "until_landed": {
+            "polls_per_landed": 8673.12,
+            "ops_per_landed": 8682.81,
+            "usd_per_10k_changes": 13024.21
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 15.63,
+            "ops_per_landed": 25.31,
+            "usd_per_10k_changes": 37.97
+          },
+          "until_landed": {
+            "polls_per_landed": 4336.56,
+            "ops_per_landed": 4346.25,
+            "usd_per_10k_changes": 6519.37
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "poll",
+          "while_working": {
+            "polls_per_landed": 3.13,
+            "ops_per_landed": 12.81,
+            "usd_per_10k_changes": 19.22
+          },
+          "until_landed": {
+            "polls_per_landed": 867.31,
+            "ops_per_landed": 877,
+            "usd_per_10k_changes": 1315.5
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10000,
+      "mode": "forge",
+      "label": "Forge, full",
+      "landed": 9820,
+      "mean_min_in_system": 2240.8,
+      "git_ops_per_landed": {
+        "fork": 1.018,
+        "clone": 1.018,
+        "fetch": 8.093,
+        "push": 3.213
+      },
+      "billable_ops_per_landed": 13.343,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.289,
+        "token": 9.371
+      },
+      "usd_per_10k_changes": 20.01,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 13.34,
+            "usd_per_10k_changes": 20.01
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 13.34,
+            "usd_per_10k_changes": 20.01
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 13.34,
+            "usd_per_10k_changes": 20.01
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 13.34,
+            "usd_per_10k_changes": 20.01
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 13.34,
+            "usd_per_10k_changes": 20.01
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 13.34,
+            "usd_per_10k_changes": 20.01
+          }
+        }
+      ]
+    },
+    {
+      "agents": 10000,
+      "mode": "forge",
+      "label": "Forge + fetch cache (design, not shipped)",
+      "variant": "forge-fetch-cache",
+      "landed": 9820,
+      "mean_min_in_system": 2240.8,
+      "git_ops_per_landed": {
+        "fork": 1.018,
+        "clone": 1.018,
+        "fetch": 4.123,
+        "push": 3.213
+      },
+      "billable_ops_per_landed": 9.373,
+      "binding_calls_per_landed": {
+        "ls_remote": 0.289,
+        "token": 6.644
+      },
+      "usd_per_10k_changes": 14.06,
+      "poll_projection": [
+        {
+          "interval_s": 30,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 9.37,
+            "usd_per_10k_changes": 14.06
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 9.37,
+            "usd_per_10k_changes": 14.06
+          }
+        },
+        {
+          "interval_s": 60,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 9.37,
+            "usd_per_10k_changes": 14.06
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 9.37,
+            "usd_per_10k_changes": 14.06
+          }
+        },
+        {
+          "interval_s": 300,
+          "sync": "events",
+          "while_working": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 9.37,
+            "usd_per_10k_changes": 14.06
+          },
+          "until_landed": {
+            "polls_per_landed": 0,
+            "ops_per_landed": 9.37,
+            "usd_per_10k_changes": 14.06
+          }
+        }
+      ]
+    }
+  ]
+}
