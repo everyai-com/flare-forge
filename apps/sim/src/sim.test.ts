@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONSTANTS } from "./constants";
 import { bisect, partitionLanes } from "../../worker/src/intents-core";
 import { lognormal, mulberry32, percentile, rngFor, zipf } from "./prng";
-import { EventQueue, MODES, simulate, unionLength } from "./sim";
+import { BILLABLE_GIT_KINDS, EventQueue, MODES, simulate, unionLength } from "./sim";
+import { pollFetches, pullBreakdown } from "./pull";
 import { filePathFor, generateWorkload } from "./workload";
-import { formatMarkdown, formatMinutes, formatTable, toBenchDoc } from "./report";
+import { formatMarkdown, formatMinutes, formatPullCurve, formatTable, pullCurve, toBenchDoc } from "./report";
 
 // These suites spawn real git processes (or run the full simulator), which
 // can exceed vitest's 5 s default on a loaded machine.
@@ -119,7 +120,11 @@ describe("simulate", { timeout: SLOW_TEST_MS }, () => {
 
   it("keeps mode-specific mechanics where they belong", () => {
     expect(by.baseline.trains).toBe(0);
-    expect(by.baseline.artifactsOps).toBeNull();
+    // The baseline is the PR flow on the same Artifacts repo: real git ops,
+    // branches instead of forks.
+    expect(by.baseline.artifactsOps).toBeGreaterThan(0);
+    expect(by.baseline.git.fork).toBe(0);
+    expect(by.baseline.git.clone).toBe(400 * DEFAULT_CONSTANTS.git.clonePerIntent);
     expect(by.trains.trains).toBeGreaterThan(0);
     for (const m of [by.baseline, by.trains]) {
       expect(m.conflictsAvoided).toBe(0);
@@ -184,10 +189,83 @@ describe("simulate", { timeout: SLOW_TEST_MS }, () => {
       expect(row.simulated).toBe(true);
       expect(typeof row.metrics.changes_per_min).toBe("number");
     }
-    expect(doc.modes[0].metrics.dollars_per_1k_agents).toBeNull();
+    expect(doc.modes[0].metrics.dollars_per_1k_agents).toBeGreaterThan(0);
+    expect(doc.modes[0].metrics.poll_projection.map((p) => p.interval_s)).toEqual(DEFAULT_CONSTANTS.git.pollIntervalsSec);
     const table = formatTable(doc);
     expect(table.split("\n")[0]).toContain("SIMULATED");
     expect(formatMarkdown(doc).split("\n")).toHaveLength(5);
     expect(doc.modes[2].metrics.time_to_80pct_landed_min).not.toBeNull();
+  });
+
+  it("pull model: billable kinds sum to artifactsOps; ls-remote and tokens stay apart", () => {
+    for (const m of run.modes) {
+      const billable = BILLABLE_GIT_KINDS.reduce((a, k) => a + m.git[k], 0);
+      expect(billable).toBe(m.artifactsOps);
+      expect(m.artifactsDollars).toBeCloseTo((billable / 1000) * DEFAULT_CONSTANTS.dollarsPer1kOps, 9);
+      expect(m.git.push).toBeGreaterThanOrEqual(m.landed);
+      expect(m.lifeMin).toBeGreaterThan(m.workMinSum * 0.5);
+    }
+    expect(by.trains.git.fork).toBe(400);
+    expect(by.forge.git.fork).toBe(400);
+    expect(by.baseline.git.lsRemote).toBe(0);
+    expect(by.forge.git.lsRemote).toBeGreaterThan(0);
+    expect(by.forge.git.token).toBeGreaterThan(0);
+  });
+
+  it("pull model: Forge syncs by events (0 polls), the PR flow polls", () => {
+    const opts = { pollIntervalsSec: [30, 300], dollarsPer1kOps: 0.15 };
+    const f = pullBreakdown(by.forge, opts);
+    expect(by.forge.sync).toBe("events");
+    for (const p of f.polls) {
+      expect(p.while_working.polls_per_landed).toBe(0);
+      expect(p.until_landed.polls_per_landed).toBe(0);
+      expect(p.until_landed.ops_per_landed).toBe(f.billable_per_landed);
+    }
+    const b = pullBreakdown(by.baseline, opts);
+    expect(b.polls[0].while_working.polls_per_landed).toBeGreaterThan(0);
+    expect(b.polls[0].until_landed.ops_per_landed).toBeGreaterThan(b.polls[0].while_working.ops_per_landed);
+    // A longer interval polls less.
+    expect(b.polls[1].until_landed.polls_per_landed).toBeLessThan(b.polls[0].until_landed.polls_per_landed);
+    expect(pollFetches(10, 30)).toBe(20);
+    expect(pollFetches(10, 0)).toBe(0);
+    // forgeSync "poll" applies the projection to Forge too.
+    const polled = simulate({ agents: 40, seed: 7, now: () => 0, modes: ["forge"], constants: { git: { ...DEFAULT_CONSTANTS.git, forgeSync: "poll" } } });
+    expect(polled.modes[0].sync).toBe("poll");
+    expect(pullBreakdown(polled.modes[0], opts).polls[0].until_landed.polls_per_landed).toBeGreaterThan(0);
+  });
+
+  it("pull model: baseline poll-until-landed ops per change rise with swarm size", () => {
+    const opts = { pollIntervalsSec: [60], dollarsPer1kOps: 0.15 };
+    const at = (n: number): number =>
+      pullBreakdown(simulate({ agents: n, seed: 7, now: () => 0, modes: ["baseline"] }).modes[0], opts).polls[0].until_landed.ops_per_landed;
+    const small = at(40);
+    const large = pullBreakdown(by.baseline, opts).polls[0].until_landed.ops_per_landed; // 400 agents
+    expect(large).toBeGreaterThan(small);
+    expect(at(40)).toBe(small); // deterministic for a seed
+  });
+
+  it("forgeFetchCache (design) cuts Forge fetches and nothing else", () => {
+    const cached = simulate({ agents: 400, seed: 7, now: () => 0, modes: ["forge"], constants: { forgeFetchCache: true } }).modes[0];
+    expect(cached.git.fetch).toBeLessThan(by.forge.git.fetch);
+    expect(cached.git.push).toBe(by.forge.git.push);
+    expect(cached.landed).toBe(by.forge.landed);
+    // Trains-only ignores the Forge-only knob.
+    const t = simulate({ agents: 400, seed: 7, now: () => 0, modes: ["trains"], constants: { forgeFetchCache: true } }).modes[0];
+    expect(t.git).toEqual(by.trains.git);
+  });
+
+  it("formats the N x mode pull curve with labels", () => {
+    const doc = toBenchDoc(run, { sha: "abc1234", date: "2026-10-12", command: "test" });
+    const rows = pullCurve([doc]);
+    expect(rows).toHaveLength(3);
+    for (const r of rows) {
+      const k = r.git_ops_per_landed;
+      expect(k.fork + k.clone + k.fetch + k.push).toBeCloseTo(r.billable_ops_per_landed, 2);
+    }
+    const text = formatPullCurve([doc]);
+    expect(text).toContain("SIMULATED git ops per landed change");
+    expect(text).toContain("PROJECTED");
+    expect(text).toContain("(events, 0 polls)");
+    expect(formatPullCurve([doc], { markdown: true })).toContain("| N | Mode |");
   });
 });

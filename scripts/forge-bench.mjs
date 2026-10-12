@@ -10,6 +10,13 @@
 //   Prints a table per agent count; --json also writes
 //   docs/bench/forge-sim-seed<seed>.json (the GET /v1/forge/bench shape).
 //
+//   Pull traffic (git ops by kind per landed change, N x mode):
+//   node --experimental-strip-types scripts/forge-bench.mjs --pull \
+//     [--agents 10,100,1000,10000] [--poll 30,60,300] [--seed 7] [--json] [--markdown]
+//   SIMULATED ops by kind + PROJECTED polling, plus a "Forge + fetch
+//   cache (design, not shipped)" row. --json writes
+//   docs/bench/forge-sim-seed<seed>-pull.json with `pull_curve`.
+//
 // Layer 2, MEASURED (drives the apps/sim harness Worker you deployed):
 //   SIM_ADMIN_TOKEN=... node scripts/forge-bench.mjs live start \
 //     --url https://flare-forge-sim.<sub>.workers.dev --mode coordination-only --agents 100000
@@ -58,9 +65,10 @@ function gitSha() {
 
 async function simulated(args) {
   const { simulate, MODES } = await import(join(ROOT, "apps/sim/src/sim.ts"));
-  const { toBenchDoc, formatTable, formatMarkdown } = await import(join(ROOT, "apps/sim/src/report.ts"));
+  const { toBenchDoc, formatTable, formatMarkdown, formatPullCurve, pullCurve } = await import(join(ROOT, "apps/sim/src/report.ts"));
+  const pull = Boolean(args.pull);
   const { DEFAULT_CONSTANTS, CONSTANT_SOURCES } = await import(join(ROOT, "apps/sim/src/constants.ts"));
-  const agentsList = String(args.agents ?? "1000,10000,100000")
+  const agentsList = String(args.agents ?? (pull ? "10,100,1000,10000" : "1000,10000,100000"))
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isInteger(n) && n > 0);
@@ -102,24 +110,48 @@ async function simulated(args) {
   if (pi !== undefined) constants.pInteraction = pi;
   const pf = probKnob("p-flake");
   if (pf !== undefined) constants.pFlake = pf;
+  let pollIntervalsSec = DEFAULT_CONSTANTS.git.pollIntervalsSec;
+  if (args.poll !== undefined) {
+    if (!pull) die("--poll needs --pull");
+    pollIntervalsSec = String(args.poll)
+      .split(",")
+      .map((x) => Number(x.trim()));
+    if (pollIntervalsSec.length === 0 || pollIntervalsSec.some((x) => !Number.isInteger(x) || x < 1 || x > 86_400)) die("--poll must be a comma list of seconds (1-86400)");
+    knobs.push(`--poll ${pollIntervalsSec.join(",")}`);
+  }
   const sha = gitSha();
   const date = new Date().toISOString().slice(0, 10);
-  const command = `node --experimental-strip-types scripts/forge-bench.mjs --agents ${agentsList.join(",")} --seed ${seed}${args.modes ? ` --modes ${modes.join(",")}` : ""}${knobs.length ? ` ${knobs.join(" ")}` : ""}`;
+  const command = `node --experimental-strip-types scripts/forge-bench.mjs${pull ? " --pull" : ""} --agents ${agentsList.join(",")} --seed ${seed}${args.modes ? ` --modes ${modes.join(",")}` : ""}${knobs.length ? ` ${knobs.join(" ")}` : ""}`;
   const docs = [];
   process.stdout.write("SIMULATED results: outputs of a deterministic model, not measurements of a running system.\n\n");
+  const pullDocs = [];
   for (const n of agentsList) {
     const t0 = Date.now();
     const result = simulate({ agents: n, seed, modes, constants });
-    const doc = toBenchDoc(result, { sha, date, command });
+    const doc = toBenchDoc(result, { sha, date, command, pollIntervalsSec });
     docs.push(doc);
+    if (pull) {
+      pullDocs.push(doc);
+      // Design variant (not shipped): Forge with a train fetch cache.
+      if (modes.includes("forge")) {
+        const cached = simulate({ agents: n, seed, modes: ["forge"], constants: { ...constants, forgeFetchCache: true } });
+        pullDocs.push(toBenchDoc(cached, { sha, date, command, pollIntervalsSec, variant: { key: "forge-fetch-cache", label: "Forge + fetch cache (design, not shipped)" } }));
+      }
+      process.stderr.write(`n=${n} simulated in ${((Date.now() - t0) / 1000).toFixed(1)} s\n`);
+      continue;
+    }
     process.stdout.write(`${args.markdown ? formatMarkdown(doc) : formatTable(doc)}\n`);
     process.stdout.write(`(simulated in ${((Date.now() - t0) / 1000).toFixed(1)} s)\n\n`);
+  }
+  if (pull) {
+    process.stdout.write(`seed ${seed} · ${date} @ ${sha} · ${command}\n\n`);
+    process.stdout.write(`${formatPullCurve(pullDocs, { markdown: Boolean(args.markdown) })}\n\n`);
   }
   if (args.json) {
     const outDir = resolve(ROOT, typeof args.out === "string" ? args.out : "docs/bench");
     mkdirSync(outDir, { recursive: true });
     const suffix = [mp !== undefined ? `-mp${mp}` : "", depth !== undefined ? `-d${depth}` : "", tdepth !== undefined ? `-td${tdepth}` : "", pi !== undefined ? `-pi${pi}` : "", pf !== undefined ? `-pf${pf}` : ""].join("");
-    const file = join(outDir, `forge-sim-seed${seed}${suffix}.json`);
+    const file = join(outDir, `forge-sim-seed${seed}${suffix}${pull ? "-pull" : ""}.json`);
     const body = {
       kind: "simulated",
       note: "SIMULATED: outputs of apps/sim/src/sim.ts under the constants below; not measurements.",
@@ -130,6 +162,13 @@ async function simulated(args) {
       constants: { ...DEFAULT_CONSTANTS, ...constants },
       constant_sources: CONSTANT_SOURCES,
       runs: docs,
+      ...(pull
+        ? {
+            pull_note:
+              "pull_curve: SIMULATED git ops by kind per landed change; poll_projection is PROJECTED (git fetch every interval_s, applied post-hoc). Rows with variant forge-fetch-cache are a design, not shipped.",
+            pull_curve: pullCurve(pullDocs),
+          }
+        : {}),
     };
     writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`);
     process.stdout.write(`wrote ${file}\n`);
@@ -210,6 +249,7 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help || args.h) {
   process.stdout.write(
     "usage: forge-bench.mjs [--agents 1000,10000,100000] [--seed 7] [--modes baseline,trains,forge] [--json] [--markdown]\n" +
+      "       forge-bench.mjs --pull [--agents 10,100,1000,10000] [--poll 30,60,300] [--seed 7] [--json] [--markdown]\n" +
       "       forge-bench.mjs live <start|list|results|stop|cleanup> --url <harness> [--mode coordination-only|full-git] [--agents N] [--confirm] [--run ID]\n",
   );
 } else if (args._[0] === "live") {

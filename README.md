@@ -57,8 +57,14 @@ public MCP.
 | | Ops per landed change | $ per 10,000 changes | Status |
 |---|---|---|---|
 | Forge, Bookshelf swarm on the hosted deployment | *pending live run* | *pending* | Measured from Cloudflare events once the live run lands ([plan §4](docs/FORGE-PRODUCT-PLAN.md#4-the-last-mile-list-ranked-by-score-moved)) |
-| Forge, simulator model | 7 per intent (train traffic not included) | $10.50 | **SIMULATED** (`apps/sim` assumption) |
-| An agent that fetches every 30 s to stay fresh | Forge's figure + 16 | | **Projected**, not measured |
+| Forge, simulator, 10k agents, no polling | 13.3 (fork 1, clone 1, fetch 8.1, push 3.2) | $20.01 | **SIMULATED** ([FORGE-BENCH §2.3](docs/FORGE-BENCH.md)) |
+| PR flow + serial queue on the same repo, simulator, 10k agents, no polling | 9.9 | $14.78 | **SIMULATED** |
+| The same PR flow, agents fetching every 30 s (while working .. until landed) | 39.7 .. 133,322 | $60 .. $199,982 | **Projected**, not measured |
+
+Without polling, Forge spends *more* git ops per landed change than the
+PR flow (replays and speculative lane rebuilds refetch); it wins
+against agents that poll. A train-side fetch cache (designed, not
+shipped) would bring Forge to 9.4.
 
 The product plan, the repo decision and the schedule to submission are
 in [docs/FORGE-PRODUCT-PLAN.md](docs/FORGE-PRODUCT-PLAN.md); the full
