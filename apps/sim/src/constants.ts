@@ -10,6 +10,45 @@ export interface DurationDist {
   sigma: number; // lognormal shape
 }
 
+// Git traffic model (SIMULATED counts of Cloudflare Artifacts git
+// operations). Every field is an op count per event the simulator
+// already models; the event -> op mapping is read from the shipped code
+// where one exists (apps/sim/src/harness/git.ts, apps/worker/src/train.ts)
+// and is an assumption otherwise. CONSTANT_SOURCES says which.
+export type PollWindow = "whileWorking" | "untilLanded";
+
+export interface GitOpModel {
+  // --- per intent ---
+  clonePerIntent: number; // agent clones once (depth 1)
+  forkPerIntent: number; // fork modes (trains, forge): one fork per intent
+  baselineFetchBeforePush: number; // baseline: pull --rebase before each push
+  // --- rework / replay ---
+  fetchPerRebase: number; // author fetches trunk to rebase (conflict, interaction, escalation; not a defect fix)
+  fetchPerReplayAttempt: number; // replay fetches trunk + the intent fork, per attempt
+  pushPerReplay: number; // a successful replay pushes the re-derived head
+  fetchPerRestack: number; // a restack fetches the predecessor's current head
+  // --- serial queue (baseline) ---
+  queueFetchPerServe: number; // queue fetches trunk to build the merge SHA
+  queuePushPerServe: number; // updated branch / merge ref pushed for CI
+  baselineLandPush: number; // fast-forward main
+  // --- train executor (trains, forge) ---
+  trainFetchPerGroup: number; // build fetches trunk main
+  trainFetchSpeculative: number; // + the speculative parent lane ref when stacked on an in-flight group
+  trainFetchPerItem: number; // fetch each item's head from its fork (lower bound: deepening ignored)
+  trainPushPerLane: number; // force-push each lane ref
+  landFetch: number; // fastForwardMain fetches the lane ref
+  landPush: number; // push main + push notes
+  probeFetchBase: number; // a bisect probe fetches trunk ...
+  probeFetchPerItem: number; // ... plus each item it carries
+  probePush: number; // ... and pushes its probe ref
+  // --- polling (PROJECTED, applied post-hoc; see pull.ts) ---
+  pollIntervalsSec: number[]; // an agent runs git fetch every S seconds
+  pollWindows: PollWindow[]; // while working (lower) .. until landed (upper)
+  // Forge agents learn about trunk/peer changes from the Feed (events),
+  // so they never poll. "poll" applies the projection to Forge too.
+  forgeSync: "events" | "poll";
+}
+
 export interface SimConstants {
   // --- workload ---
   // All agents declare within this window (COMPETITION-PLAN §4 scale
@@ -77,12 +116,14 @@ export interface SimConstants {
   auditMin: number;
   escalationMin: number;
 
-  // --- Artifacts op model (estimate; Forge + trains-only) ---
-  opsPerIntent: number; // fork + token + clone (2) + push (2) + revoke
-  opsPerExtraPush: number; // a rework or replay pushes again
-  opsPerLaneItem: number; // train fetches each item from its fork
-  opsPerLaneLand: number; // push train ref + CAS main + notes
+  // --- Artifacts git op model (all three modes run on Artifacts) ---
+  git: GitOpModel;
   dollarsPer1kOps: number;
+  // DESIGN, NOT SHIPPED: a Forge train that caches each item's fork
+  // fetch across speculative rebuilds (an item re-cut at the same
+  // version is not refetched) and replays that fetch trunk once
+  // (fetchPerReplayAttempt 1). Off by default; Forge mode only.
+  forgeFetchCache: boolean;
 
   // Train groups in flight at once for the trains-only mode. 1 = the
   // pre-speculation executor (one group per repo at a time). Forge mode
@@ -138,11 +179,32 @@ export const DEFAULT_CONSTANTS: SimConstants = {
   auditMin: 5,
   escalationMin: 10,
 
-  opsPerIntent: 7,
-  opsPerExtraPush: 2,
-  opsPerLaneItem: 2,
-  opsPerLaneLand: 6,
+  git: {
+    clonePerIntent: 1,
+    forkPerIntent: 1,
+    baselineFetchBeforePush: 1,
+    fetchPerRebase: 1,
+    fetchPerReplayAttempt: 2,
+    pushPerReplay: 1,
+    fetchPerRestack: 1,
+    queueFetchPerServe: 1,
+    queuePushPerServe: 1,
+    baselineLandPush: 1,
+    trainFetchPerGroup: 1,
+    trainFetchSpeculative: 1,
+    trainFetchPerItem: 1,
+    trainPushPerLane: 1,
+    landFetch: 1,
+    landPush: 2,
+    probeFetchBase: 1,
+    probeFetchPerItem: 1,
+    probePush: 1,
+    pollIntervalsSec: [30, 60, 300],
+    pollWindows: ["whileWorking", "untilLanded"],
+    forgeSync: "events",
+  },
   dollarsPer1kOps: 0.15,
+  forgeFetchCache: false,
 
   trainsSpeculationDepth: 1,
 
@@ -169,6 +231,25 @@ export const CONSTANT_SOURCES: Record<string, string> = {
   reviewMin: "assumption (human minutes per small agent PR)",
   policy: "DEFAULT_POLICY from intents-core.ts (lanes 50 per group x 8 parallel, speculation depth 3) + protected src/auth/**, migrations/**",
   trainsSpeculationDepth: "1: trains-only models the pre-speculation executor (one group in flight per repo)",
-  dollarsPer1kOps: "COMPETITION-PLAN.md §4 ($0.15 / 1k Artifacts ops); verify against current pricing",
-  opsPerIntent: "assumption: fork 1 + token 1 + clone 2 + push 2 + revoke 1",
+  dollarsPer1kOps: "Artifacts pricing page ($0.15 / 1,000 ops; names create, push, pull, clone as examples); checked 2026-10-12",
+  forgeFetchCache: "design, not shipped: train caches item fork fetches across speculative rebuilds; replays fetch trunk once",
+  "git.clonePerIntent": "apps/sim/src/harness/git.ts (clone depth=1, once per intent)",
+  "git.forkPerIntent": "Forge claim_intent forks once per intent (trains + forge modes); the baseline works on branches of the same repo",
+  "git.baselineFetchBeforePush": "assumption: baseline agent runs pull --rebase before every push",
+  "git.fetchPerRebase": "assumption: one trunk fetch per author rebase (conflict, interaction fix, escalation); a defect fix needs none",
+  "git.fetchPerReplayAttempt": "train/replay code fetches trunk + the intent fork per attempt (2); 1 with forgeFetchCache",
+  "git.pushPerReplay": "a successful replay pushes the re-derived head once",
+  "git.fetchPerRestack": "assumption: a restack fetches the predecessor's current head once",
+  "git.queueFetchPerServe": "assumption: the serial queue fetches trunk once per serve (bounces included)",
+  "git.queuePushPerServe": "assumption: the queue pushes the updated branch / merge ref for CI",
+  "git.baselineLandPush": "assumption: fast-forward main = one push",
+  "git.trainFetchPerGroup": "apps/worker/src/train.ts buildGroup: fetchCovering(main) once per group (+1 for the speculative parent lane ref)",
+  "git.trainFetchPerItem": "apps/worker/src/train.ts buildGroup: one fork fetch per item; LOWER BOUND (fetchCovering deepening retries ignored)",
+  "git.trainPushPerLane": "apps/worker/src/train.ts: force-push each lane ref",
+  "git.landPush": "apps/worker/src/train.ts fastForwardMain: fetch lane ref 1, push main + push notes 2 (plus an ls-remote, reported apart)",
+  "git.probe": "train-core bisect probes: fetch trunk 1 + each item 1, push the probe ref 1",
+  "git.pollIntervalsSec": "assumption: projected agent poll intervals (git fetch every 30 / 60 / 300 s)",
+  "git.pollWindows": "assumption: polls while working (lower bound) .. until landed or abandoned (upper bound); applied post-hoc, so fresher agents are NOT modelled as conflicting less",
+  "git.forgeSync": "Forge agents sync from Feed events: 0 polls",
+  "git.lsRemote/token": "ls-remote and token mints counted apart: Artifacts billing for them is undocumented",
 };

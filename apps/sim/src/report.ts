@@ -3,6 +3,8 @@
 // a plain-text table. Simulated runs are labelled `simulated: true` on
 // the document and every row, and the table header says SIMULATED.
 
+import { DEFAULT_CONSTANTS } from "./constants.ts";
+import { pullBreakdown, type PollProjection } from "./pull.ts";
 import { MODE_LABELS, type Mode, type ModeMetrics, type SimResult } from "./sim.ts";
 
 export interface BenchMetrics {
@@ -34,13 +36,28 @@ export interface BenchMetrics {
   ci_runs: number;
   trains: number;
   bisections: number;
+  // Billable Artifacts git ops (fork + clone + fetch + push), SIMULATED.
+  // Numeric for every mode (the baseline is the PR flow on the same
+  // Artifacts repo); the `| null` stays for older recorded documents.
   artifacts_ops: number | null;
   dollars_per_1k_agents: number | null;
+  // Pull model (apps/sim/src/pull.ts). SIMULATED per landed change.
+  git_ops: { fork: number; clone: number; fetch: number; push: number; ls_remote: number; token: number };
+  git_ops_per_landed: { fork: number; clone: number; fetch: number; push: number };
+  billable_ops_per_landed: number;
+  // ls-remote + token mints: Artifacts billing for these is undocumented.
+  binding_calls_per_landed: { ls_remote: number; token: number };
+  usd_per_10k_changes: number;
+  mean_min_in_system: number;
+  // PROJECTED: polling added post-hoc (0 for modes that sync by events).
+  poll_projection: PollProjection[];
 }
 
 export interface BenchModeRow {
   mode: Mode;
   label: string;
+  // Set for a constants variant of a mode (e.g. "forge-fetch-cache").
+  variant?: string;
   metrics: BenchMetrics;
   projected: false;
   simulated: true;
@@ -61,9 +78,23 @@ export interface BenchDoc {
 }
 
 const r2 = (n: number): number => Math.round(n * 100) / 100;
+const r3 = (n: number): number => Math.round(n * 1000) / 1000;
 const finiteOrNull = (n: number): number | null => (Number.isFinite(n) ? r2(n) : null);
 
-export function toBenchMetrics(m: ModeMetrics): BenchMetrics {
+export interface PullOpts {
+  pollIntervalsSec?: readonly number[];
+  dollarsPer1kOps?: number;
+}
+
+function roundWindow(w: PollProjection["while_working"]): PollProjection["while_working"] {
+  return { polls_per_landed: r2(w.polls_per_landed), ops_per_landed: r2(w.ops_per_landed), usd_per_10k_changes: r2(w.usd_per_10k_changes) };
+}
+
+export function toBenchMetrics(m: ModeMetrics, opts: PullOpts = {}): BenchMetrics {
+  const pull = pullBreakdown(m, {
+    pollIntervalsSec: opts.pollIntervalsSec ?? DEFAULT_CONSTANTS.git.pollIntervalsSec,
+    dollarsPer1kOps: opts.dollarsPer1kOps ?? DEFAULT_CONSTANTS.dollarsPer1kOps,
+  });
   return {
     landed: m.landed,
     abandoned: m.abandoned,
@@ -96,11 +127,36 @@ export function toBenchMetrics(m: ModeMetrics): BenchMetrics {
     trains: m.trains,
     bisections: m.bisections,
     artifacts_ops: m.artifactsOps,
-    dollars_per_1k_agents: m.artifactsDollars === null ? null : r2((m.artifactsDollars * 1000) / Math.max(1, m.agents)),
+    dollars_per_1k_agents: r2((m.artifactsDollars * 1000) / Math.max(1, m.agents)),
+    git_ops: { fork: m.git.fork, clone: m.git.clone, fetch: m.git.fetch, push: m.git.push, ls_remote: m.git.lsRemote, token: m.git.token },
+    git_ops_per_landed: {
+      fork: r3(pull.ops_per_landed.fork),
+      clone: r3(pull.ops_per_landed.clone),
+      fetch: r3(pull.ops_per_landed.fetch),
+      push: r3(pull.ops_per_landed.push),
+    },
+    billable_ops_per_landed: r3(pull.billable_per_landed),
+    binding_calls_per_landed: { ls_remote: r3(pull.binding_per_landed.ls_remote), token: r3(pull.binding_per_landed.token) },
+    usd_per_10k_changes: r2(pull.usd_per_10k_changes),
+    mean_min_in_system: r2(pull.mean_min_in_system),
+    poll_projection: pull.polls.map((p) => ({
+      interval_s: p.interval_s,
+      sync: p.sync,
+      while_working: roundWindow(p.while_working),
+      until_landed: roundWindow(p.until_landed),
+    })),
   };
 }
 
-export function toBenchDoc(result: SimResult, meta: { sha: string; date: string; command: string }): BenchDoc {
+export interface BenchMeta extends PullOpts {
+  sha: string;
+  date: string;
+  command: string;
+  // A constants variant: every row gets this key and label.
+  variant?: { key: string; label: string };
+}
+
+export function toBenchDoc(result: SimResult, meta: BenchMeta): BenchDoc {
   return {
     run: `sim-s${result.seed}-n${result.agents}`,
     measured_at: meta.date,
@@ -114,8 +170,9 @@ export function toBenchDoc(result: SimResult, meta: { sha: string; date: string;
     command: meta.command,
     modes: result.modes.map((m) => ({
       mode: m.mode,
-      label: MODE_LABELS[m.mode],
-      metrics: toBenchMetrics(m),
+      label: meta.variant ? meta.variant.label : MODE_LABELS[m.mode],
+      ...(meta.variant ? { variant: meta.variant.key } : {}),
+      metrics: toBenchMetrics(m, meta),
       projected: false,
       simulated: true,
     })),
@@ -150,6 +207,8 @@ const COLUMNS = [
   "Human min",
   "CI runs",
   "$ / 1k agents",
+  "Git ops / landed",
+  "$ / 10k changes",
 ] as const;
 
 export function tableRows(doc: BenchDoc): string[][] {
@@ -169,6 +228,8 @@ export function tableRows(doc: BenchDoc): string[][] {
       formatInt(m.human_min),
       formatInt(m.ci_runs),
       m.dollars_per_1k_agents === null ? "n/a" : `$${m.dollars_per_1k_agents.toFixed(2)}`,
+      fmtOps(m.billable_ops_per_landed),
+      `$${m.usd_per_10k_changes.toFixed(2)}`,
     ];
   });
 }
@@ -194,4 +255,111 @@ export function formatMarkdown(doc: BenchDoc): string {
   const head = `| ${COLUMNS.join(" | ")} |`;
   const sep = `|${COLUMNS.map((_, i) => (i === 0 ? "---" : "---:")).join("|")}|`;
   return [head, sep, ...tableRows(doc).map((r) => `| ${r.join(" | ")} |`)].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Pull curve: git traffic per landed change, N x mode (docs/FORGE-BENCH.md
+// "Pull traffic"). SIMULATED ops by kind; PROJECTED polling.
+// ---------------------------------------------------------------------------
+
+function fmtOps(n: number): string {
+  if (!Number.isFinite(n)) return "n/a";
+  return n >= 100 ? formatInt(n) : n.toFixed(1);
+}
+
+function fmtUsd(n: number): string {
+  return `$${n >= 100 ? formatInt(n) : n.toFixed(2)}`;
+}
+
+export interface PullCurveRow {
+  agents: number;
+  mode: Mode;
+  label: string;
+  variant?: string;
+  landed: number;
+  mean_min_in_system: number;
+  git_ops_per_landed: BenchMetrics["git_ops_per_landed"];
+  billable_ops_per_landed: number;
+  binding_calls_per_landed: BenchMetrics["binding_calls_per_landed"];
+  usd_per_10k_changes: number;
+  poll_projection: PollProjection[];
+}
+
+// Docs in order; rows of the same agent count stay together.
+export function pullCurve(docs: readonly BenchDoc[]): PullCurveRow[] {
+  const order: number[] = [];
+  for (const d of docs) if (!order.includes(d.agents)) order.push(d.agents);
+  const rows: PullCurveRow[] = [];
+  for (const n of order) {
+    for (const d of docs) {
+      if (d.agents !== n) continue;
+      for (const row of d.modes) {
+        const m = row.metrics;
+        rows.push({
+          agents: n,
+          mode: row.mode,
+          label: row.label,
+          ...(row.variant ? { variant: row.variant } : {}),
+          landed: m.landed,
+          mean_min_in_system: m.mean_min_in_system,
+          git_ops_per_landed: m.git_ops_per_landed,
+          billable_ops_per_landed: m.billable_ops_per_landed,
+          binding_calls_per_landed: m.binding_calls_per_landed,
+          usd_per_10k_changes: m.usd_per_10k_changes,
+          poll_projection: m.poll_projection,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+function renderTable(head: readonly string[], rows: string[][], markdown: boolean): string {
+  if (markdown) {
+    return [`| ${head.join(" | ")} |`, `|${head.map((_, i) => (i < 2 ? "---" : "---:")).join("|")}|`, ...rows.map((r) => `| ${r.join(" | ")} |`)].join("\n");
+  }
+  const all = [head.slice(), ...rows];
+  const widths = head.map((_, i) => Math.max(...all.map((r) => r[i].length)));
+  const line = (r: readonly string[]): string => r.map((c, i) => (i < 2 ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join("  ");
+  return [line(head), widths.map((w) => "-".repeat(w)).join("  "), ...rows.map(line)].join("\n");
+}
+
+const shortLabel = (r: PullCurveRow): string =>
+  r.variant === "forge-fetch-cache" ? "Forge + fetch cache (design, not shipped)" : r.mode === "baseline" ? "Baseline (PR flow, same Artifacts repo)" : r.mode === "trains" ? "Forge, trains only" : "Forge, full";
+
+export function formatPullCurve(docs: readonly BenchDoc[], opts: { markdown?: boolean } = {}): string {
+  const rows = pullCurve(docs);
+  const md = Boolean(opts.markdown);
+  const intervals = rows.length ? rows[0].poll_projection.map((p) => p.interval_s) : [];
+  const simHead = ["N", "Mode", "Landed", "Min in system", "fork", "clone", "fetch", "push", "Billable / landed", "[ls-remote]", "[token]", "$ / 10k changes"];
+  const simRows = rows.map((r) => [
+    formatInt(r.agents),
+    shortLabel(r),
+    formatInt(r.landed),
+    formatMinutes(r.mean_min_in_system),
+    fmtOps(r.git_ops_per_landed.fork),
+    fmtOps(r.git_ops_per_landed.clone),
+    fmtOps(r.git_ops_per_landed.fetch),
+    fmtOps(r.git_ops_per_landed.push),
+    fmtOps(r.billable_ops_per_landed),
+    fmtOps(r.binding_calls_per_landed.ls_remote),
+    fmtOps(r.binding_calls_per_landed.token),
+    fmtUsd(r.usd_per_10k_changes),
+  ]);
+  const pollHead = ["N", "Mode", ...intervals.flatMap((s) => [`poll ${s}s: ops / landed`, `poll ${s}s: $ / 10k`])];
+  const pollRows = rows.map((r) => [
+    formatInt(r.agents),
+    shortLabel(r) + (r.poll_projection[0]?.sync === "events" ? " (events, 0 polls)" : ""),
+    ...r.poll_projection.flatMap((p) => {
+      if (p.sync === "events") return [fmtOps(p.until_landed.ops_per_landed), fmtUsd(p.until_landed.usd_per_10k_changes)];
+      return [
+        `${fmtOps(p.while_working.ops_per_landed)} .. ${fmtOps(p.until_landed.ops_per_landed)}`,
+        `${fmtUsd(p.while_working.usd_per_10k_changes)} .. ${fmtUsd(p.until_landed.usd_per_10k_changes)}`,
+      ];
+    }),
+  ]);
+  const t1 = "SIMULATED git ops per landed change, by kind (billable: fork + clone + fetch + push; [bracketed] = billing undocumented)";
+  const t2 =
+    "PROJECTED: the simulated ops + polling (git fetch every S s), applied post-hoc; range = poll while working .. poll until landed or abandoned";
+  return [t1, renderTable(simHead, simRows, md), "", t2, renderTable(pollHead, pollRows, md)].join("\n");
 }

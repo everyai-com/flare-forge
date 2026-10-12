@@ -19,12 +19,14 @@ import {
   opsTotals,
   parseArtifactsOpEvent,
   recordOps,
+  SIM_OPS_PER_INTENT,
   simulatedOpsEconomics,
   topIntentOps,
   usdFor,
   validOpEntries,
   type OpsLookups,
 } from "./forge-ops";
+import { DEFAULT_CONSTANTS } from "../../sim/src/constants";
 
 const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
 
@@ -273,8 +275,14 @@ describe("economics", () => {
   it("labels fixture numbers as simulated", () => {
     const e = simulatedOpsEconomics(12, 5);
     expect(e.simulated).toBe(true);
-    expect(e.billable).toBe(84);
-    expect(e.perLandedChange).toBe(16.8);
+    // fork 1 + clone 1 + push 1 per intent; no invented fetches.
+    expect(e.events).toEqual({ fork: 12, clone: 12, push: 12 });
+    expect(e.events.fetch).toBeUndefined();
+    expect(e.billable).toBe(36);
+    expect(e.perLandedChange).toBe(7.2);
+    // Consistent with the simulator's git op model.
+    const g = DEFAULT_CONSTANTS.git;
+    expect(SIM_OPS_PER_INTENT).toBe(g.forkPerIntent + g.clonePerIntent + 1);
     expect(e.note).toMatch(/^SIMULATED/);
     // Fixtures are embedded in the dashboard template: no backticks or dollar-brace.
     expect(JSON.stringify(e)).not.toMatch(/`|\$\{/);

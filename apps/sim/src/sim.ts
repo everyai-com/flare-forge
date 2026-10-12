@@ -27,6 +27,13 @@
 // apps/worker/src/intents-core.ts. The simulator only supplies time and
 // randomness.
 //
+// Git traffic (the pull model): every mode runs on the same Artifacts
+// repo, and the simulator counts git ops by kind (fork, clone, fetch,
+// push; ls-remote and token mints apart) at the events it already
+// models, under constants.git. The baseline is the PR flow on branches
+// of that repo (no forks). Polling is NOT simulated here: pull.ts
+// projects it post-hoc from lifeMin / workMinSum.
+//
 // Everything here is SIMULATED. No number produced by this module is a
 // measurement of a real system.
 
@@ -40,7 +47,7 @@ export const MODES = ["baseline", "trains", "forge"] as const;
 export type Mode = (typeof MODES)[number];
 
 export const MODE_LABELS: Record<Mode, string> = {
-  baseline: "Baseline: branch + PR + serial queue",
+  baseline: "Baseline: branch + PR + serial queue (PR flow on the same Artifacts repo)",
   trains: "Forge, trains only",
   forge: "Forge, full",
 };
@@ -52,6 +59,22 @@ export interface HumanMinutes {
   audit: number;
   escalation: number;
 }
+
+// SIMULATED Artifacts git operations by kind. fork/clone/fetch/push are
+// the billable kinds (the pricing page names create, push, pull, clone);
+// lsRemote and token mints are counted apart because their billing is
+// undocumented.
+export interface GitOps {
+  fork: number;
+  clone: number;
+  fetch: number;
+  push: number;
+  lsRemote: number;
+  token: number;
+}
+
+export const BILLABLE_GIT_KINDS = ["fork", "clone", "fetch", "push"] as const;
+export const BINDING_GIT_KINDS = ["lsRemote", "token"] as const;
 
 export interface ModeMetrics {
   mode: Mode;
@@ -94,8 +117,18 @@ export interface ModeMetrics {
   trains: number;
   bisections: number;
   flakeReruns: number;
-  artifactsOps: number | null;
-  artifactsDollars: number | null;
+  // Billable git ops (fork + clone + fetch + push) and their list price.
+  artifactsOps: number;
+  artifactsDollars: number;
+  git: GitOps;
+  // Intent-minutes in the system (declare -> landed/abandoned), summed
+  // over intents, and agent working minutes (work + rework) summed: the
+  // two polling windows pull.ts projects over.
+  lifeMin: number;
+  workMinSum: number;
+  // How agents in this mode learn about trunk changes: Forge reads Feed
+  // events (no polling) unless constants.git.forgeSync is "poll".
+  sync: "events" | "poll";
   wallMs: number;
 }
 
@@ -188,6 +221,8 @@ interface RunIntent {
   llmReplay: boolean;
   reviewedOnce: boolean;
   landedAt: number;
+  endAt: number; // landed or abandoned
+  fetchedVersion: number; // forgeFetchCache: version the train last fetched (-1 none)
   readyGen: number;
   // forge planner
   preds: RunIntent[];
@@ -266,6 +301,8 @@ class Sim {
       llmReplay: false,
       reviewedOnce: false,
       landedAt: Number.NaN,
+      endAt: Number.NaN,
+      fetchedVersion: -1,
       readyGen: 0,
       preds: [],
       waiters: [],
@@ -304,8 +341,12 @@ class Sim {
       trains: 0,
       bisections: 0,
       flakeReruns: 0,
-      artifactsOps: mode === "baseline" ? null : 0,
-      artifactsDollars: null,
+      artifactsOps: 0,
+      artifactsDollars: 0,
+      git: { fork: 0, clone: 0, fetch: 0, push: 0, lsRemote: 0, token: 0 },
+      lifeMin: 0,
+      workMinSum: 0,
+      sync: mode === "forge" && c.git.forgeSync === "events" ? "events" : "poll",
       wallMs: 0,
     };
   }
@@ -322,8 +363,13 @@ class Sim {
     return lognormal(rng, d.median, d.sigma);
   }
 
-  private ops(n: number): void {
-    if (this.m.artifactsOps !== null) this.m.artifactsOps += n;
+  // Count `n` git ops of one kind (SIMULATED).
+  private g(kind: keyof GitOps, n = 1): void {
+    this.m.git[kind] += n;
+  }
+
+  private get fetchCache(): boolean {
+    return this.mode === "forge" && this.c.forgeFetchCache;
   }
 
   private human(kind: keyof HumanMinutes, minutes: number): void {
@@ -373,6 +419,7 @@ class Sim {
   // Callers release in-flight file marks before abandoning.
   private abandon(it: RunIntent): void {
     it.status = "abandoned";
+    it.endAt = this.q.now;
     it.pushed = false;
     this.m.abandoned++;
     this.releaseLive(it);
@@ -437,7 +484,12 @@ class Sim {
     it.started = true;
     it.status = "working";
     it.base = t;
-    this.ops(this.c.opsPerIntent);
+    this.g("clone", this.c.git.clonePerIntent);
+    if (this.mode !== "baseline") {
+      this.g("fork", this.c.git.forkPerIntent);
+      this.g("token"); // fork-scoped push token
+    }
+    this.m.workMinSum += it.w.workMin;
     if (this.mode === "forge" && it.preds.length) {
       for (const p of it.preds) {
         if (p.status === "abandoned") continue;
@@ -455,8 +507,13 @@ class Sim {
     this.q.at(t + it.w.workMin, () => this.onWorkDone(it));
   }
 
-  private onWorkDone(it: RunIntent): void {
+  // `byAgent` false: a replay already pushed its re-derived head.
+  private onWorkDone(it: RunIntent, byAgent = true): void {
     if (it.status === "abandoned") return;
+    if (byAgent) {
+      if (this.mode === "baseline") this.g("fetch", this.c.git.baselineFetchBeforePush);
+      this.g("push");
+    }
     it.pushed = true;
     if (this.mode === "forge") this.notifyWaiters(it);
     this.branchCi(it);
@@ -529,15 +586,18 @@ class Sim {
 
   // Author rebases onto current trunk and redoes part of the work, then
   // re-runs CI and goes back through review (baselines) or routing.
-  private rework(it: RunIntent, escalated: boolean): void {
+  // `rebase`: the author fetches trunk first (not for a plain defect fix).
+  private rework(it: RunIntent, escalated: boolean, rebase = true): void {
     const t = this.q.now;
     it.status = "working";
     it.pushed = false;
     it.version++;
     it.base = t;
     if (escalated) it.llmReplay = false;
-    this.ops(this.c.opsPerExtraPush);
-    this.q.at(t + it.w.workMin * this.c.reworkFactor, () => this.onWorkDone(it));
+    if (rebase) this.g("fetch", this.c.git.fetchPerRebase);
+    const d = it.w.workMin * this.c.reworkFactor;
+    this.m.workMinSum += d;
+    this.q.at(t + d, () => this.onWorkDone(it));
   }
 
   private fix(it: RunIntent, kind: "defect" | "interaction"): void {
@@ -548,7 +608,7 @@ class Sim {
     }
     if (kind === "defect") it.defect = "none";
     else it.interaction = false;
-    this.rework(it, false);
+    this.rework(it, false, kind === "interaction");
   }
 
   private onConflict(it: RunIntent): void {
@@ -573,6 +633,7 @@ class Sim {
   // its current head (or trunk) with the same replay machinery.
   private onRestack(it: RunIntent): void {
     this.m.restacks++;
+    this.g("fetch", this.c.git.fetchPerRestack);
     it.stacks = it.stacks.filter((s) => {
       if (s.p.status === "landed") return s.p.version === s.v;
       if (s.p.status === "abandoned" || !s.p.pushed) return false;
@@ -592,6 +653,8 @@ class Sim {
       this.m.replaysAttempted++;
       const d = this.dur(this.c.replay, this.rng.replay);
       const ok = this.rng.replay.next() < this.c.replaySuccess;
+      this.g("fetch", this.fetchCache ? 1 : this.c.git.fetchPerReplayAttempt);
+      this.g("token"); // replay fork read token
       this.q.at(t + d, () => {
         if (!ok) {
           this.replayOrEscalate(it);
@@ -602,9 +665,10 @@ class Sim {
         it.priority = true;
         it.version++;
         it.base = t; // re-derived on trunk as of the replay start
-        this.ops(this.c.opsPerExtraPush);
+        this.g("push", this.c.git.pushPerReplay);
+        this.g("token");
         // A replay must pass CI like any other change.
-        this.onWorkDone(it);
+        this.onWorkDone(it, false);
       });
       return;
     }
@@ -638,6 +702,7 @@ class Sim {
     this.serialBusy = true;
     const it = this.serialQ[this.serialHead++];
     const t = this.q.now;
+    this.g("fetch", this.c.git.queueFetchPerServe);
     if (this.conflictDraw(this.landedSince(it))) {
       this.onConflict(it);
       this.q.at(t + this.c.mergeMin, () => this.serialServe());
@@ -646,6 +711,7 @@ class Sim {
     // Branch updated onto current main, then CI on that exact SHA.
     it.base = t;
     it.status = "inflight";
+    this.g("push", this.c.git.queuePushPerServe);
     this.m.ciRuns++;
     const verifiedAt = this.m.landed; // trunk state CI sees
     const d = this.dur(this.c.ci, this.rng.ci);
@@ -659,6 +725,7 @@ class Sim {
             this.m.unverifiedLandings++;
             if (it.interaction) this.integrationRedIntervals.push([this.q.now, this.q.now + this.c.mttrMin]);
           }
+          this.g("push", this.c.git.baselineLandPush);
           this.land(it);
           this.serialServe();
         });
@@ -823,13 +890,24 @@ class Sim {
     const mergedSet = new Set<RunIntent>(ahead);
     const bounced: Array<{ it: RunIntent; restack: boolean }> = [];
     let items = 0;
+    // train.ts buildGroup: one read token, fetch trunk main (+ the
+    // speculative parent lane ref), list the lane refs.
+    this.g("token");
+    this.g("fetch", this.c.git.trainFetchPerGroup + (ahead.length ? this.c.git.trainFetchSpeculative : 0));
+    this.g("lsRemote");
     for (const lane of lanes) {
       this.m.trains++;
       const drop = new Set<RunIntent>();
       for (const it of lane.items) {
         items++;
         it.status = "inflight";
-        this.ops(this.c.opsPerLaneItem);
+        // Fetch the item's head from its fork (cached per version with
+        // forgeFetchCache: a speculative rebuild of the same head is free).
+        if (!this.fetchCache || it.fetchedVersion !== it.version) {
+          this.g("token");
+          this.g("fetch", this.c.git.trainFetchPerItem);
+          it.fetchedVersion = it.version;
+        }
         let stale = false;
         for (const s of it.stacks) {
           if (s.p.status === "landed") {
@@ -858,6 +936,8 @@ class Sim {
     for (const b of bounced) b.it.status = "working";
     const mergedAt = t + this.c.trainMergeBaseMin + this.c.trainMergePerItemMin * items;
     const live = lanes.filter((l) => this.chain.get(l.id) !== null).map((l) => l.id);
+    this.g("push", this.c.git.trainPushPerLane * live.length); // force-push each lane ref
+    this.g("token", live.length);
     this.q.at(mergedAt, () => {
       for (const b of bounced) {
         if (b.restack) this.onRestack(b.it);
@@ -896,7 +976,11 @@ class Sim {
     const unverifiedBefore = this.chain.unverifiedLands;
     const step = this.chain.decide();
     for (const lane of step.landed) {
-      this.ops(this.c.opsPerLaneLand);
+      // fastForwardMain: ls-remote main, fetch the lane ref, push main + notes.
+      this.g("lsRemote");
+      this.g("fetch", this.c.git.landFetch);
+      this.g("push", this.c.git.landPush);
+      this.g("token", 2);
       for (const it of lane.items) this.land(it);
     }
     if (this.chain.unverifiedLands > unverifiedBefore) {
@@ -928,6 +1012,9 @@ class Sim {
       const d = this.c.trainMergeBaseMin + this.c.trainMergePerItemMin * p.items.length + this.dur(this.c.ci, this.rng.ci);
       const flake = bernoulli(this.rng.flake, this.c.pFlake);
       const id = p.id;
+      this.g("fetch", this.c.git.probeFetchBase + this.c.git.probeFetchPerItem * p.items.length);
+      this.g("push", this.c.git.probePush);
+      this.g("token", 2 + p.items.length);
       this.q.at(this.q.now + d, () => {
         const probe = this.chain.getProbe(id);
         if (!probe) return;
@@ -949,6 +1036,7 @@ class Sim {
     const t = this.q.now;
     it.status = "landed";
     it.landedAt = t;
+    it.endAt = t;
     this.m.landed++;
     for (const f of it.allFiles) {
       const e: LandEntry = { t, it, v: it.version };
@@ -979,6 +1067,7 @@ class Sim {
     let last = 0;
     for (const it of this.items) {
       if (it.w.declareAt < first) first = it.w.declareAt;
+      if (Number.isFinite(it.endAt)) m.lifeMin += it.endAt - it.w.declareAt;
       if (it.status === "landed") {
         lat.push(it.landedAt - it.w.declareAt);
         landTimes.push(it.landedAt);
@@ -995,7 +1084,8 @@ class Sim {
     m.landedPerMin = m.makespanMin > 0 ? m.landed / m.makespanMin : 0;
     m.escapedDefectMin = unionLength(this.redIntervals);
     m.mainRedIntegrationMin = unionLength(this.integrationRedIntervals);
-    if (m.artifactsOps !== null) m.artifactsDollars = (m.artifactsOps / 1000) * this.c.dollarsPer1kOps;
+    m.artifactsOps = m.git.fork + m.git.clone + m.git.fetch + m.git.push;
+    m.artifactsDollars = (m.artifactsOps / 1000) * this.c.dollarsPer1kOps;
     return m;
   }
 }

@@ -39,9 +39,13 @@ export const ARTIFACTS_PRICING = {
   source: "https://developers.cloudflare.com/artifacts/platform/pricing/",
 } as const;
 
-// The projected baseline: an agent with no coordination layer fetches
-// to stay fresh. Interval and session length are the sim's assumptions
-// (apps/sim/src/constants.ts: work median 8 min), not measurements.
+// The projected baseline, LOWER BOUND ("poll only while working"): an
+// agent with no coordination layer fetches every 30 s to stay fresh, but
+// only during its 8-minute work session. Agents that keep polling until
+// their change lands poll far more (apps/sim/src/pull.ts projects both
+// windows; docs/FORGE-BENCH.md "Pull traffic"). Interval and session
+// length are the sim's assumptions (apps/sim/src/constants.ts: work
+// median 8 min, git.pollIntervalsSec), not measurements.
 export const NAIVE_BASELINE = {
   fetchIntervalSeconds: 30,
   workMinutes: 8,
@@ -496,16 +500,19 @@ export function opsEconomics(totals: OpsTotals, landed: number): OpsEconomics {
   };
 }
 
-// The sim's op model (apps/sim/src/constants.ts opsPerIntent: fork +
-// token + clone x2 + push x2 + revoke) for fixtures. SIMULATED: shown
-// only where the payload says so.
-export const SIM_OPS_PER_INTENT = 7;
+// The sim's per-intent floor (apps/sim/src/constants.ts `git`:
+// forkPerIntent 1 + clonePerIntent 1 + the agent's first push 1) for
+// fixtures. Train, replay and landing traffic is per landed change, not
+// per intent, so it is left out: the fixture is a floor, with no
+// invented fetches. SIMULATED: shown only where the payload says so.
+// forge-ops.test.ts checks this against the sim constants.
+export const SIM_OPS_PER_INTENT = 3;
 
 export function simulatedOpsEconomics(intents: number, landed: number): OpsEconomics {
   const billable = intents * SIM_OPS_PER_INTENT;
   const totals: OpsTotals = {
     since: null,
-    events: { fork: intents, clone: intents * 2, push: intents * 2, fetch: intents * 2 },
+    events: { fork: intents, clone: intents, push: intents },
     binding: {},
     bySubject: { intent: billable },
     billable,
