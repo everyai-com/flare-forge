@@ -353,6 +353,40 @@ export function watchHtml(html: string, repo: string): string {
   return html.slice(0, end) + meta + html.slice(end);
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+}
+
+// Browsers that hit /watch with an unknown (or no designated) repo get a
+// small page with a way forward instead of raw JSON. The requested repo is
+// never echoed back (no reflection); only designated names are linked.
+export function watchNotFoundHtml(repos: string[]): string {
+  const first = repos[0];
+  const body = first
+    ? `<p>That repo is not part of the public demo.</p><p><a href="/watch?repo=${escapeHtml(encodeURIComponent(first))}">Watch ${escapeHtml(first)} live &rarr;</a></p>`
+    : "<p>No repo is open for spectators right now. Check back soon.</p>";
+  return (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta name="robots" content="noindex"><title>Not found · Flare Forge</title>' +
+    "<style>:root{color-scheme:light dark}body{font:15px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px}" +
+    "h1{font-size:20px}a{font-weight:600}</style></head><body><h1>Nothing to watch here</h1>" +
+    body +
+    '<p><a href="https://github.com/everyai-com/flare-forge">Flare Forge on GitHub</a></p></body></html>'
+  );
+}
+
+function wantsHtml(request: Request): boolean {
+  return (request.headers.get("Accept") ?? "").toLowerCase().includes("text/html");
+}
+
+function watchNotFound(request: Request, repos: string[]): Response {
+  if (!wantsHtml(request)) return notFound();
+  return new Response(watchNotFoundHtml(repos), {
+    status: 404,
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Flare-Public": "read-only" },
+  });
+}
+
 function joinInfo(origin: string, repos: string[]): Record<string, unknown> {
   const mcpUrl = `${origin}/v1/public/forge/mcp`;
   return {
@@ -366,7 +400,7 @@ function joinInfo(origin: string, repos: string[]): Record<string, unknown> {
       claudeCode: `claude mcp add --transport http flare-forge-watch ${mcpUrl}`,
       try: [
         `What are the agents doing in ${repos[0] ?? "bookshelf"} right now? (forge_snapshot)`,
-        `Why does line 12 of src/middleware/logging.ts in ${repos[0] ?? "bookshelf"} exist? (why)`,
+        `Why does line 18 of src/middleware/logging.ts in ${repos[0] ?? "bookshelf"} exist? (why)`,
         `What is waiting for a human in ${repos[0] ?? "bookshelf"}? (read_inbox)`,
       ],
     },
@@ -406,7 +440,7 @@ export async function handleForgePublicRequest(request: Request, url: URL, ctx: 
   }
 
   const repos = await getPublicRepos(ctx.db);
-  if (repos.length === 0) return notFound();
+  if (repos.length === 0) return url.pathname === "/watch" ? watchNotFound(request, repos) : notFound();
 
   const bucket: RateBucket = isMcp ? "mcp" : url.pathname === "/v1/public/forge/feed" ? "feed" : "read";
   const key = await clientKey(request);
@@ -419,7 +453,8 @@ export async function handleForgePublicRequest(request: Request, url: URL, ctx: 
 
   if (url.pathname === "/watch") {
     const repo = repoParam ?? repos[0];
-    if (!repos.includes(repo) || !ctx.dashboardHtml) return notFound();
+    if (!ctx.dashboardHtml) return notFound();
+    if (!repos.includes(repo)) return watchNotFound(request, repos);
     return new Response(watchHtml(ctx.dashboardHtml, repo), {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
