@@ -35,7 +35,7 @@ export interface WorkerSecrets {
   TRIAGE_WEB_SEARCH?: string;
   // "1" marks the hosted Flare Cloud control plane (set only there).
   // Env-only by design — never a D1 setting — so self-hosted deploys
-  // can never be paywalled by accident. See cloud.ts / docs/HOSTED.md.
+  // can never be paywalled by accident. See cloud.ts / everyai-com/flare-actions docs/HOSTED.md.
   FLARE_CLOUD?: string;
   // Runner ref /runner.sh pins (release tag or full commit SHA), e.g. the
   // commit this worker was deployed from. Unset = the fleet

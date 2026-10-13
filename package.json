@@ -34,6 +34,7 @@
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run",
     "types": "wrangler types --include-runtime=false apps/worker/src/worker-configuration.d.ts",
+    "pretypecheck": "npm run types --silent",
     "typecheck": "tsc --noEmit",
     "typecheck:fast": "tsgo --noEmit",
     "lint": "oxlint .",

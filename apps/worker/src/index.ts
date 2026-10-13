@@ -2575,9 +2575,14 @@ export default {
           }
         }
       }
-      if (request.method === "GET" && url.pathname === "/") {
+      if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/") {
         // Keep the query (?demo=1, ?stage=1, ?tour=1): judges land on
         // /?demo=1#/live. Browsers carry the #fragment across a 302.
+        // A bare visit with no session lands on the guided demo, not a
+        // login form; signed-in users still go straight to the dashboard.
+        if (url.search === "" && parseSessionCookie(request) === null) {
+          return Response.redirect(new URL("/dashboard?demo=1&tour=1#/live", url).toString(), 302);
+        }
         return Response.redirect(dashboardRedirectUrl(url), 302);
       }
       if (request.method === "GET" && url.pathname === "/dashboard") {
@@ -4198,7 +4203,7 @@ export default {
       }
       // x402 spike: quote whole runner-months (public pricing).
       // payTo stays null until Cloud provisions settlement — the
-      // scaffold quotes, it never takes money. See docs/X402-SPIKE.md.
+      // scaffold quotes, it never takes money. See everyai-com/flare-actions docs/X402-SPIKE.md.
       if (request.method === "POST" && url.pathname === "/v1/cloud/x402/quote") {
         if (!hostedMode(env)) return json(apiError("hosted_only", "x402 quotes run on Flare Cloud only"), 501);
         const body = (await request.json().catch(() => ({}))) as { runners?: unknown };
