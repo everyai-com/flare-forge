@@ -228,6 +228,8 @@ import { runGenerateWithStatus } from "./generate";
 import { getCacheStats, handleCacheGet, handleCachePut, listCacheEntries, parseRestoreKeysParam, pruneCacheStats, purgeCachePrefix, recordCacheOutcome } from "./cache";
 import { deleteJobArtifacts, handleArtifactGet, handleArtifactPut, listRunArtifacts, pruneOldCache } from "./artifacts";
 import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerCheckout } from "./artifacts-push";
+import { forgeOpsLookups, handleArtifactsOpEvent, isAccountEventType } from "./forge-ops";
+import { coordinatorFor } from "./coordinator";
 import { ensureRepoMirror } from "./artifacts-mirrors";
 import { resolvePairDedupe } from "./event-dedupe";
 import {
@@ -4889,6 +4891,40 @@ export default {
       // claim, so a retry would only re-skip as duplicate. Only a throw
       // before the outcome (DB down on claim) retries.
       if (isRecord(body) && typeof body["type"] === "string" && body["type"].startsWith("cf.artifacts.")) {
+        // Account-level repo lifecycle (created / forked / imported /
+        // deleted) only reaches the worker here: the namespace-filtered
+        // Workflow trigger for these types never delivers. They are
+        // provenance for the ops ledger, not work — nothing dispatches
+        // CI, since a fork is not a push. Metered off the queue only,
+        // so no event is counted on both paths. Previously these were
+        // handed to the push parser and dropped as malformed.
+        if (isAccountEventType(body["type"])) {
+          const ns = env.COORDINATOR;
+          if (!ns) {
+            log("warn", "artifacts lifecycle event with no coordinator binding, acking", { type: body["type"] });
+            msg.ack();
+            continue;
+          }
+          try {
+            const outcome = await handleArtifactsOpEvent(
+              {
+                namespace: env.ARTIFACTS_NAMESPACE ?? "",
+                lookups: forgeOpsLookups(env.DB),
+                record: (repo, entries, eventId) => coordinatorFor({ COORDINATOR: ns }, repo).recordOps(entries, eventId),
+              },
+              body,
+              // The queue message id is stable across retries, so it is
+              // the dedupe key for a redelivery of one event.
+              msg.id,
+            );
+            log("info", "artifacts lifecycle metered", { type: body["type"], ...outcome });
+            msg.ack();
+          } catch (err) {
+            log("error", "artifacts lifecycle failed, retrying", { error: String(err) });
+            msg.retry();
+          }
+          continue;
+        }
         try {
           const outcome = await handleArtifactsPush(
             {
