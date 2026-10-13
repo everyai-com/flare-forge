@@ -308,6 +308,7 @@ import { buildMcpServer, mcpDiscovery } from "./mcp";
 import { forgeDepsFromEnv, handleForgeRequest } from "./forge-routes";
 import { forgeAdaptersFromEnv } from "./forge-adapters";
 import { bindingRateLimiter, handleForgePublicRequest } from "./forge-public"; // forge-spectator
+import { reconcileBridge, syncPushFromGithub } from "./forge-github-env";
 import { listAppRepos, loadSetupFacts, setupSteps } from "./setup";
 import { resolveRunnerRef, runnerScript } from "./runner-script";
 import {
@@ -1158,6 +1159,15 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
       await audit(env.DB, "system", "budget.warn", `${repo} ${verdict.usedMinutes}/${verdict.cap}`);
       log("warn", "monthly budget exceeded (warn mode)", { repo, usedMinutes: verdict.usedMinutes, cap: verdict.cap });
     }
+    // Forge GitHub bridge: a push to a linked repo's tracked branch
+    // fast-forwards its trunk (human commits, merged sync PRs). It sits
+    // behind the kill switch and the budget block like every other
+    // webhook side effect: a paused or blocked repo moves nothing (the
+    // next allowed push, or a manual sync, catches trunk up). It runs
+    // before the plan guard: syncing code claims no runner.
+    if (event === "push" && branchFromRef(payload.ref)) {
+      ctx.waitUntil(syncPushFromGithub(env, repo, branchFromRef(payload.ref), payload.installation?.id ?? null));
+    }
     // Plan guard: a saturated hosted plan skips the webhook like a
     // budget block (200 so GitHub stops retrying). Self-hosted: null.
     const cloud = await cloudVerdict(env);
@@ -1756,6 +1766,9 @@ export interface DispatchInput {
   sha: string;
   ref: string;
   pipeline?: string;
+  // Pre-translated jobs (Forge trains on repos verified by their own
+  // `.github/workflows`, trunk-ci.ts); wins over `pipeline`.
+  jobs?: PipelineJob[];
   event?: string;
   priority?: number;
   source?: string;
@@ -1815,7 +1828,11 @@ async function loadDispatchJobs(
       if (!resolved) throw new Error(`could not resolve ref "${sha}" — paste a full commit SHA`);
       sha = resolved;
     }
-    if (input.pipeline) {
+    if (input.jobs && input.jobs.length > 0) {
+      jobs = input.jobs;
+      profiles = emptyProfiles();
+      pipelineSource = "actions";
+    } else if (input.pipeline) {
       const parsed = parsePipelineWithProfiles(input.pipeline);
       if (!parsed) throw new Error("pipeline parse failed");
       jobs = parsed.jobs;
@@ -5123,6 +5140,12 @@ export default {
       const mq = await runMergeQueueTick(env, ctx);
       if (mq.started > 0 || mq.landed > 0 || mq.failed > 0 || mq.requeued > 0) {
         log("info", "merge queue tick finished", { ...mq });
+      }
+      try {
+        const settled = await reconcileBridge(env);
+        if (settled > 0) log("info", "forge github imports settled", { settled });
+      } catch (err) {
+        log("warn", "forge github reconcile failed", { error: String(err) });
       }
       try {
         const trains = await runTrainTick(env);

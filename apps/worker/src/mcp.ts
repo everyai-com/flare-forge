@@ -88,6 +88,11 @@ export const MCP_TOOL_RISK: Record<string, McpToolRisk> = {
   approve_plan: "contained-write",
   send_back: "contained-write",
   review_sample: "contained-write",
+  // GitHub bridge: import creates a trunk + link (admin-gated in the op);
+  // sync pushes landed trunk work to GitHub per the link's sync mode.
+  import_github_repo: "contained-write",
+  github_links: "read",
+  sync_github: "contained-write",
 };
 
 export interface McpToolDef {
@@ -197,6 +202,20 @@ const FORGE_TOOL_SCHEMAS = {
     intentId: forgeIntent,
     decision: z.enum(["agree", "disagree"]).describe("agree = looks good (default); disagree needs a reason").optional(),
     reason: z.string().describe("Why you disagree (required for disagree, ≤500 chars)").optional(),
+    confirm: forgeConfirm,
+  }),
+  import_github_repo: z.object({
+    github: z.string().describe("GitHub repo: owner/name or any github.com URL (required)").optional(),
+    name: z.string().describe("Trunk name (default gh-<owner>-<name>)").optional(),
+    syncMode: z.enum(["off", "branch", "pr", "direct"]).describe("How landed work flows back to GitHub (default pr: one rolling PR)").optional(),
+    syncBranch: z.string().describe("GitHub branch Forge owns for branch/pr modes (default flare/trunk)").optional(),
+    pullUpstream: z.boolean().describe("Fast-forward GitHub commits into the trunk (default true)").optional(),
+    confirm: forgeConfirm,
+  }),
+  github_links: z.object({}),
+  sync_github: z.object({
+    repo: forgeRepo,
+    direction: z.enum(["pull", "push", "both"]).describe("pull = GitHub -> trunk (ff only), push = trunk -> GitHub, both (default)").optional(),
     confirm: forgeConfirm,
   }),
 };
@@ -352,6 +371,20 @@ export const FORGE_TOOLS: McpToolDef[] = [
     name: "review_sample",
     description:
       "HUMAN REVIEWER ONLY (admin token): answer an audit-sample story: decision agree (ledger review.sampled_ok) or disagree with a reason (review.disagreed + note to the owner). Feeds the inbox disagreement rate. Agents must not call this. Same as POST /v1/forge/intents/:id/review. Scope: admin.",
+  },
+  {
+    name: "import_github_repo",
+    description:
+      "Bring an existing GitHub repo into Forge: imports it server-side as an Artifacts trunk and links the two. Trains verify with the repo's own CI (flare.yml, else its .github/workflows); landed work flows back to GitHub per syncMode (pr = one rolling PR, branch, direct fast-forward, off) and GitHub commits fast-forward in. Private repos need the Flare GitHub App installed. Returns {status, repo, link, remote, warnings, nextSteps}. Needs an admin token.",
+  },
+  {
+    name: "github_links",
+    description: "Read-only: every Forge trunk linked to a GitHub repo, with sync mode, last pushed/pulled shas, the rolling PR url and any sync error. Same JSON as GET /v1/forge/github/links.",
+  },
+  {
+    name: "sync_github",
+    description:
+      "Sync a linked trunk with GitHub now (trains already sync after every landing). direction pull fast-forwards GitHub commits into the trunk (never forced; a diverged history is reported), push delivers landed trunk work per the link's sync mode, both does pull then push. Returns {pull, push, link}. Needs run scope.",
   },
 ];
 

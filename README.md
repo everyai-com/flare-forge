@@ -269,6 +269,21 @@ public hosted Flare yet), the first dashboard sign-up, and clicking
 installs, `runs-on:` edits); never delete `.github/workflows`.
 
 ### Start here (no experience needed)
+### Bring your GitHub repo to Forge
+
+Keep GitHub. Import a repo once, and agents work on it through Forge.
+Their landed work comes back as one rolling pull request. Your
+existing `.github/workflows` verify every train, so you don't need a
+`flare.yml`. Human commits and merged PRs flow back in by fast-forward.
+
+```bash
+npm run cli -- forge import https://github.com/acme/widgets   # or: dashboard → Agent forge → Import from GitHub
+```
+
+Sync modes (`pr`, `branch`, `direct`, `off`), safety rules and
+permissions: [docs/FORGE-GITHUB.md](docs/FORGE-GITHUB.md).
+
+## Start here (no experience needed)
 
 Flare checks your code for you: every time you save your work to
 GitHub, it runs your project's tests and tells you, in plain words, if
@@ -469,6 +484,266 @@ plan ($5/mo base); Artifacts also needs Workers Paid. BYO runners stay
 free. Every run reports its compute minutes plus the Actions list-price
 equivalent, so the gap is a number, not a claim
 ([docs/ECONOMICS.md](docs/ECONOMICS.md)).
+## Agent tournaments (Cloudflare Artifacts)
+
+Race N coding agents on one task: isolated forks, real CI per attempt,
+collision radar, AI verdict, winner fast-forwarded, immutable ledger.
+The dashboard shows it as **Races** + **Repositories** + **Merge queue**
+next to Runs — same CI engine underneath, verifying every attempt.
+Try it on staging in ~10 minutes — [docs/TOURNAMENTS.md](docs/TOURNAMENTS.md):
+
+```bash
+npm run cli -- login               # pair this machine (writes .env)
+npm run cli -- races               # list races, or `races <id>` for one board
+npm run cli -- claim <raceId> <agent>  # claim a lane (forks a workspace)
+npm run cli -- verdict <raceId>    # ranking + why-it-won rationale
+npm run cli -- repos [name]        # browse the Artifacts namespace
+```
+
+## Built for agents
+
+GitHub Actions is built for humans — commit, push, then stare at a queue.
+Flare is built for agents: trigger, wait, and read results over the API,
+MCP, or CLI. No git ceremony, no sleep loops, no log spelunking.
+
+- **One-call verify loop** — `run_and_wait` (MCP) or `cli run` dispatches
+  and blocks until the run is terminal
+  (`GET /v1/runs/:id/wait?timeout=60` under the hood). Verify → fix →
+  repeat, without a polling loop.
+- **Zero-latency inner loop** — `cli local` runs `flare.yml` in the current
+  working tree, on this machine, with no server and no commit: the
+  working-tree code, a warm local cache (`~/.flare/cache`), artifacts in
+  `.flare/artifacts/`, and the same execution engine as the server
+  (`continue-on-error`, `if:`, needs, matrix) with the same curated
+  step env (`FLARE_*`, `CI=true`). `cli local --parity` reports
+  image/cache/env divergences against the predicted cloud lane without
+  running. Server dispatch stays the final parity check.
+- **Priority lane** — `priority: 0–10` on dispatch jumps queued batch
+  work, so an agent's verification beats the nightly backlog.
+- **Explain, don't spelunk** — `cli explain <runId>` turns a run into
+  one narrative: verdict first, then failing steps, output tails, triage,
+  and exact rerun commands (`--json` included).
+- **Dry-run dispatch** — append `--dry-run` to `run` / `dispatch`
+  (including `--source`, with no upload) to plan the fan-out —
+  queued/blocked + reasons, runtime priors, live group state, budget
+  verdict — with zero writes.
+- **Machine-shaped I/O** — every CLI command accepts `--json` (one
+  versioned envelope on stdout), and API failures carry a stable `code`
+  + next-step `hint` ([docs/ERRORS.md](docs/ERRORS.md)).
+- **Token-efficient digests** — `GET /v1/runs/:id/digest` (or
+  `get_run_digest`) returns each job's failing step command, exit code, a
+  bounded output tail, and AI triage in a few KB — context-window friendly,
+  no megabyte logs.
+- **Near-instant pickup** — BYO runners poll every 2s idle / 500ms after a
+  job; managed seats wake immediately over the queue.
+- **Machine-readable everything** — per-step structured results with exit
+  codes and durations; the dashboard is optional.
+- **No git required** — dispatch by SHA or branch with an inline
+  `pipeline`, or go further: `cli run <repo> --source` uploads a tarball
+  of the working tree (50 MB cap, path-traversal-guarded on both
+  executors) and runs it server-side with full parity — seats,
+  containers, services — with **no commit anywhere**. Append `--dry-run`
+  to `run` / `dispatch` (incl. `--source`, no upload) to plan the
+  fan-out — queued/blocked + reasons, priors, budget — with zero writes.
+- **Measured, not claimed** — `npm run bench` (against `npm run dev` or a
+  deployment) reports dispatch → job pickup → terminal latency: on a
+  local worker, p50 ≈ 38 ms / 17 ms / 63 ms. Nothing here waits on a
+  2–3 minute hosted queue.
+
+```bash
+# agent inner loop: run the working tree locally, no server, no commit
+npm run cli -- local                 # all jobs; warm cache across runs
+npm run cli -- local test --file flare.yml
+
+# agent verify loop: dispatch, wait, print the digest (exit 1 on failure)
+npm run cli -- run owner/repo "$(git rev-parse HEAD)" --priority 9
+npm run cli -- run owner/repo --source --priority 9   # uncommitted tree, server-side
+npm run cli -- watch <runId>        # block on an existing run + digest
+npm run cli -- dispatch owner/repo main --priority 9   # fire and forget
+```
+
+## Coming from GitHub Actions
+
+**Drop-in:** delete nothing. If a repo has no `flare.yml`, Flare reads its
+`.github/workflows/*.yml` at the commit and runs the matching workflows —
+`on: push` / `pull_request` / `workflow_dispatch` / `schedule` are
+honored, and `run:` steps, matrices, needs, concurrency, containers,
+services, `actions/cache`, and `actions/upload-artifact` translate as-is.
+JS/container actions and unsupported expressions are dropped **with
+warnings**, never guessed at. Full support matrix + trigger mapping:
+[docs/GITHUB-ACTIONS-COMPAT.md](docs/GITHUB-ACTIONS-COMPAT.md).
+
+**Full fidelity:** migrate to the native format (better fidelity, richer
+features like retries and egress allowlists):
+
+```bash
+npm run cli -- import .github/workflows/ci.yml > flare.yml
+```
+
+Translates `runs-on`, steps, matrices, needs, concurrency, containers,
+services, caches, and artifacts; everything unmappable becomes a warning
+on stderr (exit stays 0) so you see exactly what needs a human eye.
+
+**No GitHub App?** For public repos, point a plain repo webhook at
+`https://<worker>/webhooks/github` with the secret from the dashboard
+(Settings → Webhooks) — runs trigger with no App installed. The App adds
+private repos, commit statuses, Check Runs, PR comments, and GitHub login.
+
+## Status badges
+
+Public, embeddable, no token needed:
+
+```markdown
+[![flare](https://<worker>/v1/badge.svg?repo=owner/name&branch=main)](https://<worker>/dashboard)
+```
+
+`npm run cli -- badge owner/name main` prints the snippet. For
+private repositories, list them under Settings → Status badges so the
+public endpoint serves `unknown` instead of leaking pass/fail. For
+required-checks UX, the GitHub App already posts commit statuses on
+every run — mark them required in repo Settings → Branches.
+
+## AI failure triage
+
+Every failed job is triaged automatically by Workers AI
+(`@cf/meta/llama-3.1-8b-instruct-fp8-fast`, inside the 10k-neurons/day
+free tier): likely cause, culprit file/command, and one concrete fix.
+It appears on the job in the dashboard and CLI. Forks without the AI
+binding simply skip triage — nothing breaks.
+
+## Notifications
+
+Every finished run emails all registered email users: status, branch,
+jobs, cost, and the AI triage excerpt on failures. Set the sender in
+dashboard Settings → Run notifications (the domain must be enabled for
+[Email Sending](https://developers.cloudflare.com/email-service/) first);
+pick all completions, failures only, or off. Env `NOTIFY_FROM_EMAIL`
+overrides the dashboard value. Deployments without a sender simply
+skip — nothing breaks.
+
+**Chat webhooks:** paste a Slack, Discord, or Mattermost-compatible
+webhook URL in Settings → Run notifications and the same summary posts
+there on every finished run — independently of email, so it works even
+with no sender configured. The URL is write-only and encrypted at rest
+with the secrets data key.
+
+## CLI
+
+```bash
+npm run cli -- runs                    # list runs
+npm run cli -- local [job]             # run flare.yml here (no server, warm cache)
+npm run cli -- run <repo> <sha>        # dispatch, wait, print the compact digest (exit 1 on failure)
+npm run cli -- run <repo> --source     # upload the working tree and run it (no commit needed)
+npm run cli -- run|dispatch ... --dry-run  # plan the fan-out (queued/blocked/budget), zero writes
+npm run cli -- watch <runId>           # wait on an existing run + digest
+npm run cli -- cancel <runId>          # cancel queued/blocked jobs of a run
+npm run cli -- logs <runId>            # jobs, steps, triage, logs
+npm run cli -- explain <runId>         # one narrative: verdict, failures, next command
+npm run cli -- dispatch <repo> <sha> [--priority N]   # trigger a run
+npm run cli -- rerun <runId> <jobId>   # reset a finished job
+npm run cli -- flaky <repo>            # per-job failure rates
+npm run cli -- bottlenecks <repo>      # slowest checks: p50/p95 run time + queue wait
+npm run cli -- quarantine list|add|remove <repo> [test]  # flaky-test quarantine (admin writes)
+npm run cli -- tests <runId>           # per-test results and failing tests
+npm run cli -- egress <runId>          # per-job egress by host
+npm run cli -- queue [labels]          # live queue + projected claim order (admin)
+npm run cli -- cache list|purge [prefix]  # cache entries (admin)
+npm run cli -- cache stats             # shared warm-cache hit rate (7d)
+npm run cli -- usage [days] [repo]     # runs, jobs, compute-minutes for billing
+npm run cli -- paused                # repos auto-paused for runaway spend (admin)
+npm run cli -- resume <repo>         # resume a paused repo (admin)
+npm run cli -- search <query...>       # search all job logs (branch:main level:error ...)
+npm run cli -- artifacts <runId>       # list artifacts
+npm run cli -- badge <repo> [branch]   # badge snippet
+npm run cli -- import <workflow.yml>   # Actions -> flare.yml
+npm run cli -- mcp-config              # MCP client config
+npm run cli -- devbox ...              # persistent warm dev boxes (local docker)
+npm run cli -- connect [repo] [--wire] [--dry-run]  # probe, wire, and verify this repo in one command
+npm run cli -- github-jobs [repo]      # ephemeral runner-mode jobs (status, duration, list price)
+npm run cli -- login [--url U] [--code C]  # pair this machine (writes .env)
+npm run cli -- races [raceId]         # list agent races, or one race board
+npm run cli -- repos [name] [path]    # list forge repos, or browse one
+npm run cli -- forge import owner/repo   # import a GitHub repo as a Forge trunk (two-way sync)
+npm run cli -- claim <raceId> <agent>  # claim a race lane (forks a workspace)
+npm run cli -- verdict <raceId>        # winner ranking + why-it-won rationale
+```
+
+Every command accepts `--json`: stdout becomes one versioned envelope
+`{ version: 1, command, data }` (failures keep stderr + exit codes).
+API failures carry a stable `code` + next-step `hint`
+([docs/ERRORS.md](docs/ERRORS.md)); the CLI prints `hint [code]` after
+the error line.
+
+## API
+
+- `GET /dashboard` — dashboard UI (`/` redirects here)
+- `POST /webhooks/github` — GitHub App webhook (HMAC verified)
+- `GET /mcp` — MCP server metadata (public); `POST /mcp` — MCP JSON-RPC
+- `POST /v1/runs/dispatch` — trigger a run by SHA, branch, or tag, optional inline `pipeline`, `priority` (0–10), or `source` (uploaded working tree)
+- `POST /v1/runs/dispatch/dry-run` — plan the fan-out with zero writes (run scope)
+- `POST /v1/source` — upload a gzipped working-tree tarball (≤50 MB); `GET /v1/source/:id` — fetch it (run scope)
+- `POST /v1/admin/pair-codes`, `POST /v1/pair/exchange` — mint a pairing code (admin), exchange it for a runner token (public, throttled)
+- `GET /v1/github/jobs`, `POST /v1/github/jobs/next` — runner-mode job list + JIT claim lane (read / run scope)
+- `GET /v1/bottlenecks?repo=&days=` — slowest checks: p50/p95 run time + queue wait (read scope)
+- `GET /v1/cache/stats` — shared warm-cache hit rate over the trailing 7 days, overall plus per scope (read scope)
+- `GET|POST /v1/quarantine` — list / add / remove quarantined tests (read scope; admin writes)
+- `GET /v1/runs/:id/tests`, `GET /v1/runs/:id/egress` — per-test results, per-job egress (read scope)
+- `GET /v1/admin/queue`, `GET /v1/usage?days=` — live queue, billing usage (admin / read scope)
+- `GET|DELETE /v1/admin/paused` — kill-switch state: paused repos with attribution + one-click resume (admin only)
+- `GET /v1/search/logs?q=` — full-text log search (read scope)
+- `GET /v1/runs/:id/wait?timeout=` — block until terminal (1–90s), returns the run + `timedOut`
+- `GET|POST|DELETE /v1/admin/secrets` — repo secrets, names listed, values write-only (admin only)
+- `GET /v1/runs?limit=&offset=` — list runs, newest first (admin, runner, or readonly token; limit 1–200)
+- `GET /v1/runs/:id` — run + jobs + cost summary (admin, runner, readonly)
+- `GET /v1/runs/:id/digest` — compact agent digest: failing steps, bounded tails, triage (read scope)
+- `GET /v1/runs/:id/artifacts` — list a run's artifacts (read scope)
+- `GET /v1/jobs/next?labels=` — pull next matching queued job (run scope)
+- `POST /v1/runs/:id/status` — runner status callback (admin or runner token)
+- `POST /v1/runs/:id/jobs/:jobId/rerun` — reset a finished job (run scope)
+- `POST /v1/runs/:id/jobs/:jobId/heartbeat` — executor liveness; running jobs quiet 20m+ are requeued (run scope)
+- `PUT|GET /v1/cache/:key` — build cache blobs (run scope)
+- `PUT|GET /v1/jobs/:jobId/artifacts/:name` — artifacts (run to write, read to fetch)
+- `GET /v1/badge.svg?repo=&branch=` — status badge (public)
+- `GET /v1/flaky?repo=&days=` — per-job failure rates (read scope)
+- `GET /v1/admin/tokens` — list access tokens (admin only)
+- `POST /v1/admin/tokens` — issue a token, shown once (admin only; optional `repos` scoping)
+- `POST /v1/admin/tokens/:id/revoke` — revoke a token (admin only)
+- `POST /v1/runs/:id/cancel` — cancel queued/blocked jobs of a run (running jobs finish naturally)
+- `POST /v1/admin/reset`, `POST /v1/admin/reset/confirm` — self-serve password reset (public, throttled, single-use 1h link)
+- `GET /v1/admin/audit` — audit log (admin only)
+- `GET|POST /v1/admin/schedules` — list / create cron schedules (admin only)
+- `POST /v1/admin/schedules/:id` — enable or disable a schedule (admin only)
+- `DELETE /v1/admin/schedules/:id` — delete a schedule (admin only)
+- `POST /v1/admin/generate` — natural language → `flare.yml` (admin only)
+- `GET|POST /v1/admin/settings` — webhook secret, run notifications, badge visibility (admin only)
+- `GET /v1/admin/users` — allowed GitHub users, email users, invites (admin only)
+- `POST /v1/admin/users|users/email|users/invite` — allow/remove users, mint single-use invite links (admin only)
+- `POST /v1/admin/register` — redeem an invite, or self-register by email when open registration is on (public, throttled)
+- `POST /v1/admin/bootstrap` — first-run admin claim (open until claimed, throttled)
+- `POST /v1/admin/login`, `POST /v1/admin/logout` — email sessions (throttled)
+- `POST /v1/admin/magic/request`, `POST /v1/admin/magic/consume` — passwordless magic-link login (public, throttled, single-use 15 min; emailed links open a dashboard confirm screen so mail scanners cannot burn them)
+- `GET|POST /v1/admin/github/*` — GitHub App connect + login flows
+- `GET /v1/admin/status` — setup state for the dashboard (public)
+- `GET /v1/tournaments`, `GET /v1/tournaments/:id` — race list + board: attempts, verdict, ledger (read scope)
+- `POST /v1/tournaments`, `POST /v1/tournaments/:id/claims` — open a race, claim a lane (run scope)
+- `GET /v1/repos`, `GET /v1/repos/:name` + `/tree`, `/blob`, `/commits` — browse the Artifacts namespace (read scope)
+
+## Cost
+
+The core — webhooks, dispatch, dashboard, D1 history, queues, R2
+cache/artifacts — fits Cloudflare's free tier at small-to-medium scale:
+Workers (100k requests/day), Queues (10k operations/day ≈ 3,300
+dispatches/day), D1 (5M rows read + 100k rows written/day, 5 GB storage),
+R2 (10 GB storage, zero egress). The **managed seats** executor adds
+Cloudflare Containers, which need the Workers Paid plan ($5/mo base) —
+BYO runners stay free. Retention keeps storage honest: finished runs and
+their artifacts prune after 90 days, cache blobs after 90 days without a
+hit, all bounded per pass. Every run reports its compute minutes
+plus the Actions list-price equivalent, so the gap is a number, not a claim.
+See [Workers](https://developers.cloudflare.com/workers/platform/pricing/),
+[Queues](https://developers.cloudflare.com/queues/platform/pricing/),
+[D1](https://developers.cloudflare.com/d1/platform/pricing/), and
+[R2](https://developers.cloudflare.com/r2/pricing/) pricing.
 
 ## Give it to your agent
 

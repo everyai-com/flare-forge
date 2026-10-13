@@ -23,10 +23,13 @@ import {
   forgeServiceDeps,
   forkSessionOp,
   getConflictOp,
+  getGithubLinkOp,
   getGoalOp,
   getIntentOp,
   getTrainOp,
   heartbeatOp,
+  importGithubOp,
+  listGithubLinksOp,
   listConflictsOp,
   listGoalsOp,
   listIntentsOp,
@@ -40,6 +43,9 @@ import {
   sessionOp,
   snapshotOp,
   storyInboxOp,
+  syncGithubOp,
+  unlinkGithubOp,
+  updateGithubLinkOp,
   whatsHappeningOp,
   whyOp,
   type ForgeArgs,
@@ -51,6 +57,7 @@ import {
 import { meteredArtifacts } from "./coordinator";
 import type { FeedPort, ForgeCoordinatorPort, TrainPort, WhyPort } from "./forge-ports";
 import type { GoalPlanner } from "./forge-planner";
+import type { BridgeDeps } from "./forge-github";
 
 export interface ForgeIdentity {
   scope: string; // admin | runner | readonly
@@ -68,6 +75,7 @@ export interface ForgeAdapters {
   planner?: GoalPlanner | null;
   // Request context: background coordinator index syncs ride it.
   waitUntil?: ((p: Promise<unknown>) => void) | null;
+  github?: BridgeDeps | null;
 }
 
 export function forgeDepsFromEnv(env: WorkerEnv, adapters: ForgeAdapters = {}): ForgeServiceDeps {
@@ -204,6 +212,16 @@ export async function handleForgeRequest(
   if (method === "GET" && url.pathname === "/v1/forge/trains") return read(listTrainsOp);
   const trainMatch = /^\/v1\/forge\/trains\/([^/]+)$/.exec(url.pathname);
   if (trainMatch && method === "GET") return read(getTrainOp, { trainId: trainMatch[1] });
+
+  // --- GitHub bridge (import + two-way sync; docs/FORGE-GITHUB.md) -----------
+  if (method === "GET" && url.pathname === "/v1/forge/github/links") return read(listGithubLinksOp);
+  if (method === "POST" && url.pathname === "/v1/forge/github/links") return write(importGithubOp);
+  const linkMatch = /^\/v1\/forge\/github\/links\/([^/]+)$/.exec(url.pathname);
+  if (linkMatch && method === "GET") return read(getGithubLinkOp, { repo: decodeURIComponent(linkMatch[1]) });
+  if (linkMatch && method === "PATCH") return write(updateGithubLinkOp, { repo: decodeURIComponent(linkMatch[1]) });
+  if (linkMatch && method === "DELETE") return read(unlinkGithubOp, { repo: decodeURIComponent(linkMatch[1]) });
+  const syncMatch = /^\/v1\/forge\/github\/links\/([^/]+)\/sync$/.exec(url.pathname);
+  if (syncMatch && method === "POST") return write(syncGithubOp, { repo: decodeURIComponent(syncMatch[1]) });
 
   // --- live feed (WebSocket; Coordinator stream) -----------------------------
   if (method === "GET" && url.pathname === "/v1/forge/feed") {
