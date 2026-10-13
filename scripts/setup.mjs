@@ -38,6 +38,29 @@ function fail(msg) {
   if (r.status !== 0) fail("wrangler is not logged in. Run `npx wrangler login` first.");
 }
 
+// 1b. Point Forge's Artifacts git remotes at THIS account. wrangler.jsonc
+// ships the maintainers' account id in ARTIFACTS_ACCOUNT_ID (vars and
+// previews.vars); a fork deployed elsewhere would build remotes on the
+// wrong account. Resolve the id from CLOUDFLARE_ACCOUNT_ID or, when the
+// login has exactly one account, from `wrangler whoami`, and rewrite it.
+{
+  const whoami = run("npx", ["wrangler", "whoami"]);
+  const seen = [...new Set(((whoami.stdout ?? "") + (whoami.stderr ?? "")).match(/\b[a-f0-9]{32}\b/g) ?? [])];
+  const mine = process.env.CLOUDFLARE_ACCOUNT_ID ?? (seen.length === 1 ? seen[0] : "");
+  const cfgPath = new URL("../wrangler.jsonc", import.meta.url);
+  const cfg = readFileSync(cfgPath, "utf8");
+  const shipped = /"ARTIFACTS_ACCOUNT_ID":\s*"([a-f0-9]{32})"/.exec(cfg)?.[1];
+  if (!/^[a-f0-9]{32}$/.test(mine)) {
+    console.log("Artifacts: could not tell which account this is (set CLOUDFLARE_ACCOUNT_ID); leaving ARTIFACTS_ACCOUNT_ID in wrangler.jsonc as is.");
+  } else if (shipped && shipped !== mine) {
+    if (dryRun) console.log(`(dry-run) would set ARTIFACTS_ACCOUNT_ID in wrangler.jsonc to ${mine}`);
+    else {
+      writeFileSync(cfgPath, cfg.split(shipped).join(mine));
+      console.log(`Artifacts: ARTIFACTS_ACCOUNT_ID in wrangler.jsonc set to this account (${mine})`);
+    }
+  }
+}
+
 // 2. D1 database (idempotent; deploys also auto-provision by name)
 {
   const r = run("npx", ["wrangler", "d1", "create", "flare-actions"]);

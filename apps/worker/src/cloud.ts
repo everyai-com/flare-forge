@@ -5,7 +5,7 @@
 // by accident), entitlements default to unlimited, and metering
 // defaults off even in hosted mode until Cloud provisions it.
 // The ledger only ever TRACKS usage; blocking at zero balance is a
-// future Cloud overage policy, not this scaffold. See docs/HOSTED.md.
+// future Cloud overage policy, not this scaffold. See everyai-com/flare-actions docs/HOSTED.md.
 import type { Db } from "./db";
 
 // List rate for spend accounting: 1¢ per compute-minute. Cloud bills
@@ -19,7 +19,7 @@ const MAX_LEDGER_CENTS = 1_000_000_000;
 
 // Founding Cloud price: $49 per concurrent runner per month (see
 // docs/ROADMAP.md pricing). The x402 quote prices whole runner-months;
-// settlement wiring is future (docs/X402-SPIKE.md).
+// settlement wiring is future (everyai-com/flare-actions docs/X402-SPIKE.md).
 export const CLOUD_RUNNER_MONTH_CENTS = 4900;
 export const X402_QUOTE_TTL_MS = 15 * 60000;
 
@@ -29,7 +29,7 @@ export interface X402Quote {
   asset: string;
   network: string;
   // Null until Cloud provisions a settlement address: the scaffold
-  // quotes, it never takes money. See docs/X402-SPIKE.md.
+  // quotes, it never takes money. See everyai-com/flare-actions docs/X402-SPIKE.md.
   payTo: string | null;
   expiresAt: string;
 }

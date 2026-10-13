@@ -606,8 +606,9 @@ forks rely on `report_push`.
 > developers.cloudflare.com/artifacts/guides/event-subscriptions and
 > prices against /artifacts/platform/pricing (both fetched 2026-10-12);
 > behaviour covered by `forge-ops.test.ts` and `forge-adapters.test.ts`.
-> No live numbers yet: the first ones come from the prod live run
-> (FORGE-PRODUCT-PLAN.md §4 item 1).
+> Live numbers: the measured production run is in
+> [Live run on production](#live-run-on-production-2026-10-12) and the README's
+> cost table (Cloudflare's own `artifactsEventsAdaptiveGroups`, 2026-10-12).
 
 Artifacts bills operations from 2026-10-14: $0.15 per 1,000 past
 10,000 a month, plus $0.50 per GB-month past 1 GB. The pricing page
@@ -1224,7 +1225,7 @@ these client hooks are not implemented yet:
 ```sh
 claude mcp add --transport http flare-forge-watch https://<worker>/v1/public/forge/mcp
 # then ask: "what are the agents doing in bookshelf right now?",
-#           "why does line 12 of src/middleware/logging.ts exist?"
+#           "why does line 18 of src/middleware/logging.ts exist?"
 ```
 
 **Write (private, per judge):**

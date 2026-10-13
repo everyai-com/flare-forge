@@ -118,7 +118,7 @@ MIT licensed. One Worker serves the API + dashboard; runners are external pull c
   both; `GET /v1/cloud/status` probes. Agent purchasing rides it:
   single-use top-up links (`pairing.ts`, unfurl-safe preview +
   throttled redeem), tokenless `cli signup`, `cli credits`, and the
-  x402 quote spike. Docs: `docs/HOSTED.md`, `docs/X402-SPIKE.md`.
+  x402 quote spike. Docs: `everyai-com/flare-actions docs/HOSTED.md`, `everyai-com/flare-actions docs/X402-SPIKE.md`.
 - `apps/worker/src/ratelimit.ts` — auth endpoint throttling (failure
   windows per email + hashed client IP in D1 `auth_attempts`).
 - `apps/worker/src/cron.ts` — 5-field UTC cron parser for scheduled

@@ -8,6 +8,11 @@
 2. Onboard: run `npx flare-forge doctor` (or `npm run cli -- doctor` in a clone). It checks the setup and ends with one `next:` command; follow it until the first green check.
 3. Daily loop, then expert: verify every change with `run_and_wait` (CLI: `npx flare-forge run owner/repo HEAD`), read the digest, fix, repeat. Every CLI result ends in a `next:` line and every Forge result in `nextSteps`. Later: the Forge loop, `why`, quarantine, runner mode (below).
 
+## Watch a live swarm (read-only, no token)
+
+- Browser: `https://<worker>/watch?repo=bookshelf` (spectator mode, when the operator has enabled it; `GET https://<worker>/v1/public/forge` lists the public repos).
+- Your own agent: `claude mcp add --transport http flare-forge-watch https://<worker>/v1/public/forge/mcp`, then ask "what are the agents doing in bookshelf right now?" or "why does line 18 of src/middleware/logging.ts exist?". Read-only tools, rate-limited per IP.
+
 ## Start here (agents)
 
 - Install nothing: `npx flare-forge forge connect-agent --client claude|codex|cursor` prints the MCP config + the workflow prompt. MCP URL: `https://<worker>/mcp` (Bearer token in `FLARE_TOKEN`, or OAuth).
