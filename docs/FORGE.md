@@ -567,10 +567,25 @@ How batching works:
 
 Three namespace-wide event triggers (`triggers.events` in
 `wrangler.jsonc`, namespace `flare-tournaments`: `pushed`, `cloned`,
-`fetched`) target the Workflow `flare-forge-push`. (Account-level
-`created` / `forked` / `imported` / `deleted` triggers were tried on
-2026-10-12 and never delivered with a namespace filter; Forge meters the
-repo creation it performs through the binding instead.) Every event first runs a **meter op**
+`fetched`) target the Workflow `flare-forge-push`.
+
+The account-level types (`created` / `forked` / `imported` / `deleted`)
+do **not** work as triggers: they were tried on 2026-10-12 with a
+namespace filter and never delivered, because `filter` describes the
+repo-level `artifacts.repo` source while those four come from the
+account-level `artifacts` source. They now arrive over the
+**account-level REST subscription** instead
+(`ensureAccountSubscription` in `scripts/artifacts-admin.mjs`, ensured
+by `npm run setup`), which is account-scoped and takes no namespace
+filter — the worker filters by namespace itself in
+`handleArtifactsOpEvent`. Delivery is to the `flare-actions-artifacts`
+queue, and the consumer meters them into the ops ledger; the queue
+message id dedupes redeliveries. Only these four are metered off the
+queue, so nothing is counted on both paths. Forge still meters the repo
+creation it performs through the binding, and the two witnesses are
+[reconciled](#ops-ledger) rather than summed.
+
+Every push, clone and fetch event first runs a **meter op**
 step that records it in the [ops ledger](#ops-ledger). Push events
 then run the reconcile step below: the trigger is the **primary**
 live-footprint signal, and the agent's `report_push` is the fast path
@@ -620,14 +635,31 @@ not O(time). The ledger (`apps/worker/src/forge-ops.ts`) measures it.
 
 | Source | What | How |
 |---|---|---|
-| `event` | `push`, `clone`, `fetch` (and `create`/`fork`/`import`/`delete` if those events arrive) | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days; a burst of ref creations on one repo in the same second counts as one push |
+| `event` | `push`, `clone`, `fetch`, `create`, `fork`, `import`, `delete` | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days; a burst of ref creations on one repo in the same second counts as one push |
 | `binding` | `read` (readFile, readCommit, readTree, log, info, ...), `token` (createToken), and billable `fork` / `create` / `import` (charged to the new repo) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
 
-Repo creation through the binding arrives as an event, so it is not
-metered twice. Dollars use the documented kinds only (create, fork,
-import, push, clone, fetch); `upperBound` adds deletes and every
-binding call at the same price, because the pricing page does not say
-whether binding reads bill.
+**Repo creation has two witnesses, and the bill reconciles them.** A
+fork Forge makes through the binding is reported by the binding meter
+*and* by Cloudflare's `repo.forked` event — one operation, two
+observations. So `create` / `fork` / `import` are counted as
+`max(event, binding)`, never the sum (`RECONCILED_KINDS` and
+`billableOps` in `forge-ops.ts`). `max` rather than either one alone,
+because the event stream is authoritative but can lag or be
+unsubscribed, while the binding meter cannot see repos created outside
+this worker; whichever saw more ops saw more of the truth, and neither
+invents ops that did not happen.
+
+> Until 2026-10-13 the four account-level event types were missing from
+> `wrangler.jsonc`, so `event:create|fork|import` was always zero and
+> the binding meter was the only witness. Summing the two sources was
+> safe only because of that gap. The triggers are now declared, so the
+> reconciliation is what keeps the bill honest.
+
+Dollars use the documented kinds only (create, fork, import, push,
+clone, fetch); `upperBound` adds deletes and every binding call at the
+same price, because the pricing page does not say whether binding reads
+bill. It is reconciled the same way, so it stays a true ceiling rather
+than inflating on the overlap.
 
 **Attribution** is by Artifacts repo name: `i-<12>` is an intent fork
 (D1 `intents.fork_repo`), `s-<12>-...` a session fork of that intent,
