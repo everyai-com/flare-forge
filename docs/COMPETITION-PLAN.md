@@ -320,7 +320,7 @@ Without a baseline, "10k agents" is just a number. With one, it reads as
 | Likely question | Answer |
 |---|---|
 | Why not GitHub merge queue plus agents? | It serializes. It assumes humans review diffs. It loses the why. A1, A5 and A8 in §2. |
-| Anthropic's Scion post (Oct 13) says a merge queue "doesn't make much sense at agent scale" and went post-merge. Why keep one? | We dropped the lock, not the verification: speculative stacked lanes, each verified as its own exact SHA, land the longest green prefix as soon as it is green, so trunk is never red. Ceiling = lanes in flight ÷ CI wall time; the Bookshelf run landed 11 in ~6 min (MEASURED). Their trade is a policy threshold away (lower `auto_land_max_risk`, audit after). README "Isn't a merge queue the wrong primitive". |
+| Anthropic's "Redesigning source control" post (Oct 13) says a merge queue "doesn't make much sense at agent scale" and went post-merge. Why keep one? | We dropped the lock, not the verification: speculative stacked lanes, each verified as its own exact SHA, land the longest green prefix as soon as it is green, so trunk is never red. Ceiling = lanes in flight ÷ CI wall time; the Bookshelf run landed 11 in ~6 min (MEASURED). Their trade is a policy threshold away (lower `auto_land_max_risk`, audit after). README "Isn't a merge queue the wrong primitive". |
 | What if an agent lies about its footprint? | The actual footprint is computed from every push, and drift adds risk and alerts. |
 | What about semantic conflicts? | Trains verify the *combined* SHA, and a red train is bisected. |
 | What if the LLM resolution is wrong? | It can't land without green CI. Weak coverage escalates to a human. Merge-Bench (<60%) is why. |

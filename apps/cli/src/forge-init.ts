@@ -66,7 +66,7 @@ export function forgeAgentsBlock(repo: string): string {
     "- Keep your lease alive with `heartbeat`; ask for `refreshToken: true` when the 1 h fork token nears expiry.",
     "- Before editing code you did not write, ask `why {repo, path, line}`.",
     "",
-    "Setup: `export FLARE_TOKEN=<runner token>` (never commit it). Re-run `npx flare-forge-cli forge init` to refresh this block.",
+    "Setup: `export FLARE_TOKEN=<agent token>` (app: Connect agent → Create my agent token; or a runner token; never commit it). Re-run `npx flare-forge-cli forge init` to refresh this block.",
     FORGE_MARKER_END,
   ].join("\n");
 }
@@ -135,7 +135,7 @@ function change(path: string, before: string | null, after: string, why: string)
 /** Plan every file change; `read` returns null for a missing file. */
 export function planForgeInit(opts: ForgeInitOptions, read: (path: string) => string | null): ForgeInitPlan {
   const changes: FileChange[] = [];
-  const manual: string[] = ["export FLARE_TOKEN=<runner token>  # RUNNER_TOKEN in .env, or mint one in the dashboard Access tab; never commit it"];
+  const manual: string[] = ["export FLARE_TOKEN=<agent token>  # app: Connect agent → Create my agent token (or a runner token); never commit it"];
   const warnings: string[] = [];
   if (opts.url === PLACEHOLDER_URL) {
     warnings.push(`FLARE_ACTIONS_URL is not set: the MCP url is a placeholder (${PLACEHOLDER_URL}/mcp). Re-run with --url or after \`cli login\`.`);

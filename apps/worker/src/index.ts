@@ -713,7 +713,7 @@ async function isClaimed(env: WorkerEnv): Promise<boolean> {
 }
 
 // Open registration (admin toggle, default off): anyone may create a
-// non-admin reader account from the dashboard, by email or GitHub.
+// non-admin member account from the dashboard, by email or GitHub.
 // Better Auth instance for this request (see better-auth.ts): same D1,
 // request origin as base URL, the deployment's secrets key as secret
 // (env wins, D1 fills the gap — resolveSecretsKey generates it once).
@@ -811,7 +811,7 @@ async function requireScope(
 
 // Which email's notification prefs the caller may read/write: their own
 // email session by default, any email for admins (explicit param), and
-// admin Bearer [REDACTED] with an explicit email. GitHub sessions carry no
+// admin Bearer token with an explicit email. GitHub sessions carry no
 // email recipient, so they must name one (admins) or log in by email.
 async function resolveNotifyPrefTarget(
   request: Request,
@@ -2932,7 +2932,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/mcp") {
         // Same-origin browser callers (the Cloudflare Site MCP Server
         // pack, native page tools) carry the dashboard session cookie
-        // instead of a Bearer [REDACTED] the global CSRF check above already
+        // instead of a Bearer token; the global CSRF check above already
         // rejected cross-origin cookie POSTs, so a valid session here is
         // the visitor acting as themselves.
         if (!getBearer(request)) {
@@ -4267,7 +4267,7 @@ export default {
       }
       // Self-service connected apps: any logged-in dashboard user
       // lists and revokes their own OAuth grants. Session-cookie only
-      // (Bearer [REDACTED] carry no OAuth user id); cookie mutations are
+      // (Bearer tokens carry no OAuth user id); cookie mutations are
       // CSRF-checked at the top of fetch.
       if (request.method === "GET" && url.pathname === "/v1/oauth/grants") {
         const session = await oauthSession(request, env);

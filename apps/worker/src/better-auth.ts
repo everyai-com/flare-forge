@@ -46,7 +46,7 @@ export function createBetterAuth(args: {
 // What the bridge does for an email Better Auth vouches for. Mirrors
 // the legacy doors exactly: a known account logs in; the very first
 // account claims admin (same as /v1/admin/bootstrap); otherwise open
-// registration decides between a reader account and a refusal.
+// registration decides between a member account and a refusal.
 export type BridgeDecision = "login" | "claim_admin" | "register" | "deny";
 
 export function bridgeDecision(args: { existing: boolean; claimed: boolean; openRegistration: boolean }): BridgeDecision {

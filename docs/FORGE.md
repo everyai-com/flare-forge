@@ -423,7 +423,7 @@ adapters into `forgeDepsFromEnv` for both REST and MCP — the
 coordinator DO when `COORDINATOR` is bound, exact `why` and the train
 port when `ARTIFACTS` is bound, the live feed when `FORGE_FEED` is
 bound, and the Workers AI goal planner (`plan_goal` with `plan: true`,
-`POST /v1/forge/goals?plan=1`, `flare forge goal --plan`) when `AI` is
+`POST /v1/forge/goals?plan=1`, `npx flare-forge-cli forge goal --plan`) when `AI` is
 bound. Each missing binding, and every failed adapter call, degrades to
 the D1 fallback (`"source": "d1"` in snapshots) rather than a 5xx.
 

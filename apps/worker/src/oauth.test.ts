@@ -157,7 +157,7 @@ describe("oauth", () => {
     await expect(decideLogin(db, "octocat")).resolves.toEqual({ allowed: true, isAdmin: false, claimed: true });
   });
 
-  it("open registration admits GitHub strangers as non-admin readers", async () => {
+  it("open registration admits GitHub strangers as non-admin members", async () => {
     const db = new MemAuth();
     await claimAdmin(db, "octocat");
     await expect(decideLogin(db, "stranger")).resolves.toEqual({ allowed: false, isAdmin: false, claimed: true });

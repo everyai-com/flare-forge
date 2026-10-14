@@ -2,8 +2,8 @@
 //
 // A git object named by its hash never changes, so a read keyed by
 // (repo, hash) can be answered from any cache without asking anyone
-// else: no invalidation, no coordination. Anthropic's Scion post (Oct
-// 2026) makes the same point at monorepo scale; here it keeps Forge's
+// else: no invalidation, no coordination. Anthropic's "Redesigning
+// source control" post (Oct 2026) makes the same point at monorepo scale; here it keeps Forge's
 // server-side reads (push footprints, why chains, the read tools, the
 // policy file at a trunk sha) from turning into one Artifacts call each.
 //

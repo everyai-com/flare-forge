@@ -186,7 +186,7 @@ export function parseHealOnFailure(value: unknown): { on: boolean } | { error: s
 
 // Open registration (off by default — invite links and the GitHub
 // allow-list stay the only way in). When on, anyone can create a
-// non-admin reader account from the dashboard, by email (no invite)
+// non-admin member account from the dashboard, by email (no invite)
 // or by GitHub login. Same boolean shape as above.
 export function parseOpenRegistration(value: unknown): { on: boolean } | { error: string } {
   if (typeof value === "boolean") return { on: value };

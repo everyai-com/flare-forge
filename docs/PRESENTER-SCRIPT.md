@@ -1,4 +1,4 @@
-# Flare Forge: presenter's script (7-8 minute video, and the live finals)
+# Flare Forge: presenter's script (about 8 minute video, and the live finals)
 
 > Provenance: agent-drafted 2026-10-14 for the competition video and the live finals. Numbers come from the README (measured where it says measured); pages and commands were checked against the hosted app the same day.
 
@@ -8,14 +8,14 @@ Everything below is on the real `bookshelf` repo through the product app. No fix
 ## 0. Prep (15 min before recording)
 
 1. Sign in: https://flare-actions.everyai-com.workers.dev/app?login=1 (email + password, or "Email me a sign-in link").
-2. Fresh swarm so cards are moving while you talk (from ~/flare-forge):
+2. Fresh swarm so cards are moving while you talk (from a clone of this repo):
    npm run forge:demo -- --repo bookshelf --recreate
    npm run forge:agents -- --mode scripted --count 6 --repo bookshelf
    (If --recreate says "already exists", create the repo again by hand and run forge:demo without the flag.)
    Trains run on cloud seats now; no local runner needed.
 3. App settings: Explain ON, dark theme, 1440x900. Demo page: every readiness line green except "something waits for a human" (that is the protected API-key intent; keep it waiting for the Review beat).
 4. Settings -> Spectator mode lists `bookshelf`, so the read-only links at the end work for judges without a token.
-5. Free disk space first (Mac was at 98%). Close other tabs. Mute notifications.
+5. Close other tabs. Mute notifications.
 
 ## 1. The one-sentence pitch (say it first, say it last)
 
@@ -43,7 +43,7 @@ Second sentence: "It is built entirely on Cloudflare: Workers, Artifacts, Durabl
 2:30  TRAINS (70 s)
   Show: lanes merging and verifying. Open the red lane: failing step, the triage text, then the rebuilt lanes landing.
   Say: "A train stacks ready intents, merges them, runs the repo's own flare.yml on that exact merged SHA. If it fails, the train bisects the culprit out and rebuilds the rest. Main only ever moves to a commit whose own run passed. Main is never red by construction."
-  Contrast (one line): "Anthropic's Scion post this week dropped the merge queue for post-merge testing. We kept pre-merge verification and made it parallel with speculative stacked trains, so you get both throughput and a green trunk."
+  Contrast (one line): "Anthropic's "Redesigning source control" post this week dropped the merge queue for post-merge testing. We kept pre-merge verification and made it parallel with speculative stacked trains, so you get both throughput and a green trunk."
 
 3:40  CONFLICTS (60 s)
   Show: src/middleware/logging.ts. Both sides with their reasoning, the AI resolver's replay, the resolution SHA that had to pass CI again. Risk score routed it to the human inbox.
@@ -57,11 +57,15 @@ Second sentence: "It is built entirely on Cloudflare: Workers, Artifacts, Durabl
   Show: Files tab, open src/lib/validate.ts, click a line: commit -> intent -> goal -> reasoning -> CI run -> agent session. Commits tab: every commit names its intent in trailers. CI runs tab: the flare.yml that ran on the merged commit.
   Say: "Every landed line answers 'why'. Not git blame, the whole chain back to the goal. And this CI is Flare Actions, our own engine, running on Cloudflare container seats; GitHub-only repos run their existing workflows on it unchanged."
 
-6:20  USAGE, HOW IT WORKS, AGENT MCP, REPOS (60 s)
+6:20  ANYONE CAN USE IT (40 s)
+  Show: + New repo, then Connect agent -> Create my agent token, and paste the line into Claude Code.
+  Say: "Anyone can sign up, create a repo and connect an agent in under a minute. Agents without git use commit_files: they send the files and the server commits to their fork and reports the push."
+
+7:00  USAGE, HOW IT WORKS, AGENT MCP, REPOS (60 s)
   Show: Usage: ops per landed change from Cloudflare's own Artifacts events (11.2 ops, $16.77 per 10,000 changes, measured). How it works: the one-picture map. Agent MCP: the single `claude mcp add` line, Try it. Repos: your 100 GitHub repos on Flare with their CI runs.
   Say: "The bill is measured from artifactsEventsAdaptiveGroups, and you can reconcile it yourself with one command. Any agent connects with one line. And this is not a toy: the Repos page is our real GitHub org, with Flare Forge's own CI running on Flare."
 
-7:20  CLOSE (20 s)
+8:00  CLOSE (20 s)
   Repeat the one-sentence pitch. Show the links: /app?repo=bookshelf (read-only product), /watch?repo=bookshelf (live map), github.com/everyai-com/flare-forge.
 
 ## 3. "What we built" (say this once, around the How it works map, or in the Q&A)
@@ -80,7 +84,7 @@ Second sentence: "It is built entirely on Cloudflare: Workers, Artifacts, Durabl
 - Simulator at 10k changes: "main red due to integration" is 0 minutes in every mode; human review minutes drop as risk routing takes over.
 - Edge speed: cold page load 0.4 to 0.7 s after the schema-fingerprint fast path; one bundled overview call every 3 s per viewer; public reads rate-limited per IP.
 - Multi-tenant ready: tokens are repo-scoped (owner/name or org/*), spectator mode per repo, per-repo budgets with a kill switch, fairness caps per repo and per agent.
-- Honest limits (say them before being asked): GitHub stays the source of truth until the GitHub bridge ships (draft PR #12); Artifacts billing starts today so the $ figure is from Cloudflare's published rate; the resolver is a model and that is why risk routing exists.
+- Honest limits (say them before being asked): GitHub stays the source of truth until the bridge ships; public GitHub repos import in one click, private ones cannot yet (Artifacts imports public remotes only); Artifacts billing starts today so the $ figure is from Cloudflare's published rate; the resolver is a model and that is why risk routing exists.
 
 ## 5. How to talk
 

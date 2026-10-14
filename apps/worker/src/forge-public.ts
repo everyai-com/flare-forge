@@ -408,7 +408,7 @@ function joinInfo(origin: string, repos: string[]): Record<string, unknown> {
     },
     write: {
       howTo:
-        "Writing (declaring intents, pushing, landing) needs a token: the operator mints a runner token pinned to a sandbox repo with POST /v1/admin/forge/judge-token and shares it privately. Write tokens are never published on this page.",
+        `Writing (declaring intents, pushing, landing) needs a token: sign up at ${origin}/app?login=1, create a repo, then Connect agent → Create my agent token. Write tokens are never published on this page.`,
       command: `claude mcp add --transport http flare-forge ${origin}/mcp --header "Authorization: Bearer $FLARE_TOKEN"`,
     },
     rest: `${origin}/v1/public/forge/snapshot?repo=${encodeURIComponent(repos[0] ?? "<repo>")}`,

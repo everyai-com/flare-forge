@@ -113,7 +113,7 @@ export function resourceServerConfig(origin: string): {
   };
 }
 
-// Dual-auth fallback: a Bearer [REDACTED] the authorization server does not
+// Dual-auth fallback: a Bearer token the authorization server does not
 // recognize is checked against the legacy API tokens (env secrets, then
 // D1). OAuth and API tokens converge on one principal shape downstream.
 export async function principalFromApiToken(

@@ -8,8 +8,9 @@
 Flare has two kinds of identity. **Accounts** are people: they sign in
 to the app, review, approve and administer. **Tokens** are for agents,
 runners and scripts: they carry a scope and a repo allow-list and never
-log into the app. This page is about accounts; tokens are in
-[TOKENS.md](TOKENS.md).
+log into the app. This page is about accounts; agent tokens are in
+[WORKING-WITH-AGENTS.md](WORKING-WITH-AGENTS.md) (TOKENS.md covers
+Cloudflare API tokens for deploying).
 
 ## Signing in
 
@@ -17,17 +18,17 @@ The login screen (`/app?login=1`) offers:
 
 | Door | What happens |
 |---|---|
-| **Create account** | Email + password. Shown when the deployment has no owner yet, or when the owner turned on open registration. |
+| **Create account** | Email + password. Shown when the deployment has no owner yet, or when the owner turned on open registration (on in production; default off for a fresh deploy). |
 | **Sign in** | Email + password. Tries Better Auth first, then the legacy password door for accounts that predate it. |
 | **Email me a sign-in link** | A one-time link, 15 minutes, lands on `/app?auth=1` and signs you in. A new address gets an account on first use when registration is open. |
-| **Continue with GitHub** | For the owner and the GitHub users on the allow-list (Settings → Team). |
-| Invite link | Single-use, 24 hours, minted by the owner in Settings → Team. Works even when registration is closed. |
+| **Continue with GitHub** | For the owner and the GitHub users on the allow-list (Settings → Team and access), and for any GitHub user (as a member) when open registration is on. |
+| Invite link | Single-use, 24 hours, minted by the owner in Settings → Team and access. Works even when registration is closed. |
 
 The **first account** of any kind becomes the owner (admin) of the
 deployment; the claim is atomic, so two first sign-ups cannot both win.
 Everyone after that is a **member**. A member runs Forge end to end on
 the repos they create (app: **+ New repo**, `POST /v1/me/repos`): goals,
-intents, trains, plan approval and review. **Connect an agent → Create
+intents, trains, plan approval and review. **Connect agent → Create
 my agent token** mints a token bound to the member (scope `member`,
 `POST /v1/me/agent-token`) that follows their repos, so a new repo needs
 no new token. Members never see Settings, secrets, other accounts'
@@ -46,7 +47,7 @@ Artifacts imports public HTTPS remotes only. GitHub
 stays the source of truth (coordination mode).
 
 To sign in with GitHub as the owner of an email-claimed deployment, set
-**Settings → Team → Owner's GitHub login** (`adminGithubUser`).
+**Settings → Team and access → Owner's GitHub login** (`adminGithubUser`).
 
 ## How it is built
 
@@ -87,9 +88,9 @@ Consequences worth knowing:
 
 | Setting | Where | Effect |
 |---|---|---|
-| Open registration | Settings → Team | Shows **Create account** and lets magic links create accounts. Default off. |
-| Invites | Settings → Team | Single-use links for teammates when registration is closed. |
-| GitHub allow-list | Settings → Team | GitHub users who may use Continue with GitHub. |
+| Open registration | Settings → Team and access | Shows **Create account** and lets magic links and GitHub create member accounts. Default off for a fresh deploy; on in production. |
+| Invites | Settings → Team and access | Single-use links for teammates when registration is closed. |
+| GitHub allow-list | Settings → Team and access | GitHub users who may use Continue with GitHub. |
 | Mail sender | Settings → Notifications (`notify_from_email`) or env `NOTIFY_FROM_EMAIL` | Required for magic links, invites by mail and password resets. Needs the Worker's `EMAIL` send binding. Without it the link request still answers 200 and nothing is sent. |
 | Turnstile | Settings → Security | Optional bot check on the legacy login, register and reset routes. |
 
