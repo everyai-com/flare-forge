@@ -87,7 +87,9 @@ export async function importGithubRepo(
   if (mirror.status === "importing") return { ok: true, status: "importing", repo: name, source };
   if (mirror.status !== "ready") {
     const detail = mirror.status === "skipped" ? mirror.reason : mirror.detail ?? "";
-    const hint = opts.isPrivate || /auth|private/i.test(detail) ? " (private repos need the Flare GitHub App installed on them)" : "";
+    // Artifacts imports public HTTPS remotes only (credentials in the URL
+    // are refused), so a private repo cannot come in this way yet.
+    const hint = opts.isPrivate || /auth|private/i.test(detail) ? " (Cloudflare Artifacts can import public repos only; private repos are not supported yet)" : "";
     return { ok: false, status: 502, code: "repo_create_failed", error: `import from GitHub failed: ${detail}${hint}` };
   }
   try {

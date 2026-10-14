@@ -179,6 +179,6 @@ describe("importGithubRepo", () => {
     const { d } = importDeps({ importFails: "REMOTE_AUTH_REQUIRED" });
     const out = await importGithubRepo(d, "github:sam", "sam/secret", { isPrivate: false });
     expect(out).toMatchObject({ ok: false, code: "repo_create_failed" });
-    expect(out.ok ? "" : out.error).toContain("Flare GitHub App");
+    expect(out.ok ? "" : out.error).toContain("public repos only");
   });
 });
