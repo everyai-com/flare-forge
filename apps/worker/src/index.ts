@@ -110,6 +110,7 @@ import { commitFilesToNewBranch, deleteRunner, fetchChangedFiles, fetchJobLogDig
 import { processHealClaims, requestHeal } from "./heal";
 import { judgeFlaky } from "./judge";
 import { DASHBOARD_HTML, dashboardRedirectUrl } from "./dashboard";
+import { storyHtml } from "./story";
 import { apiDocsPage } from "./apidocs";
 import { OPENAPI_YAML } from "./openapi-spec";
 import { llmsTxtFor } from "./llms";
@@ -2582,6 +2583,14 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/dashboard") {
         return dashboardResponse();
+      }
+      // The story page: the whole Forge loop as chapters on live data.
+      // Static shell like /dashboard (served before the schema check);
+      // its client reads /v1/forge/story (session) or the public bundle.
+      if (request.method === "GET" && url.pathname === "/story") {
+        return new Response(storyHtml(), {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        });
       }
       await ensureSchema(env.DB);
       // CSRF defense-in-depth for cookie-authenticated mutations:

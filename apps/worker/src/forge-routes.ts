@@ -45,6 +45,7 @@ import {
   readFileOp,
   diffOp,
   historyOp,
+  storyOp,
   type ForgeArgs,
   type ForgeOp,
   type ForgeOutcome,
@@ -192,6 +193,8 @@ export async function handleForgeRequest(
   if (method === "GET" && url.pathname === "/v1/forge/snapshot") return read(snapshotOp);
   // FORGE-UX §10 names the Live map endpoint `live`; same payload.
   if (method === "GET" && url.pathname === "/v1/forge/live") return read(snapshotOp);
+  // One read for the /story page: snapshot + agents + goals + intents + trains + conflicts + inbox.
+  if (method === "GET" && url.pathname === "/v1/forge/story") return read(storyOp);
   if (method === "GET" && url.pathname === "/v1/forge/why") return read(whyOp);
   // Server-side reads (no clone): file/dir, diff, path history.
   if (method === "GET" && url.pathname === "/v1/forge/read") return read(readFileOp);
