@@ -15,6 +15,10 @@ describe("product app shell", () => {
     }
   });
 
+  it("parses as JavaScript (no raw newlines or stray escapes inside strings)", () => {
+    for (const script of scripts) expect(() => new Function(script)).not.toThrow();
+  });
+
   it("routes every page, reads one overview bundle, and supports spectators", () => {
     const js = scripts[scripts.length - 1];
     for (const p of APP_PAGES) expect(js).toContain(`["${p.id}", "${p.title}"`);
