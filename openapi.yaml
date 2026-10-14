@@ -6620,7 +6620,7 @@ paths:
           required: false
           schema:
             type: string
-          description: Repo to open (default: the first repo the account can see, or the first public repo)
+          description: 'Repo to open (default: the first repo the account can see, or the first public repo)'
       responses:
         '200':
           description: App HTML (text/html)
