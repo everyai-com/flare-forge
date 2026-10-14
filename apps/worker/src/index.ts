@@ -227,7 +227,10 @@ import { cloudMetering, creditBalance, grantCredits, hostedMode, parseCloudEntit
 import { runGenerateWithStatus } from "./generate";
 import { getCacheStats, handleCacheGet, handleCachePut, listCacheEntries, parseRestoreKeysParam, pruneCacheStats, purgeCachePrefix, recordCacheOutcome } from "./cache";
 import { deleteJobArtifacts, handleArtifactGet, handleArtifactPut, listRunArtifacts, pruneOldCache } from "./artifacts";
+import { READ_CACHE_PREFIX } from "./read-cache";
 import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerCheckout } from "./artifacts-push";
+import { forgeOpsLookups, handleArtifactsOpEvent, isAccountEventType } from "./forge-ops";
+import { coordinatorFor } from "./coordinator";
 import { ensureRepoMirror } from "./artifacts-mirrors";
 import { resolvePairDedupe } from "./event-dedupe";
 import {
@@ -1323,6 +1326,9 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
           }
           const staleCache = await pruneOldCache(env.CACHE);
           if (staleCache > 0) log("info", "pruned stale cache entries", { pruned: staleCache });
+          // Forge read cache: immutable objects, but forks get deleted.
+          const staleReads = await pruneOldCache(env.CACHE, 30, 1000, READ_CACHE_PREFIX);
+          if (staleReads > 0) log("info", "pruned stale forge read cache entries", { pruned: staleReads });
           const staleSources = await pruneOldSources(env.CACHE);
           if (staleSources > 0) log("info", "pruned stale sources", { pruned: staleSources });
           const staleStats = await pruneCacheStats(env.DB);
@@ -2576,6 +2582,24 @@ export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try {
+      // The dashboard shell and the bare-URL redirect are static: no D1,
+      // no session. Serve them before the schema self-migration, which on
+      // a cold isolate is 100+ serial D1 statements (6-8 s to first byte
+      // measured on the hosted demo, 2026-10-14). The data the page then
+      // fetches still waits for the migration like every API call.
+      if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/") {
+        // Keep the query (?demo=1, ?stage=1, ?tour=1): judges land on
+        // /?demo=1#/live. Browsers carry the #fragment across a 302.
+        // A bare visit with no session lands on the guided demo, not a
+        // login form; signed-in users still go straight to the dashboard.
+        if (url.search === "" && parseSessionCookie(request) === null) {
+          return Response.redirect(new URL("/dashboard?demo=1&tour=1#/live", url).toString(), 302);
+        }
+        return Response.redirect(dashboardRedirectUrl(url), 302);
+      }
+      if (request.method === "GET" && url.pathname === "/dashboard") {
+        return dashboardResponse();
+      }
       await ensureSchema(env.DB);
       // CSRF defense-in-depth for cookie-authenticated mutations:
       // browsers send Origin on cross-site and same-origin fetch/form
@@ -2589,14 +2613,6 @@ export default {
             return json({ error: "cross-origin request rejected" }, 403);
           }
         }
-      }
-      if (request.method === "GET" && url.pathname === "/") {
-        // Keep the query (?demo=1, ?stage=1, ?tour=1): judges land on
-        // /?demo=1#/live. Browsers carry the #fragment across a 302.
-        return Response.redirect(dashboardRedirectUrl(url), 302);
-      }
-      if (request.method === "GET" && url.pathname === "/dashboard") {
-        return dashboardResponse();
       }
       // forge-spectator: /watch, /v1/public/forge/* (read-only, no auth), /v1/admin/forge/{public,judge-token}.
       const publicForge = await handleForgePublicRequest(request, url, {
@@ -4213,7 +4229,7 @@ export default {
       }
       // x402 spike: quote whole runner-months (public pricing).
       // payTo stays null until Cloud provisions settlement — the
-      // scaffold quotes, it never takes money. See docs/X402-SPIKE.md.
+      // scaffold quotes, it never takes money. See everyai-com/flare-actions docs/X402-SPIKE.md.
       if (request.method === "POST" && url.pathname === "/v1/cloud/x402/quote") {
         if (!hostedMode(env)) return json(apiError("hosted_only", "x402 quotes run on Flare Cloud only"), 501);
         const body = (await request.json().catch(() => ({}))) as { runners?: unknown };
@@ -4906,6 +4922,40 @@ export default {
       // claim, so a retry would only re-skip as duplicate. Only a throw
       // before the outcome (DB down on claim) retries.
       if (isRecord(body) && typeof body["type"] === "string" && body["type"].startsWith("cf.artifacts.")) {
+        // Account-level repo lifecycle (created / forked / imported /
+        // deleted) only reaches the worker here: the namespace-filtered
+        // Workflow trigger for these types never delivers. They are
+        // provenance for the ops ledger, not work — nothing dispatches
+        // CI, since a fork is not a push. Metered off the queue only,
+        // so no event is counted on both paths. Previously these were
+        // handed to the push parser and dropped as malformed.
+        if (isAccountEventType(body["type"])) {
+          const ns = env.COORDINATOR;
+          if (!ns) {
+            log("warn", "artifacts lifecycle event with no coordinator binding, acking", { type: body["type"] });
+            msg.ack();
+            continue;
+          }
+          try {
+            const outcome = await handleArtifactsOpEvent(
+              {
+                namespace: env.ARTIFACTS_NAMESPACE ?? "",
+                lookups: forgeOpsLookups(env.DB),
+                record: (repo, entries, eventId) => coordinatorFor({ COORDINATOR: ns }, repo).recordOps(entries, eventId),
+              },
+              body,
+              // The queue message id is stable across retries, so it is
+              // the dedupe key for a redelivery of one event.
+              msg.id,
+            );
+            log("info", "artifacts lifecycle metered", { type: body["type"], ...outcome });
+            msg.ack();
+          } catch (err) {
+            log("error", "artifacts lifecycle failed, retrying", { error: String(err) });
+            msg.retry();
+          }
+          continue;
+        }
         try {
           const outcome = await handleArtifactsPush(
             {

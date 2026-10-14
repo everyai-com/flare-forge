@@ -170,8 +170,11 @@ export class Board {
 // Scripted agents
 // ---------------------------------------------------------------------------
 
+// INIT_CWD is cleared: under `npm run forge:agents` it names the repo
+// root, and the CLI restores INIT_CWD (apps/cli/src/index.ts), which would
+// run `forge push` in this checkout instead of the agent's clone.
 function cliEnv(cfg, agent) {
-  return { FLARE_ACTIONS_URL: cfg.url, RUNNER_TOKEN: cfg.token, FLARE_AGENT: agent, GIT_TERMINAL_PROMPT: "0" };
+  return { FLARE_ACTIONS_URL: cfg.url, RUNNER_TOKEN: cfg.token, FLARE_AGENT: agent, GIT_TERMINAL_PROMPT: "0", INIT_CWD: "" };
 }
 
 // Store fork auth + flare.* keys in the clone's .git/config by writing
@@ -327,6 +330,17 @@ export async function runScripted(o, cfg, board, dir) {
 // Scripted conflict resolver (the designed replay)
 // ---------------------------------------------------------------------------
 
+// Polls an intent until it reaches a terminal state (or the deadline):
+// "landed", "failed", "abandoned", or "timeout".
+async function waitForIntentSettled(forge, intentId, deadline) {
+  while (Date.now() <= deadline) {
+    const state = String((await forge.getIntent(intentId).catch(() => null))?.intent?.state ?? "");
+    if (state === "landed" || state === "failed" || state === "abandoned") return state;
+    await sleep(3000);
+  }
+  return "timeout";
+}
+
 export async function resolveDesignedConflicts(o, cfg, board, dir, { waitSeconds = o.wait, agent = "resolver" } = {}) {
   const forge = forgeClient(cfg, agent);
   const state = readState(o.repo);
@@ -342,8 +356,27 @@ export async function resolveDesignedConflicts(o, cfg, board, dir, { waitSeconds
       const bSeed = seedOf.get(String(c.intentB));
       const plan = replayPlanForConflict(o.seed, aSeed, bSeed);
       if (!plan) continue;
+      // Trains open the conflict while the other side may still be riding
+      // its own train, i.e. not on main yet. Replaying "on" it before it
+      // lands fails ("anchor not found"), so wait for it to settle; if it
+      // ends without landing, re-derive on plain trunk instead.
+      let on = plan.on;
+      if (bSeed) {
+        board.set(agent, { intent: bSeed, state: "waiting", detail: `for ${bSeed} to land before replaying on it` });
+        const settled = await waitForIntentSettled(forge, String(c.intentB), deadline);
+        if (settled !== "landed") on = undefined;
+      }
       board.set(agent, { intent: bSeed, state: "claiming", detail: `conflict ${String(c.id)} on ${(c.files ?? []).join(", ")}` });
-      const claimed = await forge.claimConflict(String(c.id), { agent });
+      // While we waited, the server's replay race may have claimed it.
+      const claimed = await forge.claimConflict(String(c.id), { agent }).catch((err) => {
+        if (String(err?.code ?? "") === "conflict_not_claimable") return null;
+        throw err;
+      });
+      if (!claimed) {
+        board.set(agent, { intent: bSeed, state: "skipped", detail: `conflict ${String(c.id)} already claimed (replay race)` });
+        done.push({ conflict: String(c.id), sha: "" });
+        continue;
+      }
       const r = claimed.replay;
       if (!r?.token || !r.forkRemote) throw new Error("claim_conflict returned no replay remote/token");
       const work = join(dir, agent, String(c.id));
@@ -355,13 +388,15 @@ export async function resolveDesignedConflicts(o, cfg, board, dir, { waitSeconds
       const readToken = artifactsToken(o.namespace, o.repo, "read", 600);
       await gitAsync(["fetch", "-q", trunkRemote, "refs/heads/main"], { cwd: work, token: readToken });
       await gitAsync(["reset", "-q", "--hard", "FETCH_HEAD"], { cwd: work });
-      board.set(agent, { state: "replaying", detail: `${plan.intent} on ${plan.on} (with ${plan.on}'s reasoning in context)` });
-      await applyToDir(plan.intent, work, plan.on);
+      board.set(agent, { state: "replaying", detail: on ? `${plan.intent} on ${on} (with ${on}'s reasoning in context)` : `${plan.intent} on trunk (${plan.on} did not land)` });
+      await applyToDir(plan.intent, work, on);
       await gitAsync(["add", "-A"], { cwd: work });
       const it = o.seed.goals.flatMap((g) => g.intents).find((x) => x.id === plan.intent);
       const { sha } = await commitWithTrailers({
         cwd: work,
-        message: `${it?.title ?? plan.intent} (replayed on ${plan.on})\n\n${it?.reasoning ?? ""}\nReplayed on the new trunk: keeps ${plan.on}'s requestId and adds durationMs.`,
+        message: on
+          ? `${it?.title ?? plan.intent} (replayed on ${on})\n\n${it?.reasoning ?? ""}\nReplayed on the new trunk: keeps ${on}'s requestId and adds durationMs.`
+          : `${it?.title ?? plan.intent} (replayed on trunk)\n\n${it?.reasoning ?? ""}\nReplayed on the new trunk; ${plan.on} did not land.`,
         trailers: { goal: state.goals[it?.id?.split("-")[0] ?? ""] ?? "", intent: r.intentId, agent, session: r.forkRepo },
       });
       await gitAsync(["push", "-q", r.forkRemote, "+HEAD:refs/heads/main"], { cwd: work, token: r.token });

@@ -2385,7 +2385,7 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     var c = el("div"); c.className = "everywhere";
     c.appendChild(el("h3", "🌍 " + SC.h_everywhere));
     c.appendChild(el("p", SC.t_everywhere));
-    var cmd = "npx flare-forge forge init --global";
+    var cmd = "npx flare-forge-cli forge init --global";
     var row = el("div"); row.className = "home-cmd";
     row.appendChild(el("code", cmd));
     var copy = el("button", SC.l_copy); copy.type = "button"; copy.className = "ghost";
@@ -4579,8 +4579,9 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
   }, 30000);
 
 ${FORGE_JS}
-  boot();
-  startPoll();
+  // Spectator pages (GET /watch) never call /v1/admin/status or show login.
+  if (FX.pub) fxShowPublic();
+  else { boot(); startPoll(); }
 })();
 </script>
 <datalist id="ghRepoList"></datalist>

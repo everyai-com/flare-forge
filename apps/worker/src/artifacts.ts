@@ -101,16 +101,18 @@ export async function deleteJobArtifacts(bucket: R2Bucket | undefined, jobId: st
 }
 
 // Cache retention: keys embed lockfile hashes, so old entries are dead
-// weight. Bounded per pass; entries younger than the cutoff stay.
+// weight. Bounded per pass; entries younger than the cutoff stay. Also
+// prunes the Forge read cache (`prefix` = read-cache.ts READ_CACHE_PREFIX).
 export async function pruneOldCache(
   bucket: R2Bucket | undefined,
   olderThanDays = 90,
   limit = 1000,
+  prefix = "cache/",
 ): Promise<number> {
   if (!bucket) return 0;
   try {
     const cutoff = Date.now() - olderThanDays * 86400000;
-    const listed = await bucket.list({ prefix: "cache/", limit });
+    const listed = await bucket.list({ prefix, limit });
     const stale = listed.objects.filter((o) => o.uploaded.getTime() < cutoff).map((o) => o.key);
     if (stale.length === 0) return 0;
     await bucket.delete(stale);

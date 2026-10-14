@@ -168,7 +168,10 @@ class MemDb implements Db {
       return {};
     }
     if (norm.startsWith("DELETE FROM seat_snapshots WHERE image")) {
-      this.snapshots.delete(`${values[0] as string}|${values[1] as string}`);
+      const key = `${values[0] as string}|${values[1] as string}`;
+      // `AND snapshot_id = ?` (deleteSeatSnapshotIfCurrent) only drops a match.
+      if (values.length > 2 && this.snapshots.get(key)?.snapshot_id !== values[2]) return { meta: { changes: 0 } };
+      this.snapshots.delete(key);
       return {};
     }
     if (norm.startsWith("DELETE FROM job_egress WHERE job_id")) {
@@ -825,8 +828,88 @@ describe("runSeatJob", () => {
     expect(out.status).toBe("completed");
     expect(container.startOpts[0]).toEqual({ enableInternet: true, snapshotId: "snap-aaa" });
     expect(db.jobs.get("j1")?.log as string).toContain("[seat] snapshot restored (snap-aaa…)");
-    // A successful job replaces the restored snapshot with a fresh one.
-    expect(container.snapshots).toHaveLength(1);
+    // Restored boots never save: snapshots of snapshots grew until npm ci
+    // hit ENOSPC (2026-10-13). The restored one stays.
+    expect(container.snapshots).toHaveLength(0);
+    expect(db.snapshots.get("img1|o/r")?.snapshot_id).toBe("snap-aaa");
+  });
+
+  it("drops a restored snapshot when the job fails on it", async () => {
+    const db = new MemDb();
+    seed(db, JSON.stringify({ steps: [{ run: "npm ci" }], base: "t" }));
+    db.snapshots.set("img1|o/r", {
+      image: "img1", repo: "o/r", snapshot_id: "snap-full", job_id: "j0",
+      created_at: new Date().toISOString(), last_used_at: new Date().toISOString(),
+    });
+    const container = new FakeContainer();
+    container.running = false;
+    container.stepExits = [1];
+    const origStart = container.start.bind(container);
+    container.start = async (opts?: ContainerStartOptions) => {
+      await origStart(opts);
+      container.running = true;
+    };
+    await runSeatJob(
+      deps(db, container, {
+        containerStart: { image: "img1" },
+        timing: { startWaitMs: 5, startAttempts: 1, startPollMs: 1, stepMs: 100, blobMs: 100 },
+      }),
+      "j1",
+    );
+    expect(db.jobs.get("j1")?.status).toBe("failure");
+    expect(db.snapshots.has("img1|o/r")).toBe(false);
+    expect(db.jobs.get("j1")?.log as string).toContain("job failed on restored snapshot snap-full");
+  });
+
+  it("keeps a newer snapshot another job saved while this one failed", async () => {
+    const db = new MemDb();
+    seed(db, JSON.stringify({ steps: [{ run: "npm ci" }], base: "t" }));
+    db.snapshots.set("img1|o/r", {
+      image: "img1", repo: "o/r", snapshot_id: "snap-old", job_id: "j0",
+      created_at: new Date().toISOString(), last_used_at: new Date().toISOString(),
+    });
+    const container = new FakeContainer();
+    container.running = false;
+    container.stepExits = [1];
+    const origStart = container.start.bind(container);
+    container.start = async (opts?: ContainerStartOptions) => {
+      await origStart(opts);
+      container.running = true;
+      // Another seat saves a newer snapshot mid-job.
+      db.snapshots.set("img1|o/r", { ...db.snapshots.get("img1|o/r")!, snapshot_id: "snap-new" });
+    };
+    await runSeatJob(
+      deps(db, container, {
+        containerStart: { image: "img1" },
+        timing: { startWaitMs: 5, startAttempts: 1, startPollMs: 1, stepMs: 100, blobMs: 100 },
+      }),
+      "j1",
+    );
+    expect(db.snapshots.get("img1|o/r")?.snapshot_id).toBe("snap-new");
+  });
+
+  it("skips a snapshot past the refresh age; the fresh boot saves a current one", async () => {
+    const db = new MemDb();
+    seed(db, DEF());
+    db.snapshots.set("img1|o/r", {
+      image: "img1", repo: "o/r", snapshot_id: "snap-aged", job_id: "j0",
+      created_at: new Date(Date.now() - 4 * 86400000).toISOString(), last_used_at: new Date().toISOString(),
+    });
+    const container = new FakeContainer();
+    container.running = false;
+    const origStart = container.start.bind(container);
+    container.start = async (opts?: ContainerStartOptions) => {
+      await origStart(opts);
+      container.running = true;
+    };
+    await runSeatJob(
+      deps(db, container, {
+        containerStart: { image: "img1" },
+        timing: { startWaitMs: 5, startAttempts: 1, startPollMs: 1, stepMs: 100, blobMs: 100 },
+      }),
+      "j1",
+    );
+    expect(container.startOpts).toEqual([{ enableInternet: true, image: "img1" }]);
     expect(db.snapshots.get("img1|o/r")?.snapshot_id).toBe("snap-1");
   });
 

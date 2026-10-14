@@ -48,6 +48,9 @@ import {
   updateGithubLinkOp,
   whatsHappeningOp,
   whyOp,
+  readFileOp,
+  diffOp,
+  historyOp,
   type ForgeArgs,
   type ForgeOp,
   type ForgeOutcome,
@@ -175,6 +178,8 @@ export async function handleForgeRequest(
   if (approveMatch && method === "POST") return write(approvePlanOp, { intentId: approveMatch[1] });
   const approveLandingMatch = /^\/v1\/forge\/intents\/([^/]+)\/approve-landing$/.exec(url.pathname);
   if (approveLandingMatch && method === "POST") return write(approveLandingOp, { intentId: approveLandingMatch[1] });
+  const diffMatch = /^\/v1\/forge\/intents\/([^/]+)\/diff$/.exec(url.pathname);
+  if (diffMatch && method === "GET") return read(diffOp, { intentId: diffMatch[1] });
   const sessionMatch = /^\/v1\/forge\/intents\/([^/]+)\/session$/.exec(url.pathname);
   if (sessionMatch && method === "GET") return read(sessionOp, { intentId: sessionMatch[1] });
   const abandonMatch = /^\/v1\/forge\/intents\/([^/]+)\/abandon$/.exec(url.pathname);
@@ -196,6 +201,10 @@ export async function handleForgeRequest(
   // FORGE-UX §10 names the Live map endpoint `live`; same payload.
   if (method === "GET" && url.pathname === "/v1/forge/live") return read(snapshotOp);
   if (method === "GET" && url.pathname === "/v1/forge/why") return read(whyOp);
+  // Server-side reads (no clone): file/dir, diff, path history.
+  if (method === "GET" && url.pathname === "/v1/forge/read") return read(readFileOp);
+  if (method === "GET" && url.pathname === "/v1/forge/diff") return read(diffOp);
+  if (method === "GET" && url.pathname === "/v1/forge/history") return read(historyOp);
   if (method === "GET" && url.pathname === "/v1/forge/agents") return read(agentsOp);
   if (method === "GET" && url.pathname === "/v1/forge/bench") return read(benchOp);
 

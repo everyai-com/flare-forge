@@ -109,6 +109,8 @@ import { agentClient, agentLabel, bisectView, conflictSide, evidenceOf, runBrief
 import { benchPayload } from "./forge-bench-data";
 import { tournamentAllowed } from "./tournaments";
 import { changedFiles, firstParent } from "./verdict";
+import { diffCommits, pathHistory, readPath, READ_LIMITS, resolveSha } from "./forge-read";
+import { normalizeRepoPath, validateRef } from "./repos";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,6 +187,33 @@ export function forgeServiceDeps(input: {
   github?: BridgeDeps | null;
 }): ForgeServiceDeps {
   const artifacts = input.artifacts ?? null;
+  // Deps live for one request: one trunk lookup per repo serves every
+  // verb step and the policy read in it.
+  const heads = new Map<string, Promise<string>>();
+  const readHead = async (repo: string): Promise<string> => {
+    if (!artifacts) return "";
+    let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
+    try {
+      handle = await artifacts.get(repo);
+      // Trunk work always lands on `main` (an imported repo's default
+      // branch may be named otherwise; the GitHub bridge aliases it).
+      const log = await handle.log({ ref: "main", limit: 1 });
+      const hash = log[0]?.hash ?? "";
+      return /^[0-9a-f]{40}$/.test(hash) ? hash : "";
+    } catch {
+      return "";
+    } finally {
+      disposeHandle(handle);
+    }
+  };
+  const trunkHead = (repo: string): Promise<string> => {
+    let head = heads.get(repo);
+    if (!head) {
+      head = readHead(repo);
+      heads.set(repo, head);
+    }
+    return head;
+  };
   return {
     db: input.db,
     artifacts,
@@ -198,13 +227,15 @@ export function forgeServiceDeps(input: {
     waitUntil: input.waitUntil ?? null,
     github: input.github ?? null,
     // `.flare/policy.yml` from trunk; missing = default, invalid =
-    // default plus a warning surfaced to the agent (never a 500).
+    // default plus a warning surfaced to the agent (never a 500). Read at
+    // the trunk sha when known, so the read cache can answer it.
     async loadPolicy(repo) {
       if (!artifacts) return { policy: DEFAULT_POLICY, warning: null };
       let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
       try {
+        const ref = (await trunkHead(repo)) || "main";
         handle = await artifacts.get(repo);
-        const file = await handle.readFile({ ref: "main", path: POLICY_PATH });
+        const file = await handle.readFile({ ref, path: POLICY_PATH });
         if (!file) return { policy: DEFAULT_POLICY, warning: null };
         const parsed = parsePolicy(await file.text());
         return parsed.ok
@@ -216,22 +247,7 @@ export function forgeServiceDeps(input: {
         disposeHandle(handle);
       }
     },
-    async trunkHead(repo) {
-      if (!artifacts) return "";
-      let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
-      try {
-        handle = await artifacts.get(repo);
-        // Trunk work always lands on `main` (an imported repo's default
-        // branch may be named otherwise; the GitHub bridge aliases it).
-        const log = await handle.log({ ref: "main", limit: 1 });
-        const hash = log[0]?.hash ?? "";
-        return /^[0-9a-f]{40}$/.test(hash) ? hash : "";
-      } catch {
-        return "";
-      } finally {
-        disposeHandle(handle);
-      }
-    },
+    trunkHead,
   };
 }
 
@@ -1746,6 +1762,169 @@ export async function whyOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: For
   });
 }
 
+// ---------------------------------------------------------------------------
+// Server-side reads (forge-read.ts): look at code without cloning
+// ---------------------------------------------------------------------------
+
+interface ReadTarget {
+  repo: string;
+  // The Artifacts repo actually read: trunk, or the intent's fork.
+  source: string;
+  ref: string;
+  intent: Intent | null;
+}
+
+// {repo, ref?} reads trunk (default ref main); {intentId} reads the
+// intent's fork at its last reported head.
+async function readTarget(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ReadTarget | ForgeOutcome> {
+  const intentId = str(args.intentId);
+  if (intentId) {
+    if (intentId.length > 64) return forgeFail("invalid_request", "intentId is too long");
+    const intent = await getIntent(deps.db, intentId);
+    if (!intent || !allowed(deps, p, intent.repo)) return forgeFail("forge_not_found", "intent not found");
+    if (!intent.forkRepo) return forgeFail("invalid_request", "intent has no fork yet", `claim_intent first, or read trunk with {repo: "${intent.repo}"}`);
+    return { repo: intent.repo, source: intent.forkRepo, ref: intent.headSha || "main", intent };
+  }
+  const r = repoArg(deps, p, args.repo);
+  if (isOutcome(r)) return r;
+  const ref = validateRef(args.ref, "main");
+  if (!ref) return forgeFail("invalid_request", "ref must be a branch, tag or sha (≤128 chars, no spaces)");
+  return { repo: r.repo, source: r.repo, ref, intent: null };
+}
+
+async function withReadHandle(
+  deps: ForgeServiceDeps,
+  source: string,
+  fn: (handle: Awaited<ReturnType<ForgeArtifacts["get"]>>) => Promise<ForgeOutcome>,
+): Promise<ForgeOutcome> {
+  if (!deps.artifacts) return forgeFail("artifacts_unconfigured", "Artifacts is not configured on this deployment");
+  let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
+  try {
+    handle = await deps.artifacts.get(source);
+    return await fn(handle);
+  } catch {
+    return forgeFail("forge_not_found", `cannot read ${source}`, "the repo or fork may have been deleted; check the repo name or intent id");
+  } finally {
+    disposeHandle(handle);
+  }
+}
+
+function targetView(t: ReadTarget): Record<string, unknown> {
+  return { repo: t.repo, ref: t.ref, ...(t.intent ? { intentId: t.intent.id, fork: t.source } : {}) };
+}
+
+export async function readFileOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const t = await readTarget(deps, p, args);
+  if (isOutcome(t)) return t;
+  const path = normalizeRepoPath(args.path);
+  if (path === null) return forgeFail("invalid_request", "path must be repo-relative (no .., ≤16 segments); omit it for the root");
+  let range: { start: number; end: number | null } | null = null;
+  if (args.startLine !== undefined || args.endLine !== undefined) {
+    const start = intArg(args.startLine, 1, 1, 10_000_000);
+    const end = args.endLine === undefined || args.endLine === null || args.endLine === "" ? null : intArg(args.endLine, 1, 1, 10_000_000);
+    if (start === null || (args.endLine !== undefined && args.endLine !== null && args.endLine !== "" && end === null)) {
+      return forgeFail("invalid_request", "startLine and endLine must be positive integers");
+    }
+    range = { start, end };
+  }
+  return withReadHandle(deps, t.source, async (handle) => {
+    const sha = await resolveSha(handle, t.ref);
+    if (!sha) return forgeFail("forge_not_found", `ref ${t.ref} not found in ${t.source}`);
+    const out = await readPath(handle, sha, path, range);
+    if (!out) return forgeFail("forge_not_found", `${path || "/"} not found at ${sha.slice(0, 12)}`, "list the parent directory: read_file with the directory path (or none for the root)");
+    return ok({
+      ...targetView(t),
+      ...out,
+      nextSteps: out.kind === "file" && path
+        ? [{ tool: "why", args: { repo: t.repo, path }, why: "before changing lines you did not write, ask why they exist" }]
+        : [],
+    });
+  });
+}
+
+export async function diffOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const only = args.path === undefined || args.path === null || args.path === "" ? null : normalizeRepoPath(args.path);
+  if (only === null && args.path !== undefined && args.path !== null && args.path !== "") return forgeFail("invalid_request", "path must be repo-relative");
+  let target: ReadTarget;
+  let base: string;
+  let head: string;
+  if (str(args.intentId)) {
+    const t = await readTarget(deps, p, args);
+    if (isOutcome(t)) return t;
+    const intent = t.intent;
+    if (!intent?.headSha) return forgeFail("invalid_request", "intent has no pushed head yet", "push to the fork, then report_push {intentId, sha}");
+    if (!intent.baseSha) return forgeFail("invalid_request", "intent has no base sha");
+    target = t;
+    base = intent.baseSha;
+    head = intent.headSha;
+  } else {
+    const r = repoArg(deps, p, args.repo);
+    if (isOutcome(r)) return r;
+    const b = validateRef(args.base, "");
+    const h = validateRef(args.head, "main");
+    if (!b || !h) return forgeFail("invalid_request", "pass {intentId}, or {repo, base, head?} (refs or shas; head defaults to main)");
+    target = { repo: r.repo, source: r.repo, ref: h, intent: null };
+    base = b;
+    head = h;
+  }
+  return withReadHandle(deps, target.source, async (handle) => {
+    const [baseSha, headSha] = await Promise.all([resolveSha(handle, base), resolveSha(handle, head)]);
+    if (!baseSha || !headSha) return forgeFail("forge_not_found", `cannot resolve ${!baseSha ? base : head} in ${target.source}`);
+    const out = await diffCommits(handle, baseSha, headSha, only);
+    if (!out) return forgeFail("forge_not_found", `cannot read ${baseSha.slice(0, 12)}..${headSha.slice(0, 12)} on ${target.source}`);
+    const stat = { added: 0, modified: 0, deleted: 0 };
+    for (const f of out.files) stat[f.status]++;
+    return ok({
+      ...targetView(target),
+      base: baseSha,
+      head: headSha,
+      stat,
+      files: out.files,
+      truncated: out.truncated,
+      limits: { files: READ_LIMITS.diffFiles, patchChars: READ_LIMITS.diffPatchChars },
+      nextSteps: [],
+    });
+  });
+}
+
+export async function historyOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const t = await readTarget(deps, p, args);
+  if (isOutcome(t)) return t;
+  const path = normalizeRepoPath(args.path);
+  if (path === null || !path) return forgeFail("invalid_request", "path is required (repo-relative file or directory)");
+  const limit = intArg(args.limit, 10, 1, READ_LIMITS.historyReturn);
+  if (limit === null) return forgeFail("invalid_request", `limit must be an integer 1-${READ_LIMITS.historyReturn}`);
+  return withReadHandle(deps, t.source, async (handle) => {
+    const sha = await resolveSha(handle, t.ref);
+    if (!sha) return forgeFail("forge_not_found", `ref ${t.ref} not found in ${t.source}`);
+    const out = await pathHistory(handle, sha, path, limit);
+    // Link each commit to the intents a train landed with it (D1, no git).
+    const hashes = out.commits.map((c) => c.hash);
+    const linked = new Map<string, Array<{ id: string; title: string }>>();
+    if (hashes.length) {
+      const rows = await deps.db
+        .prepare(`SELECT id, title, landed_sha FROM intents WHERE repo = ? AND landed_sha IN (${hashes.map(() => "?").join(",")}) LIMIT 200`)
+        .bind(t.repo, ...hashes)
+        .all<{ id: string; title: string; landed_sha: string }>()
+        .catch(() => ({ results: [] as Array<{ id: string; title: string; landed_sha: string }> }));
+      for (const row of rows.results ?? []) {
+        const list = linked.get(row.landed_sha) ?? [];
+        list.push({ id: row.id, title: row.title });
+        linked.set(row.landed_sha, list);
+      }
+    }
+    return ok({
+      ...targetView(t),
+      sha,
+      path,
+      commits: out.commits.map((c) => ({ ...c, intents: linked.get(c.hash) ?? [] })),
+      scanned: out.scanned,
+      truncated: out.truncated,
+      nextSteps: [{ tool: "why", args: { repo: t.repo, path }, why: "line-level provenance: which intent and goal wrote a specific line" }],
+    });
+  });
+}
+
 export async function snapshotOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
   const r = repoArg(deps, p, args.repo);
   if (isOutcome(r)) return r;
@@ -2240,6 +2419,9 @@ export const FORGE_MCP_OPS: Record<string, ForgeOp> = {
   claim_conflict: claimConflictOp,
   resolve_conflict: resolveConflictOp,
   why: whyOp,
+  read_file: readFileOp,
+  diff: diffOp,
+  history: historyOp,
   fork_session: forkSessionOp,
   forge_snapshot: snapshotOp,
   import_github_repo: importGithubOp,

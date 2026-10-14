@@ -20,6 +20,13 @@
 //     say whether binding reads bill, and repo creation through the
 //     binding already shows up as an event.
 //
+// Repo creation therefore has two witnesses, and the bill reconciles
+// them rather than adding them up (RECONCILED_KINDS / `billableOps`).
+// Until the account-level REST subscription landed, those events never
+// reached the worker at all, so `event:create|fork|import` was always 0
+// and the binding meter was the only witness; summing the two sources
+// was safe only because of that.
+//
 // Dollars use the documented kinds only (create/fork/import, push,
 // clone, fetch); `upperBound` adds everything else. All dollar figures
 // are list price before the free monthly allowance.
@@ -58,7 +65,10 @@ export const NAIVE_BASELINE = {
 export const EVENT_OP_KINDS = ["create", "fork", "import", "delete", "push", "clone", "fetch"] as const;
 export type EventOpKind = (typeof EVENT_OP_KINDS)[number];
 
-export const BINDING_OP_KINDS = ["read", "token", "fork", "create", "import"] as const;
+// `cached`: a read answered by the content-addressed read cache
+// (read-cache.ts) instead of the binding. Not an Artifacts operation;
+// counted so the ledger shows what the cache saved.
+export const BINDING_OP_KINDS = ["read", "token", "fork", "create", "import", "cached"] as const;
 export type BindingOpKind = (typeof BINDING_OP_KINDS)[number];
 
 export type OpOrigin = "event" | "binding";
@@ -69,13 +79,92 @@ export type OpKind = EventOpKind | BindingOpKind;
 export const DOCUMENTED_BILLABLE: readonly EventOpKind[] = ["create", "fork", "import", "push", "clone", "fetch"];
 // Repo creation Forge performs itself through the binding (claims, session
 // and replay forks, races). Cloudflare's metrics count these as `fork` /
-// `create` operations; the account-level events never reached the push
-// Workflow on prod (2026-10-12), so the binding meter is the source.
+// `create` operations, so the account-level events report the same
+// physical operations the binding meter does — see RECONCILED_KINDS.
 export const BINDING_BILLABLE: readonly BindingOpKind[] = ["fork", "create", "import"];
+
+// Repo creation is seen by BOTH instruments: Cloudflare's account-level
+// events (`event:create|fork|import`) and our own binding meter
+// (`binding:create|fork|import`) describe one operation each, not two.
+// Until the account-level REST subscription landed, only the binding
+// meter saw them (the namespace-filtered Workflow trigger for these
+// types never delivered), so summing the two was safe by accident.
+// Now that those events arrive, summing would bill every fork twice,
+// so these kinds are RECONCILED: counted as the max of the two
+// instruments, never the sum.
+//
+// max, not either one alone: the event stream is authoritative but can
+// lag or be unsubscribed, and the binding meter misses repos created
+// outside this worker. Whichever saw more ops saw more of the truth;
+// neither invents ops that did not happen.
+export const RECONCILED_KINDS: readonly BindingOpKind[] = ["create", "fork", "import"];
+
+const RECONCILED_SET: ReadonlySet<string> = new Set(RECONCILED_KINDS);
+
+// Billable ops, deduped across the two instruments. `events` and
+// `binding` are per-kind counts; both may be sparse.
+export function billableOps(
+  events: Partial<Record<string, number>>,
+  binding: Partial<Record<string, number>>,
+): number {
+  let n = 0;
+  for (const kind of DOCUMENTED_BILLABLE) {
+    if (RECONCILED_SET.has(kind)) continue;
+    n += events[kind] ?? 0;
+  }
+  for (const kind of RECONCILED_KINDS) {
+    n += Math.max(events[kind] ?? 0, binding[kind] ?? 0);
+  }
+  return n;
+}
+
+// Everything observed, deduped the same way: billable plus the kinds
+// that may or may not bill (deletes, binding reads and token mints).
+// Stays a true ceiling instead of inflating on double-counted forks.
+// Cache hits (`binding.cached`) never reached Artifacts, so they are left out.
+export function observedOps(
+  events: Partial<Record<string, number>>,
+  binding: Partial<Record<string, number>>,
+): number {
+  let n = billableOps(events, binding);
+  for (const [kind, count] of Object.entries(events)) {
+    if (!(DOCUMENTED_BILLABLE as readonly string[]).includes(kind)) n += count ?? 0;
+  }
+  for (const [kind, count] of Object.entries(binding)) {
+    if (kind === "cached") continue;
+    if (!(BINDING_BILLABLE as readonly string[]).includes(kind)) n += count ?? 0;
+  }
+  return n;
+}
 
 // Who an op is attributed to inside a repo.
 export const OP_SUBJECTS = ["trunk", "lane", "intent", "session", "replay"] as const;
 export type OpSubject = (typeof OP_SUBJECTS)[number];
+
+// Event types the ACCOUNT-level `artifacts` source emits. These never
+// arrive through `triggers.events`: a namespace-filtered trigger for
+// them was tried on 2026-10-12 and never delivered, because the filter
+// describes the repo-level `artifacts.repo` source. They reach the
+// worker through the account-level REST subscription instead
+// (`ensureAccountSubscription`), which is account-scoped and takes no
+// namespace filter — the worker then filters by namespace itself in
+// `handleArtifactsOpEvent`.
+//
+// Only these four are metered off the queue. push/clone/fetch keep
+// arriving through the Workflow trigger and are metered there, so no
+// event is counted on both paths.
+export const ACCOUNT_EVENT_TYPES: readonly string[] = [
+  "cf.artifacts.repo.created",
+  "cf.artifacts.repo.forked",
+  "cf.artifacts.repo.imported",
+  "cf.artifacts.repo.deleted",
+];
+
+const ACCOUNT_EVENT_SET: ReadonlySet<string> = new Set(ACCOUNT_EVENT_TYPES);
+
+export function isAccountEventType(type: unknown): boolean {
+  return typeof type === "string" && ACCOUNT_EVENT_SET.has(type);
+}
 
 export const ARTIFACTS_EVENT_KINDS: Readonly<Record<string, EventOpKind>> = {
   "cf.artifacts.repo.created": "create",
@@ -410,14 +499,14 @@ export function opsTotals(sql: SqlStore): OpsTotals {
     if (r.k === "since") out.since = new Date(r.n).toISOString();
     else if (head === "event" && (EVENT_OP_KINDS as readonly string[]).includes(tail)) {
       out.events[tail as EventOpKind] = r.n;
-      out.total += r.n;
-      if ((DOCUMENTED_BILLABLE as readonly string[]).includes(tail)) out.billable += r.n;
     } else if (head === "binding" && (BINDING_OP_KINDS as readonly string[]).includes(tail)) {
       out.binding[tail as BindingOpKind] = r.n;
-      out.total += r.n;
-      if ((BINDING_BILLABLE as readonly string[]).includes(tail)) out.billable += r.n;
     } else if (head === "subject" && SUBJECT_SET.has(tail)) out.bySubject[tail as OpSubject] = r.n;
   }
+  // Reconciled across instruments, so a fork seen by both the event
+  // stream and the binding meter counts once.
+  out.billable = billableOps(out.events, out.binding);
+  out.total = observedOps(out.events, out.binding);
   return out;
 }
 
@@ -438,12 +527,13 @@ export function intentOps(sql: SqlStore, intentId: string): IntentOps {
   for (const r of rows) {
     if (r.origin === "event" && (EVENT_OP_KINDS as readonly string[]).includes(r.kind)) {
       out.events[r.kind as EventOpKind] = r.n;
-      if ((DOCUMENTED_BILLABLE as readonly string[]).includes(r.kind)) out.billable += r.n;
     } else if (r.origin === "binding" && (BINDING_OP_KINDS as readonly string[]).includes(r.kind)) {
       out.binding[r.kind as BindingOpKind] = r.n;
-      if ((BINDING_BILLABLE as readonly string[]).includes(r.kind)) out.billable += r.n;
     }
   }
+  // Same reconciliation as opsTotals, so a per-intent bill and the
+  // repo total can never disagree about one fork.
+  out.billable = billableOps(out.events, out.binding);
   out.usd = usdFor(out.billable);
   return out;
 }
@@ -528,7 +618,7 @@ export function opsEconomics(totals: OpsTotals, landed: number): OpsEconomics {
       assumption: `projected: + one fetch every ${NAIVE_BASELINE.fetchIntervalSeconds}s over a ${NAIVE_BASELINE.workMinutes}-minute session per change (sim median); 10k = measured ratio x 10,000`,
     },
     pricing: ARTIFACTS_PRICING,
-    note: "measured from Cloudflare Artifacts events since the ledger began (since); usd at list price before the 10,000-op monthly allowance; binding reads and tokens counted separately (billing not documented)",
+    note: "measured from Cloudflare Artifacts events since the ledger began (since); usd at list price before the 10,000-op monthly allowance; binding reads and tokens counted separately (billing not documented); binding.cached = reads served by the read cache, not Artifacts operations",
   };
 }
 

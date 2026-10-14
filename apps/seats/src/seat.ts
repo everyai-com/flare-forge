@@ -4,6 +4,7 @@ import {
   claimMirrorTrunkSync,
   cloudRunningCap,
   deleteSeatSnapshot,
+  deleteSeatSnapshotIfCurrent,
   getJob,
   getJobsForRun,
   getRun,
@@ -21,6 +22,7 @@ import {
   saveTestReport,
   saveTestSelection,
   SEAT_SNAPSHOT_MAX_AGE_MS,
+  SEAT_SNAPSHOT_REFRESH_MS,
   touchSeatSnapshot,
   updateRunningJob,
   type Db,
@@ -849,14 +851,18 @@ export async function runSeatJob(deps: SeatDeps, jobId: string): Promise<SeatOut
   // One attempt only: a degraded snapshot must never cost more than one
   // boot window (a miss beats a ten-minute fetch). Restored state is warm
   // deps/toolchains only — checkout below still resets the workdir to the
-  // job's sha, so a restore can never run the wrong code.
+  // job's sha, so a restore can never run the wrong code. Snapshots older
+  // than SEAT_SNAPSHOT_REFRESH_MS are skipped: the fresh boot saves a
+  // current one (restored boots never save, see the save below).
   const v2Image = deps.containerStart?.image;
   let started = false;
   let restored = false;
+  let restoredId: string | null = null;
   if (v2Image && !deps.containerStart?.snapshotId && !run.source) {
     try {
       const row = await getSeatSnapshot(deps.db, v2Image, run.repo);
-      if (row && Date.now() - Date.parse(row.last_used_at) < SNAPSHOT_MAX_AGE_MS && !deps.container.running) {
+      const fresh = row ? Date.now() - Date.parse(row.created_at) < SEAT_SNAPSHOT_REFRESH_MS : false;
+      if (row && fresh && Date.now() - Date.parse(row.last_used_at) < SNAPSHOT_MAX_AGE_MS && !deps.container.running) {
         try {
           await deps.container.start({ enableInternet: true, snapshotId: row.snapshot_id });
         } catch (err) {
@@ -873,6 +879,7 @@ export async function runSeatJob(deps: SeatDeps, jobId: string): Promise<SeatOut
         }
         if (started) {
           restored = true;
+          restoredId = row.snapshot_id;
           try {
             await touchSeatSnapshot(deps.db, v2Image, run.repo);
           } catch {
@@ -1955,8 +1962,10 @@ export async function runSeatJob(deps: SeatDeps, jobId: string): Promise<SeatOut
     }
 
     // Snapshot the warm filesystem for the next job (V2, success only —
-    // a failed build's state is exactly what you must not inherit).
-    if (v2Image && status === "success" && !run.source) {
+    // a failed build's state is exactly what you must not inherit — and
+    // fresh boots only: a snapshot of a restored snapshot inherits
+    // everything before it, and chains grew until npm ci hit ENOSPC).
+    if (v2Image && status === "success" && !run.source && !restored) {
       try {
         const snap = await snapshotBounded(`${run.repo}@${run.sha.slice(0, 7)}`, timing.snapshotMs ?? 120000);
         if (snap) {
@@ -1967,6 +1976,16 @@ export async function runSeatJob(deps: SeatDeps, jobId: string): Promise<SeatOut
         }
       } catch (err) {
         await note(`[seat] snapshot skipped: ${String(err).slice(0, 160)}`);
+      }
+    }
+    // A job that failed on a restored filesystem drops that snapshot: the
+    // next boot is fresh, so a bad snapshot costs one red run, not every run.
+    if (v2Image && restoredId && status !== "success") {
+      try {
+        await deleteSeatSnapshotIfCurrent(deps.db, v2Image, run.repo, restoredId);
+        await note(`[seat] job failed on restored snapshot ${restoredId.slice(0, 12)}…; dropped it, next boot is fresh`);
+      } catch {
+        // Best effort.
       }
     }
 

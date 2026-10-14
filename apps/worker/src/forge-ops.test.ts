@@ -3,8 +3,10 @@ import type { Db } from "./db";
 import { SCHEMA_STATEMENTS } from "./schema";
 import { counters, ensureIndexSchema, opsLedger, recordRepoOps, type CoordinatorDeps, type FeedOp, type SqlStore, type SqlValue } from "./coordinator-core";
 import {
+  ACCOUNT_EVENT_TYPES,
   ARTIFACTS_PRICING,
   attributeOp,
+  isAccountEventType,
   attributeTally,
   classifyRepoName,
   conflictIdPrefix,
@@ -389,6 +391,95 @@ describe("binding meter", () => {
       { kind: "read", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 3 },
       { kind: "token", origin: "binding", subject: "trunk", intentId: null, n: 1 },
     ]);
+  });
+});
+
+describe("account-level event types", () => {
+  it("names exactly the four the artifacts source emits", () => {
+    expect([...ACCOUNT_EVENT_TYPES]).toEqual([
+      "cf.artifacts.repo.created",
+      "cf.artifacts.repo.forked",
+      "cf.artifacts.repo.imported",
+      "cf.artifacts.repo.deleted",
+    ]);
+  });
+
+  // push/clone/fetch keep arriving through the Workflow trigger, so
+  // routing them off the queue too would meter them twice.
+  it("excludes the repo-level types the Workflow trigger already meters", () => {
+    expect(isAccountEventType("cf.artifacts.repo.forked")).toBe(true);
+    expect(isAccountEventType("cf.artifacts.repo.pushed")).toBe(false);
+    expect(isAccountEventType("cf.artifacts.repo.cloned")).toBe(false);
+    expect(isAccountEventType("cf.artifacts.repo.fetched")).toBe(false);
+    expect(isAccountEventType("cf.artifacts.repo.token.created")).toBe(false);
+  });
+
+  it("ignores junk", () => {
+    expect(isAccountEventType(undefined)).toBe(false);
+    expect(isAccountEventType("")).toBe(false);
+    expect(isAccountEventType("constructor")).toBe(false);
+    expect(isAccountEventType("toString")).toBe(false);
+  });
+});
+
+// Now that the account-level subscription delivers them, repo creation
+// is reported by Cloudflare's event stream AND by our own binding
+// meter. Both describe the same physical operation, so the bill
+// reconciles them instead of adding them up.
+describe("repo creation counted once across both instruments", () => {
+  it("does not bill a fork twice when the event and the binding both see it", () => {
+    const sql = doSql();
+    recordOps(sql, [{ kind: "fork", origin: "binding", subject: "intent", intentId: INTENT_ID }], null, 0);
+    recordOps(sql, [{ kind: "fork", origin: "event", subject: "intent", intentId: INTENT_ID }], "evt-fork", 0);
+    const t = opsTotals(sql);
+    expect(t.events).toEqual({ fork: 1 });
+    expect(t.binding).toEqual({ fork: 1 });
+    // One fork happened, so one op is billable — not two.
+    expect(t.billable).toBe(1);
+    expect(t.total).toBe(1);
+    expect(intentOps(sql, INTENT_ID).billable).toBe(1);
+  });
+
+  it("takes the instrument that saw more, per kind", () => {
+    const sql = doSql();
+    // Three real forks: the binding caught all three, the event stream
+    // only two (a delivery lagged).
+    recordOps(sql, [{ kind: "fork", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 3 }], null, 0);
+    recordOps(sql, [{ kind: "fork", origin: "event", subject: "intent", intentId: INTENT_ID, n: 2 }], "e1", 0);
+    // One create seen only by the event stream (made outside this worker).
+    recordOps(sql, [{ kind: "create", origin: "event", subject: "trunk" }], "e2", 0);
+    const t = opsTotals(sql);
+    expect(t.billable).toBe(4);
+    expect(t.total).toBe(4);
+  });
+
+  it("still bills push, clone and fetch from the event stream alone", () => {
+    const sql = doSql();
+    recordOps(sql, [{ kind: "push", origin: "event", subject: "lane" }], "e1", 0);
+    recordOps(sql, [{ kind: "clone", origin: "event", subject: "trunk" }], "e2", 0);
+    recordOps(sql, [{ kind: "fetch", origin: "event", subject: "trunk" }], "e3", 0);
+    expect(opsTotals(sql).billable).toBe(3);
+  });
+
+  it("keeps the upper bound a true ceiling instead of inflating on the overlap", () => {
+    const sql = doSql();
+    recordOps(sql, [{ kind: "fork", origin: "binding", subject: "intent", intentId: INTENT_ID }], null, 0);
+    recordOps(sql, [{ kind: "fork", origin: "event", subject: "intent", intentId: INTENT_ID }], "e1", 0);
+    recordOps(sql, [{ kind: "read", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 5 }], null, 0);
+    recordOps(sql, [{ kind: "delete", origin: "event", subject: "intent", intentId: INTENT_ID }], "e2", 0);
+    const t = opsTotals(sql);
+    // 1 fork (once) + 5 reads + 1 delete.
+    expect(t.total).toBe(7);
+    expect(t.total).toBeGreaterThanOrEqual(t.billable);
+  });
+
+  it("prices the reconciled count, so the dollar figure cannot double", () => {
+    const sql = doSql();
+    recordOps(sql, [{ kind: "fork", origin: "binding", subject: "intent", intentId: INTENT_ID, n: 10 }], null, 0);
+    recordOps(sql, [{ kind: "fork", origin: "event", subject: "intent", intentId: INTENT_ID, n: 10 }], "e1", 0);
+    const e = opsEconomics(opsTotals(sql), 1);
+    expect(e.billable).toBe(10);
+    expect(e.usd).toBe(usdFor(10));
   });
 });
 

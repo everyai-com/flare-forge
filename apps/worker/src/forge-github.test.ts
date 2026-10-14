@@ -167,7 +167,9 @@ describe("pure helpers", () => {
   });
 });
 
-describe("import", () => {
+// Real git fixtures: each test does several clones/pushes, which can
+// pass 5s when the full suite saturates the machine.
+describe("import", { timeout: 30_000 }, () => {
   it("imports a public repo as a trunk and records the link", async () => {
     const head = seedGithub();
     const out = await importGithubRepo(h.deps, { github: `https://github.com/${GH}`, actor: "admin" });
@@ -262,7 +264,7 @@ describe("import", () => {
   });
 });
 
-describe("sync", () => {
+describe("sync", { timeout: 30_000 }, () => {
   async function imported(syncMode: "pr" | "branch" | "direct" | "off" = "pr"): Promise<string> {
     seedGithub();
     const out = await importGithubRepo(h.deps, { github: GH, syncMode, actor: "admin" });
@@ -349,7 +351,7 @@ describe("sync", () => {
   });
 });
 
-describe("REST surface (/v1/forge/github/*)", () => {
+describe("REST surface (/v1/forge/github/*)", { timeout: 30_000 }, () => {
   const ADMIN: ForgeIdentity = { scope: "admin", actor: "email:pat@example.com", repos: [] };
   const RUNNER: ForgeIdentity = { scope: "runner", actor: "token:runner", repos: [] };
   const SCOPED: ForgeIdentity = { scope: "runner", actor: "token:scoped", repos: ["ns/other"] };

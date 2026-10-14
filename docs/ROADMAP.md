@@ -126,7 +126,7 @@ The recurring pains, in practitioners' own terms:
       `skills/flare-verify` skill for Claude Code / Codex / Cursor
 - [x] `llms.txt` + `pricing.json` (machine-readable plans); [ ] MCP
       registry listings (mcp.so, Smithery) — packet ready in
-      docs/MCP-LISTINGS.md, submissions themselves are manual
+      everyai-com/flare-actions docs/MCP-LISTINGS.md, submissions themselves are manual
 - [x] One-command adoption: `cli connect` (probe → wire → verify HEAD)
       + the `skills/flare-setup` skill + README agent paste prompt
 - [x] `runs-on: flare` runner mode: opt-in ephemeral JIT runners so
@@ -285,10 +285,10 @@ just alerted — "estimate next month's bill in under five minutes."
 
 **Agent purchasing** (hosted tier): [x] scaffold shipped Oct 9 —
 `FLARE_CLOUD` flag seam, plan entitlements, prepaid credit ledger,
-and `GET /v1/cloud/status` probe (docs/HOSTED.md; inert on OSS).
+and `GET /v1/cloud/status` probe (everyai-com/flare-actions docs/HOSTED.md; inert on OSS).
 [x] `cli signup --agent` (either plane), approval-link top-ups,
 and an x402 spike — mapped so an agent can buy capacity without a
-human billing event per run (docs/X402-SPIKE.md).
+human billing event per run (everyai-com/flare-actions docs/X402-SPIKE.md).
 [ ] a skill buy-flow, x402 settlement wiring, zero-balance
 enforcement (future Cloud overage policy, not the scaffold).
 

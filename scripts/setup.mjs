@@ -38,6 +38,29 @@ function fail(msg) {
   if (r.status !== 0) fail("wrangler is not logged in. Run `npx wrangler login` first.");
 }
 
+// 1b. Point Forge's Artifacts git remotes at THIS account. wrangler.jsonc
+// ships the maintainers' account id in ARTIFACTS_ACCOUNT_ID (vars and
+// previews.vars); a fork deployed elsewhere would build remotes on the
+// wrong account. Resolve the id from CLOUDFLARE_ACCOUNT_ID or, when the
+// login has exactly one account, from `wrangler whoami`, and rewrite it.
+{
+  const whoami = run("npx", ["wrangler", "whoami"]);
+  const seen = [...new Set(((whoami.stdout ?? "") + (whoami.stderr ?? "")).match(/\b[a-f0-9]{32}\b/g) ?? [])];
+  const mine = process.env.CLOUDFLARE_ACCOUNT_ID ?? (seen.length === 1 ? seen[0] : "");
+  const cfgPath = new URL("../wrangler.jsonc", import.meta.url);
+  const cfg = readFileSync(cfgPath, "utf8");
+  const shipped = /"ARTIFACTS_ACCOUNT_ID":\s*"([a-f0-9]{32})"/.exec(cfg)?.[1];
+  if (!/^[a-f0-9]{32}$/.test(mine)) {
+    console.log("Artifacts: could not tell which account this is (set CLOUDFLARE_ACCOUNT_ID); leaving ARTIFACTS_ACCOUNT_ID in wrangler.jsonc as is.");
+  } else if (shipped && shipped !== mine) {
+    if (dryRun) console.log(`(dry-run) would set ARTIFACTS_ACCOUNT_ID in wrangler.jsonc to ${mine}`);
+    else {
+      writeFileSync(cfgPath, cfg.split(shipped).join(mine));
+      console.log(`Artifacts: ARTIFACTS_ACCOUNT_ID in wrangler.jsonc set to this account (${mine})`);
+    }
+  }
+}
+
 // 2. D1 database (idempotent; deploys also auto-provision by name)
 {
   const r = run("npx", ["wrangler", "d1", "create", "flare-actions"]);
@@ -58,41 +81,87 @@ for (const q of ["flare-actions-runs", "flare-actions-dlq", "flare-actions-seats
   if (/already (exists|taken)/i.test(out)) console.log(`queue ${q} already exists, reusing`);
 }
 
-// 3b. Artifacts namespace + push-event subscriptions (REST API: wrangler
-// has no namespace-create and no artifacts.repo source options; only one
+// 3b. Artifacts namespace + event subscriptions (REST API: wrangler has
+// no namespace-create and no artifacts.repo source options; only one
 // subscription per repo is allowed). Namespace always ensured when API
-// creds exist; subscriptions opt-in via ARTIFACTS_SUBSCRIBE_REPOS
-// (comma-separated stable repo names in ARTIFACTS_NAMESPACE). Previews
-// cannot attach queue consumers, so subscriptions target the prod queue;
-// staging and dynamic tournament forks rely on the worker poller + tick.
+// creds exist, with the optional ARTIFACTS_JURISDICTION (us|eu) — set
+// only at creation and immutable after, so a reused namespace is read
+// back and a mismatch is reported loudly rather than ignored.
+//
+// Two subscription scopes, because they answer different questions:
+//   - account-level `artifacts` (repo.created/forked/imported/deleted):
+//     always ensured. It is the only source that reports a repo the
+//     worker has never seen, so forks an agent makes on demand announce
+//     themselves. The same four types are also wired as namespace-wide
+//     Workflow triggers in wrangler.jsonc; this is the queue path.
+//   - repo-level `artifacts.repo` (pushed): opt-in via
+//     ARTIFACTS_SUBSCRIBE_REPOS (comma-separated stable repo names in
+//     ARTIFACTS_NAMESPACE), since it must name an existing repo.
+// Previews cannot attach queue consumers, so subscriptions target the
+// prod queue; staging still relies on the worker poller + tick.
 {
   const repos = (process.env.ARTIFACTS_SUBSCRIBE_REPOS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const namespace = process.env.ARTIFACTS_NAMESPACE ?? "flare-tournaments";
+  const jurisdiction = (process.env.ARTIFACTS_JURISDICTION ?? "").trim();
   const apiToken = process.env.CLOUDFLARE_API_TOKEN ?? "";
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
+  // Validate before any branch, dry-run included: catching a typo'd
+  // region is exactly what a dry run is for, and the value is immutable
+  // once a namespace is created with it.
+  if (jurisdiction) {
+    const { normalizeJurisdiction } = await import("./artifacts-admin.mjs");
+    try {
+      normalizeJurisdiction(jurisdiction);
+    } catch (err) {
+      fail(`ARTIFACTS_JURISDICTION: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
   if (!apiToken || !accountId) {
-    console.log("Artifacts: set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID to provision the namespace and push subscriptions, or do it by hand:");
-    console.log("  namespace: dashboard > Workers > Artifacts, or POST /accounts/:id/artifacts/namespaces;");
-    console.log("  subscriptions: queue flare-actions-artifacts > Subscriptions > Subscribe to events > source artifacts.repo > pushed.");
+    console.log("Artifacts: set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID to provision the namespace and event subscriptions, or do it by hand:");
+    console.log("  namespace: dashboard > Workers > Artifacts, or POST /accounts/:id/artifacts/namespaces");
+    console.log("    (add {\"jurisdiction\":\"us\"|\"eu\"} to pin data residency — it cannot be changed later);");
+    console.log("  lifecycle: queue flare-actions-artifacts > Subscriptions > source artifacts > repo.created, repo.forked, repo.imported, repo.deleted;");
+    console.log("  pushes: same queue > source artifacts.repo > pushed.");
     if (repos.length > 0) console.log(`  pending repos: ${repos.join(", ")} (namespace ${namespace}).`);
   } else if (!/^[a-f0-9]{32}$/.test(accountId)) {
     fail("CLOUDFLARE_ACCOUNT_ID must be the 32-hex account id.");
   } else if (dryRun) {
-    console.log(`(dry-run) would ensure namespace ${namespace}${repos.length > 0 ? ` and subscribe flare-actions-artifacts to pushed on ${repos.join(", ")}` : ""}.`);
+    console.log(
+      `(dry-run) would ensure namespace ${namespace}${jurisdiction ? ` in jurisdiction ${jurisdiction}` : ""}` +
+        ", subscribe flare-actions-artifacts to the account lifecycle events" +
+        `${repos.length > 0 ? `, and subscribe it to pushed on ${repos.join(", ")}` : ""}.`,
+    );
   } else {
     try {
-      const { ensureNamespace, ensurePushSubscriptions } = await import("./artifacts-admin.mjs");
-      const ns = await ensureNamespace({ apiToken, accountId, namespace });
-      console.log(ns.reused ? `Artifacts: namespace ${namespace} already exists, reusing` : `Artifacts: namespace ${namespace} created`);
+      const { ensureAccountSubscription, ensureNamespace, ensurePushSubscriptions } = await import("./artifacts-admin.mjs");
+      const ns = await ensureNamespace({ apiToken, accountId, namespace, jurisdiction });
+      const where = ns.jurisdiction ? ` (jurisdiction ${ns.jurisdiction})` : "";
+      console.log(ns.reused ? `Artifacts: namespace ${namespace} already exists, reusing${where}` : `Artifacts: namespace ${namespace} created${where}`);
+      if (ns.mismatch) {
+        // Not fatal — the namespace works — but every repo in it is
+        // already pinned to the other region, and no API call moves it.
+        console.log(`Artifacts: WARNING namespace ${namespace} is in jurisdiction ${ns.actual}, not ${ns.jurisdiction}.`);
+        console.log("  Jurisdiction is fixed at creation. To honour ARTIFACTS_JURISDICTION, set ARTIFACTS_NAMESPACE to a new namespace.");
+      } else if (jurisdiction && ns.reused && ns.actual === undefined) {
+        console.log(`Artifacts: could not read back the jurisdiction of ${namespace} — verify it in the dashboard.`);
+      }
       // Previews bind their own namespace (wrangler.jsonc previews block):
       // never production Artifacts repos (Forge trunks, agent forks).
+      // Same jurisdiction, so preview data does not leave the region.
       const previewNs = process.env.ARTIFACTS_PREVIEW_NAMESPACE ?? "flare-forge-preview";
       if (previewNs !== namespace) {
-        const pns = await ensureNamespace({ apiToken, accountId, namespace: previewNs });
+        const pns = await ensureNamespace({ apiToken, accountId, namespace: previewNs, jurisdiction });
         console.log(pns.reused ? `Artifacts: preview namespace ${previewNs} already exists, reusing` : `Artifacts: preview namespace ${previewNs} created`);
+        if (pns.mismatch) console.log(`Artifacts: WARNING preview namespace ${previewNs} is in jurisdiction ${pns.actual}, not ${pns.jurisdiction}.`);
       }
+      const acct = await ensureAccountSubscription({ apiToken, accountId });
+      console.log(
+        acct.reused
+          ? "Artifacts: account lifecycle subscription already exists, reusing"
+          : `Artifacts: subscribed flare-actions-artifacts to ${acct.events.join(", ")}`,
+      );
       if (repos.length === 0) {
-        console.log("Artifacts: ARTIFACTS_SUBSCRIBE_REPOS unset — skipping push subscriptions (the worker poller still covers tournament forks).");
+        console.log("Artifacts: ARTIFACTS_SUBSCRIBE_REPOS unset — skipping per-repo push subscriptions (the worker poller still covers tournament forks).");
       } else {
         for (const r of await ensurePushSubscriptions({ apiToken, accountId, namespace, repos })) {
           console.log(r.reused ? `Artifacts: ${namespace}/${r.repo} already subscribed, reusing` : `Artifacts: subscribed flare-actions-artifacts to pushed on ${namespace}/${r.repo}`);

@@ -14,6 +14,7 @@ import {
   publicView,
   SECRET_PATTERNS,
   watchHtml,
+  watchNotFoundHtml,
   type PublicForgeContext,
 } from "./forge-public";
 import { forgeServiceDeps, type ForgeServiceDeps } from "./forge-service";
@@ -263,6 +264,33 @@ describe("forge public: watch, rate limit, feed", () => {
     expect(r.text).toContain('<meta name="flare-public" content="demo">');
     expect(r.text.indexOf("flare-public")).toBeGreaterThan(r.text.indexOf("<head>"));
     expect(watchHtml("<html><head></head></html>", 'x"><script>')).toContain('content="xscript"');
+  });
+
+  it("/watch with an unknown repo: friendly HTML for browsers, JSON for API clients", async () => {
+    const h = await harness();
+    const html = await h.get("/watch?repo=%3Cscript%3Enope", { headers: { Accept: "text/html,application/xhtml+xml,*/*;q=0.8" } });
+    expect(html.status).toBe(404);
+    expect(html.res.headers.get("Content-Type")).toContain("text/html");
+    expect(html.text).toContain('href="/watch?repo=demo"');
+    // The requested name is never reflected.
+    expect(html.text).not.toContain("nope");
+    expect(html.text).not.toContain("<script>");
+    const json = await h.get("/watch?repo=nope", { headers: { Accept: "application/json" } });
+    expect(json.status).toBe(404);
+    expect(JSON.parse(json.text).code).toBe("forge_not_found");
+    // Spectator mode off: still a page, with no link to a repo.
+    const off = await harness(null);
+    const offHtml = await off.get("/watch", { headers: { Accept: "text/html" } });
+    expect(offHtml.status).toBe(404);
+    expect(offHtml.text).toContain("No repo is open for spectators");
+    expect(offHtml.text).not.toContain("/watch?repo=");
+    expect(watchNotFoundHtml(['a"b'])).not.toContain('a"b');
+  });
+
+  it("join suggests a why line that has a chain on the showcase repo", async () => {
+    const h = await harness();
+    const j = JSON.parse((await h.get("/v1/public/forge/join")).text) as { mcp: { try: string[] } };
+    expect(j.mcp.try.join("\n")).toContain("line 18 of src/middleware/logging.ts");
   });
 
   it("rate-limits per IP", async () => {

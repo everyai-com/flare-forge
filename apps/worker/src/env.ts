@@ -35,7 +35,7 @@ export interface WorkerSecrets {
   TRIAGE_WEB_SEARCH?: string;
   // "1" marks the hosted Flare Cloud control plane (set only there).
   // Env-only by design — never a D1 setting — so self-hosted deploys
-  // can never be paywalled by accident. See cloud.ts / docs/HOSTED.md.
+  // can never be paywalled by accident. See cloud.ts / everyai-com/flare-actions docs/HOSTED.md.
   FLARE_CLOUD?: string;
   // Runner ref /runner.sh pins (release tag or full commit SHA), e.g. the
   // commit this worker was deployed from. Unset = the fleet
@@ -43,6 +43,8 @@ export interface WorkerSecrets {
   FLARE_RUNNER_REF?: string;
   // R2 bucket for cache + artifacts; absent on forks that skipped it.
   CACHE?: R2Bucket;
+  // "off" disables the Forge read cache (read-cache.ts): A/B runs and rollback.
+  FORGE_READ_CACHE?: string;
   // No seats binding here by design: wakes travel over the SEAT_QUEUE
   // producer (a plain queue binding like RUN_QUEUE), so the main worker
   // never couples — at deploy or runtime — to the seats worker.

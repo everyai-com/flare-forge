@@ -46,7 +46,7 @@ export interface DoctorDeps {
   // or no origin.
   gitOrigin: () => string | null;
   timeoutMs?: number;
-  // How the user invoked the CLI (`npm run cli --`, `npx flare-forge`).
+  // How the user invoked the CLI (`npm run cli --`, `npx flare-forge-cli`).
   cli?: string;
 }
 

@@ -89,8 +89,8 @@ npm publish --workspace apps/cli          # publishes flare-forge
 ```
 
 Bump `version` in `apps/cli/package.json` and tag the release (`vX.Y.Z`).
-After publishing, `npx flare-forge forge connect-agent --client claude`
-and `npx flare-forge connect` work without cloning. The runner SDK
+After publishing, `npx flare-forge-cli forge connect-agent --client claude`
+and `npx flare-forge-cli connect` work without cloning. The runner SDK
 (`flare-actions-runner-sdk`) still ships as TypeScript sources and is
 published separately only if you want it as a library; the CLI no longer
 needs it at runtime.

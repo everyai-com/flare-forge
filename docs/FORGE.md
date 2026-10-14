@@ -567,10 +567,25 @@ How batching works:
 
 Three namespace-wide event triggers (`triggers.events` in
 `wrangler.jsonc`, namespace `flare-tournaments`: `pushed`, `cloned`,
-`fetched`) target the Workflow `flare-forge-push`. (Account-level
-`created` / `forked` / `imported` / `deleted` triggers were tried on
-2026-10-12 and never delivered with a namespace filter; Forge meters the
-repo creation it performs through the binding instead.) Every event first runs a **meter op**
+`fetched`) target the Workflow `flare-forge-push`.
+
+The account-level types (`created` / `forked` / `imported` / `deleted`)
+do **not** work as triggers: they were tried on 2026-10-12 with a
+namespace filter and never delivered, because `filter` describes the
+repo-level `artifacts.repo` source while those four come from the
+account-level `artifacts` source. They now arrive over the
+**account-level REST subscription** instead
+(`ensureAccountSubscription` in `scripts/artifacts-admin.mjs`, ensured
+by `npm run setup`), which is account-scoped and takes no namespace
+filter — the worker filters by namespace itself in
+`handleArtifactsOpEvent`. Delivery is to the `flare-actions-artifacts`
+queue, and the consumer meters them into the ops ledger; the queue
+message id dedupes redeliveries. Only these four are metered off the
+queue, so nothing is counted on both paths. Forge still meters the repo
+creation it performs through the binding, and the two witnesses are
+[reconciled](#ops-ledger) rather than summed.
+
+Every push, clone and fetch event first runs a **meter op**
 step that records it in the [ops ledger](#ops-ledger). Push events
 then run the reconcile step below: the trigger is the **primary**
 live-footprint signal, and the agent's `report_push` is the fast path
@@ -606,8 +621,9 @@ forks rely on `report_push`.
 > developers.cloudflare.com/artifacts/guides/event-subscriptions and
 > prices against /artifacts/platform/pricing (both fetched 2026-10-12);
 > behaviour covered by `forge-ops.test.ts` and `forge-adapters.test.ts`.
-> No live numbers yet: the first ones come from the prod live run
-> (FORGE-PRODUCT-PLAN.md §4 item 1).
+> Live numbers: the measured production run is in
+> [Live run on production](#live-run-on-production-2026-10-12) and the README's
+> cost table (Cloudflare's own `artifactsEventsAdaptiveGroups`, 2026-10-12).
 
 Artifacts bills operations from 2026-10-14: $0.15 per 1,000 past
 10,000 a month, plus $0.50 per GB-month past 1 GB. The pricing page
@@ -620,14 +636,31 @@ not O(time). The ledger (`apps/worker/src/forge-ops.ts`) measures it.
 
 | Source | What | How |
 |---|---|---|
-| `event` | `push`, `clone`, `fetch` (and `create`/`fork`/`import`/`delete` if those events arrive) | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days; a burst of ref creations on one repo in the same second counts as one push |
-| `binding` | `read` (readFile, readCommit, readTree, log, info, ...), `token` (createToken), and billable `fork` / `create` / `import` (charged to the new repo) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
+| `event` | `push`, `clone`, `fetch`, `create`, `fork`, `import`, `delete` | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days; a burst of ref creations on one repo in the same second counts as one push |
+| `binding` | `read` (readFile, readCommit, readTree, log, info, ...), `token` (createToken), billable `fork` / `create` / `import` (charged to the new repo), and `cached` (a read the [read cache](#read-cache-and-server-side-reads) answered: no Artifacts call, never counted as an op) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
 
-Repo creation through the binding arrives as an event, so it is not
-metered twice. Dollars use the documented kinds only (create, fork,
-import, push, clone, fetch); `upperBound` adds deletes and every
-binding call at the same price, because the pricing page does not say
-whether binding reads bill.
+**Repo creation has two witnesses, and the bill reconciles them.** A
+fork Forge makes through the binding is reported by the binding meter
+*and* by Cloudflare's `repo.forked` event — one operation, two
+observations. So `create` / `fork` / `import` are counted as
+`max(event, binding)`, never the sum (`RECONCILED_KINDS` and
+`billableOps` in `forge-ops.ts`). `max` rather than either one alone,
+because the event stream is authoritative but can lag or be
+unsubscribed, while the binding meter cannot see repos created outside
+this worker; whichever saw more ops saw more of the truth, and neither
+invents ops that did not happen.
+
+> Until 2026-10-13 the four account-level event types were missing from
+> `wrangler.jsonc`, so `event:create|fork|import` was always zero and
+> the binding meter was the only witness. Summing the two sources was
+> safe only because of that gap. The triggers are now declared, so the
+> reconciliation is what keeps the bill honest.
+
+Dollars use the documented kinds only (create, fork, import, push,
+clone, fetch); `upperBound` adds deletes and every binding call at the
+same price, because the pricing page does not say whether binding reads
+bill. It is reconciled the same way, so it stays a true ceiling rather
+than inflating on the overlap.
 
 **Attribution** is by Artifacts repo name: `i-<12>` is an intent fork
 (D1 `intents.fork_repo`), `s-<12>-...` a session fork of that intent,
@@ -673,6 +706,74 @@ Cross-check against Cloudflare: the Artifacts metrics for the
 namespace should match the `event` totals summed over the repos, minus
 names the ledger dropped (the `forge op metered` log line records each
 skip with its reason).
+
+### Read cache and server-side reads
+
+> Provenance: agent-drafted 2026-10-14, after Anthropic's "Redesigning
+> source control" post (Oct 13: server-side source-control queries,
+> content-addressed caching). Behaviour covered by `read-cache.test.ts`
+> and `forge-read.test.ts` (`npx vitest run`, 2026-10-14). Measured with
+> the A/B below (2026-10-14, one run per arm).
+
+Two ideas, both in `apps/worker/src/`:
+
+**1. A content-addressed read cache under every server-side read**
+(`read-cache.ts`). A git object named by its hash never changes, so
+`readCommit(hash)`, `readTree(hash)`, `readFile({ref: <sha>, path})` and
+`log({ref: <sha>})` can be cached without invalidation or coordination.
+Keys are per repo (`<repo>/<kind>/<hash>`), so one fork's objects never
+answer an existence check for another. Never cached: branch or tag refs
+(they move), `null` results (an object can appear after a push), binary
+or non-UTF-8 files, `info`, tokens, forks. Tiers: an isolate-memory LRU
+(8M characters) in front of R2 (`CACHE` bucket, prefix `forge/read-cache/`,
+pruned after 30 days). `meteredArtifacts` wraps the cache *outside* the
+meter, so a hit never reaches the binding and is tallied as `cached`.
+Set the env var `FORGE_READ_CACHE=off` to bypass it (A/B runs, rollback).
+
+Where it pays: push footprints and replay rescoring diff trees that
+every intent shares with trunk; `why` walks history; the Live map read
+`.flare/policy.yml` by branch name on every poll. That read is now pinned
+to the trunk sha (one shared trunk lookup per request), so once the
+policy is cached a dashboard or spectator poll costs one binding read
+(the trunk head) instead of two.
+
+**Measured A/B (2026-10-14).** Two local Workers (`wrangler dev`, local
+D1/DOs/R2) on the real `ARTIFACTS` binding in the `flare-forge-preview`
+namespace, one local runner for CI, a fresh trunk each (`forge:demo
+--recreate`), then the same `forge:agents --mode scripted --count 6`
+swarm and crons ticked every 10 s until the repo went quiet. The arms
+differ only in `FORGE_READ_CACHE=off`. Ledger `binding` counters at the
+first quiet snapshot (both: 13 intents, 10 landed, 1 conflict left open
+by the scripted resolver):
+
+| | Cache off | Cache on |
+|---|---|---|
+| Binding reads (reached Artifacts) | 397 | 326 (-18%) |
+| Reads served by the cache | 0 | 78 |
+| Binding reads per landed change | 39.7 | 32.6 |
+| Added reads per snapshot poll once quiet | ~2.25 | ~1.25 |
+
+Caveats: one run per arm. `wrangler dev` gets no Artifacts events, so
+the push-trigger Workflow (which diffs every push against its base and
+runs on prod) did not run in either arm. Those diffs are tree reads by
+hash, which the cache serves, so prod should save more, but that is not
+measured. Most of the remaining reads are by branch name (`main`, lane
+refs), which are never cached.
+
+**2. Read verbs, so agents look without cloning** (`forge-read.ts`,
+wrapped in `forge-service.ts`):
+
+| Verb | REST | Returns |
+|---|---|---|
+| `read_file {repo, path?, ref?}` or `{intentId, path?}` | `GET /v1/forge/read` | a file (optionally `startLine`/`endLine`) or a directory listing, plus the `sha` read |
+| `diff {intentId}` or `{repo, base, head?}`, `path?` | `GET /v1/forge/diff`, `GET /v1/forge/intents/:id/diff` | changed files with unified hunks (25 files, 96 KB of patch per call) |
+| `history {repo, path, ref?, limit?}` or `{intentId, path}` | `GET /v1/forge/history` | commits that changed the path, newest first, each with the intents a train landed with it |
+
+Every answer is pinned to a sha and returns it, so an agent's follow-up
+reads (`ref: <sha>`) come from the cache. Clone only to edit. History
+walks at most 100 commits and 600 tree reads per call. Unchanged
+subtrees share hashes, so after the first walk almost every read is a
+hit.
 
 ### Benchmark: index at 100k intents
 
@@ -1224,7 +1325,7 @@ these client hooks are not implemented yet:
 ```sh
 claude mcp add --transport http flare-forge-watch https://<worker>/v1/public/forge/mcp
 # then ask: "what are the agents doing in bookshelf right now?",
-#           "why does line 12 of src/middleware/logging.ts exist?"
+#           "why does line 18 of src/middleware/logging.ts exist?"
 ```
 
 **Write (private, per judge):**

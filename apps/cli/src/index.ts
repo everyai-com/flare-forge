@@ -67,7 +67,7 @@ const JSON_MODE = hasJsonFlag(argHead);
 const [cmd, ...head] = stripJsonFlag(argHead);
 const rest = [...head, ...tail];
 
-// How the user ran us (`npm run cli --`, `npx flare-forge`, `flare`), so
+// How the user ran us (`npm run cli --`, `npx flare-forge-cli`, `flare`), so
 // every "next:" line can be pasted back as-is.
 const CLI = cliInvocation(process.argv, process.env);
 

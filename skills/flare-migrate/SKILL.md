@@ -12,9 +12,9 @@ description: >-
 
 ## Start here
 
-1. Discover: `npx flare-forge local` runs the existing `.github/workflows` on this machine; no account needed.
-2. Onboard: pick a path below and prove one green run (`npx flare-forge doctor` names the next setup step).
-3. Daily loop, then expert: `npx flare-forge run <owner/repo> HEAD` per change; runner mode (`runs-on: flare`) or a full replace later.
+1. Discover: `npx flare-forge-cli local` runs the existing `.github/workflows` on this machine; no account needed.
+2. Onboard: pick a path below and prove one green run (`npx flare-forge-cli doctor` names the next setup step).
+3. Daily loop, then expert: `npx flare-forge-cli run <owner/repo> HEAD` per change; runner mode (`runs-on: flare`) or a full replace later.
 
 Flare runs existing `.github/workflows/*.yml` files **unchanged** when a
 repo has no `flare.yml`. Migration is mostly choosing a path and proving
@@ -25,7 +25,7 @@ the human decides when GitHub-hosted runs stop.
 
 | Situation | Path | Needs |
 | --- | --- | --- |
-| Just try it, no account, no server | **Local**: `npx flare-forge local` | Node 22.6+, Docker only for `services:`/`container:` jobs |
+| Just try it, no account, no server | **Local**: `npx flare-forge-cli local` | Node 22.6+, Docker only for `services:`/`container:` jobs |
 | Keep GitHub as the UI (checks, logs, approvals) | **Runner mode**: change `runs-on:` to `flare` | A Flare deployment with runner mode on + one runner machine |
 | Replace Actions fully (faster dispatch, D1 history, agent digests) | **Full**: deploy + `connect` | A Flare deployment (Cloudflare account) |
 
@@ -36,8 +36,8 @@ unset, start with **Local** and tell the human the deploy step is theirs.
 ## 2. Check compatibility first (no server needed)
 
 ```bash
-npx flare-forge import .github/workflows/ci.yml   # prints flare.yml + a warning report
-npx flare-forge local --parity                     # local-vs-cloud differences, without running
+npx flare-forge-cli import .github/workflows/ci.yml   # prints flare.yml + a warning report
+npx flare-forge-cli local --parity                     # local-vs-cloud differences, without running
 ```
 
 Read every warning. Things that commonly need a human decision
@@ -55,7 +55,7 @@ Report the warnings as a short list with the affected job names. Do not
 
 ## 3. Run it
 
-**Local:** `npx flare-forge local` from the repo root. Done when
+**Local:** `npx flare-forge-cli local` from the repo root. Done when
 every job is green; report the digest.
 
 **Runner mode:**
@@ -73,15 +73,15 @@ every job is green; report the digest.
    `/dashboard`, create the owner account, click **Connect GitHub**, and
    install the App on the repo.
 2. Ask the human for a one-time code (dashboard Settings → Pair a
-   runner), then `npx flare-forge login --url https://<worker>
+   runner), then `npx flare-forge-cli login --url https://<worker>
    --code XXXX-XXXX`. It saves `FLARE_ACTIONS_URL` + `RUNNER_TOKEN` to
    `./.env` (0600) — confirm `.env` is gitignored first. Then
-   `npx flare-forge connect --dry-run`, then
-   `npx flare-forge connect`. It dispatches HEAD and reports
+   `npx flare-forge-cli connect --dry-run`, then
+   `npx flare-forge-cli connect`. It dispatches HEAD and reports
    the verdict (exit 0 green, 1 run failed, 2 usage).
 3. Wire the agent loop: `claude mcp add --transport http flare
    https://<worker>/mcp` (OAuth in the browser; other clients:
-   `npx flare-forge mcp-config`).
+   `npx flare-forge-cli mcp-config`).
 
 ## 4. Done means
 

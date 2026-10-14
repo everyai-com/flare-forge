@@ -67,10 +67,10 @@ describe("suggestCommand", () => {
 describe("next-move helpers", () => {
   it("detects how the CLI was invoked", () => {
     expect(cliInvocation(["node", "/r/apps/cli/src/index.ts"], { npm_lifecycle_event: "cli" })).toBe("npm run cli --");
-    expect(cliInvocation(["node", "/x/node_modules/.bin/flare-forge"], { npm_command: "exec" })).toBe("npx flare-forge");
+    expect(cliInvocation(["node", "/x/node_modules/.bin/flare-forge"], { npm_command: "exec" })).toBe("npx flare-forge-cli");
     expect(cliInvocation(["node", "/usr/local/bin/flare"], {})).toBe("flare");
     expect(cliInvocation(["node", "/usr/local/bin/flare-forge"], {})).toBe("flare-forge");
-    expect(cliInvocation(["node", "/p/dist/cli.mjs"], {})).toBe("npx flare-forge");
+    expect(cliInvocation(["node", "/p/dist/cli.mjs"], {})).toBe("npx flare-forge-cli");
     expect(cliInvocation(["node", "/r/apps/cli/src/index.ts"], {})).toBe("npm run cli --");
   });
 

@@ -55,7 +55,7 @@ claude mcp add --transport http flare-forge-watch https://<WORKER_URL>/v1/public
 
 Then ask:
 - *"What are the agents doing in bookshelf right now?"*
-- *"Why does line 12 of src/middleware/logging.ts exist?"* (the answer
+- *"Why does line 18 of src/middleware/logging.ts exist?"* (the answer
   traces line → commit → intent → goal → reasoning)
 - *"What in bookshelf needs a human?"*
 
@@ -299,7 +299,7 @@ slow, or the network drops):
 swarm:
 
 ```sh
-npx flare-forge forge connect-agent --client claude --agent judge   # no clone needed
+npx flare-forge-cli forge connect-agent --client claude --agent judge   # no clone needed
 # from a clone: npm run cli -- forge connect-agent --client claude --agent judge
 ```
 

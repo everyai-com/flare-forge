@@ -9,8 +9,8 @@ Setup happens at four levels. Do each one once.
 
 | Level | What it gives you | Command |
 |---|---|---|
-| **Machine** (each laptop, server, or Claude login) | Every Claude Code / Codex session in every repo knows Flare | `npx flare-forge forge init --global` |
-| **Repo** | CI runs on Flare; agents coordinate on it | `npx flare-forge connect` + `npx flare-forge forge init` |
+| **Machine** (each laptop, server, or Claude login) | Every Claude Code / Codex session in every repo knows Flare | `npx flare-forge-cli forge init --global` |
+| **Repo** | CI runs on Flare; agents coordinate on it | `npx flare-forge-cli connect` + `npx flare-forge-cli forge init` |
 | **GitHub account / org** | Flare receives that org's pushes and PRs | Install the GitHub App on it |
 | **Cloudflare account** | A separate Flare (own bill, data, limits) | `npx wrangler login && npm run setup` |
 
@@ -18,8 +18,8 @@ Setup happens at four levels. Do each one once.
 
 ```bash
 export FLARE_ACTIONS_URL=https://<your-flare>.workers.dev
-npx flare-forge forge init --global --dry-run   # see the diff first
-npx flare-forge forge init --global
+npx flare-forge-cli forge init --global --dry-run   # see the diff first
+npx flare-forge-cli forge init --global
 ```
 
 This writes, idempotently and inside marker blocks (your own text is
@@ -45,7 +45,7 @@ tool's own store:
   → MCP gets the same URL.
 
 Re-run the command after upgrading the CLI to refresh the section and
-skills. Check any machine with `npx flare-forge doctor`.
+skills. Check any machine with `npx flare-forge-cli doctor`.
 
 **Other Claude logins and claude.ai.** Claude Code reads `~/.claude` per
 OS user, so every Claude account on the same OS user shares the setup.
@@ -58,9 +58,9 @@ Projects, add this line to the project instructions:
 Run these from the repo root:
 
 ```bash
-npx flare-forge connect --dry-run   # detects the stack, shows the plan
-npx flare-forge connect             # wires and verifies a green run (exit 0)
-npx flare-forge forge init          # AGENTS.md "Flare Forge" block + .mcp.json
+npx flare-forge-cli connect --dry-run   # detects the stack, shows the plan
+npx flare-forge-cli connect             # wires and verifies a green run (exit 0)
+npx flare-forge-cli forge init          # AGENTS.md "Flare Forge" block + .mcp.json
 ```
 
 - Repos without `flare.yml` run their `.github/workflows` unchanged.
@@ -111,4 +111,4 @@ Keep the `flare-forge` name for the one `forge init --global` points at.
   open registration for read-only sign-up.
 - Their machines: they run section 1 against your URL. Their agents sign
   in over OAuth, or get a runner token from a pairing code
-  (`npx flare-forge login --code XXXX-XXXX`).
+  (`npx flare-forge-cli login --code XXXX-XXXX`).
