@@ -170,8 +170,11 @@ export class Board {
 // Scripted agents
 // ---------------------------------------------------------------------------
 
+// INIT_CWD is cleared: under `npm run forge:agents` it names the repo
+// root, and the CLI restores INIT_CWD (apps/cli/src/index.ts), which would
+// run `forge push` in this checkout instead of the agent's clone.
 function cliEnv(cfg, agent) {
-  return { FLARE_ACTIONS_URL: cfg.url, RUNNER_TOKEN: cfg.token, FLARE_AGENT: agent, GIT_TERMINAL_PROMPT: "0" };
+  return { FLARE_ACTIONS_URL: cfg.url, RUNNER_TOKEN: cfg.token, FLARE_AGENT: agent, GIT_TERMINAL_PROMPT: "0", INIT_CWD: "" };
 }
 
 // Store fork auth + flare.* keys in the clone's .git/config by writing
