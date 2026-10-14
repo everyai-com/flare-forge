@@ -2271,16 +2271,31 @@ export const FORGE_MCP_OPS: Record<string, ForgeOp> = {
 // as `null` with their error code under `errors`, never as a 500.
 // ---------------------------------------------------------------------------
 
+/** Merge red lanes the recent page missed, newest first, without duplicates. */
+function withFailedTrains(recent: ForgeOutcome, failed: ForgeOutcome): ForgeOutcome {
+  if (!recent.ok || !failed.ok) return recent;
+  const list = (data: Record<string, unknown>): Record<string, unknown>[] => (Array.isArray(data.trains) ? (data.trains as Record<string, unknown>[]) : []);
+  const seen = new Set(list(recent.data).map((t) => t.id));
+  const extra = list(failed.data).filter((t) => !seen.has(t.id));
+  if (extra.length === 0) return recent;
+  const merged = [...list(recent.data), ...extra].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const { empty: _empty, ...rest } = recent.data;
+  return ok({ ...rest, trains: merged });
+}
+
 export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
   const r = repoArg(deps, p, args.repo);
   if (isOutcome(r)) return r;
   const base: ForgeArgs = { repo: r.repo };
-  const [snapshot, agents, goals, intents, trains, conflicts, inbox, activity] = await Promise.all([
+  const [snapshot, agents, goals, intents, recentTrains, failedTrains, conflicts, inbox, activity] = await Promise.all([
     snapshotOp(deps, p, base),
     agentsOp(deps, p, base),
     listGoalsOp(deps, p, base),
     listIntentsOp(deps, p, { ...base, limit: 100 }),
     listTrainsOp(deps, p, { ...base, limit: 12 }),
+    // Speculative rebuilds (aborted) push a bisected red lane out of the
+    // newest 12 within seconds; keep the latest red lanes visible.
+    listTrainsOp(deps, p, { ...base, state: "failed", limit: 3 }),
     listConflictsOp(deps, p, { ...base, limit: 20 }),
     storyInboxOp(deps, p, base),
     // The repo-wide ledger, newest first: the app's activity feed reads
@@ -2293,6 +2308,7 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
       .catch(() => []),
   ]);
   if (!snapshot.ok) return snapshot;
+  const trains = withFailedTrains(recentTrains, failedTrains);
   const errors: Record<string, string> = {};
   const part = (name: string, o: ForgeOutcome): Record<string, unknown> | null => {
     if (o.ok) return o.data;
