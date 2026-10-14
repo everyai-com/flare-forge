@@ -32,7 +32,10 @@ mode, loops every ~80 s. It is not a measurement.</sub>
 
 This repo is Flare Forge's entry for Cloudflare's
 ["Build the next Git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/)
-competition (Workers + Artifacts, submissions close Oct 14, 2026).
+competition (Workers + Artifacts, submissions close Oct 14, 2026). The submitted
+text (vision, how we used Cloudflare, run instructions) is in
+[SUBMISSION.md](SUBMISSION.md); how the entry maps to the judging
+criteria is [below](#how-it-maps-to-the-judging-criteria).
 
 1. **Open the product**, no sign-in: [flare-actions.everyai-com.workers.dev/app?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf). The Forge workspace on the real `bookshelf` repo, read-only. The overview is a lifecycle board (declared → in a fork → ready → in a train → landed, plus what needs a human and what is in conflict) over a plain-language activity feed; then intents, trains, conflicts, the review inbox, agents, a GitHub-shaped **Repository** view (files, commits that name their intent, branches, CI runs) with `why` on any line, and the Artifacts usage ledger. **How it works** carries a one-picture map of the system; **Demo** runs an 8-stop guided tour; **Agent MCP** shows the connection line and lets you try a tool. Signed in, members run the same loop on their own repos (approve plans, review, launch goals, agent tokens); the owner also pairs runners and manages the team. Press **Explain** for a caption on everything. The guided tour on demo data is still at [/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live).
 2. **Watch a real repo** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf) shows the Bookshelf repo's live state and the record of its last swarm (Oct 14: 13 intents from 6 agents, 10 landed through CI-verified trains, 6 overlaps caught at declare time, one conflict replayed by the AI resolver and routed to the human inbox, two semantic failures bisected out, one protected intent waiting for plan approval; main never red), plus the Artifacts ops ledger. Between swarms the map is quiet; the record and the ledger stay. Or ask your own Claude Code:
@@ -98,6 +101,14 @@ also has replays fetch once, brings Forge to 9.4 at 10k agents.
 
 The design rationale (first principles, spec, architecture, proof) is
 in [docs/COMPETITION-PLAN.md](docs/COMPETITION-PLAN.md).
+
+## How it maps to the judging criteria
+
+| Criterion (weight) | What Flare Forge does | See it |
+|---|---|---|
+| **Originality and quality of the prototype for agent-oriented collaboration (50%)** | Replaces the pull request with the **intent** (what, where, why, how to prove it). Coordination happens at declare time, before code exists. Trains verify each lane as its exact merged commit without a global lock, so `main` is never red. Every landed line answers `why`, back to the goal and the agent session. The git bill is measured from Cloudflare's own events (11.2 Artifacts ops per landed change). | [Live product](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf) · [How it works](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf#/how) · [design](docs/COMPETITION-PLAN.md) |
+| **Multi-agent concurrency, coordination, context preservation, review and conflict handling (25%)** | **Concurrency:** one fork and one fork-scoped token per intent; no agent can write trunk. **Coordination:** overlaps come back at `declare_intent`, owners get notes (untrusted data, never instructions), drift is computed from every push. **Context:** trailers plus `refs/notes/why` link line → commit → intent → goal → reasoning → CI run → session; `fork_session` resumes another agent's exact context. **Review:** a risk score of named terms routes to auto-land, audit sample or a human; protected paths need an approved plan. **Conflicts:** the dropped intent is replayed on the new trunk (its agent, the AI resolver reading both sides' reasoning, or a race) and must pass CI again. | [Trains](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf#/trains) · [Conflicts](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf#/conflicts) · [Review](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf#/review) · [protocol](docs/FORGE-AGENTS.md) |
+| **Ease of use and product experience (25%)** | Sign up, **+ New repo** (starter project with CI) or **Bring into Forge** (public GitHub repo), then **Create my agent token** gives a paste-ready `claude mcp add` line. Claude Code, Codex, Cursor or any MCP client; agents without git use `commit_files`. GitHub repo names work as-is. A plain-language activity feed, an Explain mode on every page, a guided tour, and a read-only spectator view and MCP endpoint for anyone. | [Sign up](https://flare-actions.everyai-com.workers.dev/app?login=1) · [working with agents](docs/WORKING-WITH-AGENTS.md) |
 
 ## Four questions, four answers
 
