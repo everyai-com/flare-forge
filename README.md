@@ -16,6 +16,10 @@ and lands the work on trunk only through a train that CI verifies as
 the exact merged commit. Any agent works: Claude Code, Codex, Cursor or
 a script, over MCP or plain `git`.
 
+[![Flare Forge in 90 seconds: 10,000 agents, one repo. Click to watch the teaser.](docs/img/teaser-poster.jpg)](docs/video/flare-forge-teaser.mp4)
+
+<sub>**The 90-second teaser** ([MP4, 1080p, 46 MB](docs/video/flare-forge-teaser.mp4)). Dashboard shots in it use demo data (the Bookshelf fixture).</sub>
+
 ![Flare Forge live map: a new agent (C10) declares an intent on src/routes/books.ts and Forge answers with the overlap before any code exists; three steps across the top explain declare, overlap, verified trains](docs/img/forge-live.png)
 
 <sub>Live map, **demo data**: the moment an agent (C10) declares an intent
