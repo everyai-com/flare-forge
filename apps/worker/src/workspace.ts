@@ -9,6 +9,7 @@
 // tests run on fakes; nothing here imports the Workers runtime.
 
 import type { FsClient, HttpClient } from "isomorphic-git";
+import { ensureRepoMirror, mirrorNameFor, type MirrorArtifactsNamespace } from "./artifacts-mirrors";
 import type { Db } from "./db";
 import { nowIso } from "./db";
 import type { MemoryFS } from "./memory-fs";
@@ -23,6 +24,106 @@ export interface WorkspaceGit {
   commit(args: { fs: FsClient; dir: string; message: string; author: { name: string; email: string } }): Promise<string>;
   addNote(args: { fs: FsClient; dir: string; ref: string; oid: string; note: string; author: { name: string; email: string } }): Promise<string>;
   push(args: { fs: FsClient; http: HttpClient; dir: string; url: string; ref: string; remoteRef: string; force?: boolean; onAuth: () => { username: string; password: string } }): Promise<{ ok: boolean; error?: string | null }>;
+}
+
+// Import a GitHub repo into Forge: Artifacts imports it server-side
+// (ensureRepoMirror, the same mirror the push hook makes), then the
+// Worker adds the train lane pool and refs/notes/why. Lane refs point at
+// the trunk tip the server already holds, so each push sends an empty
+// pack (no history upload), the same move the train's land step makes.
+export interface ImportGit {
+  init(args: { fs: FsClient; gitdir: string; bare: boolean; defaultBranch: string }): Promise<void>;
+  writeRef(args: { fs: FsClient; gitdir: string; ref: string; value: string; force: boolean }): Promise<void>;
+  addNote(args: { fs: FsClient; gitdir: string; ref: string; oid: string; note: string; author: { name: string; email: string } }): Promise<string>;
+  listServerRefs(args: { http: HttpClient; url: string; prefix?: string; onAuth: () => { username: string; password: string } }): Promise<Array<{ ref: string; oid: string }>>;
+  push(args: { fs: FsClient; http: HttpClient; gitdir: string; url: string; ref: string; remoteRef: string; force?: boolean; onAuth: () => { username: string; password: string } }): Promise<{ ok: boolean; error?: string | null }>;
+}
+
+export interface ImportArtifacts extends MirrorArtifactsNamespace {
+  get(name: string): Promise<{ readonly [Symbol.dispose]?: () => void; createToken(scope?: "write" | "read", ttl?: number): Promise<{ plaintext: string }>; info(): Promise<{ remote: string } | null> }>;
+}
+
+export interface ImportRepoDeps {
+  db: Db;
+  artifacts: ImportArtifacts;
+  git: ImportGit;
+  http: HttpClient;
+  fs: () => MemoryFS;
+  namespace: string;
+  lanes?: number;
+}
+
+export type ImportRepoResult =
+  | { ok: true; status: "ready"; repo: string; scoped: string; trunk: string; source: string; lanesCreated: number }
+  | { ok: true; status: "importing"; repo: string; source: string }
+  | { ok: false; status: number; code: "invalid_request" | "repo_exists" | "repo_limit" | "repo_create_failed"; error: string };
+
+/** owner/name from "owner/name", "github.com/owner/name" or a clone URL. */
+export function parseGithubRepo(v: unknown): string | null {
+  const raw = typeof v === "string" ? v.trim() : "";
+  const m = /^(?:https?:\/\/)?(?:www\.)?(?:github\.com\/)?([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?\/?$/.exec(raw);
+  return m && m[2] !== "." && m[2] !== ".." ? `${m[1]}/${m[2]}` : null;
+}
+
+export async function importGithubRepo(
+  deps: ImportRepoDeps,
+  owner: string,
+  source: string,
+  opts: { isPrivate: boolean; installationToken?: string | null; limit?: number | null },
+): Promise<ImportRepoResult> {
+  const name = mirrorNameFor(source);
+  if (!name) return { ok: false, status: 400, code: "invalid_request", error: "repo must be a GitHub owner/name" };
+  const holder = await deps.db.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(name).first<{ owner: string }>();
+  if (holder && holder.owner !== owner) return { ok: false, status: 409, code: "repo_exists", error: "that repo is already in Forge under another account" };
+  if (!holder) {
+    if (opts.limit !== null && (await listOwnedRepos(deps.db, owner)).length >= (opts.limit ?? MEMBER_REPO_LIMIT)) {
+      return { ok: false, status: 409, code: "repo_limit", error: `each account can own ${opts.limit ?? MEMBER_REPO_LIMIT} repos` };
+    }
+    await deps.db.prepare("INSERT INTO repo_owners (repo, scoped, owner, created_at) VALUES (?, ?, ?, ?)").bind(name, `${deps.namespace}/${name}`, owner, nowIso()).run();
+  }
+  const mirror = await ensureRepoMirror({ db: deps.db, artifacts: deps.artifacts, repo: source, isPrivate: opts.isPrivate, installationToken: opts.installationToken ?? null });
+  if (mirror.status === "importing") return { ok: true, status: "importing", repo: name, source };
+  if (mirror.status !== "ready") {
+    const detail = mirror.status === "skipped" ? mirror.reason : mirror.detail ?? "";
+    const hint = opts.isPrivate || /auth|private/i.test(detail) ? " (private repos need the Flare GitHub App installed on them)" : "";
+    return { ok: false, status: 502, code: "repo_create_failed", error: `import from GitHub failed: ${detail}${hint}` };
+  }
+  try {
+    const handle = await deps.artifacts.get(name);
+    const info = await handle.info();
+    const tok = await handle.createToken("write", 900);
+    if (!info?.remote) throw new Error("mirror has no remote");
+    const auth = () => ({ username: "x", password: tok.plaintext });
+    const heads = await deps.git.listServerRefs({ http: deps.http, url: info.remote, prefix: "refs/", onAuth: auth });
+    const byRef = new Map(heads.map((r) => [r.ref, r.oid]));
+    const trunkRef = byRef.has("refs/heads/main") ? "refs/heads/main" : byRef.has("refs/heads/master") ? "refs/heads/master" : (heads.find((r) => r.ref.startsWith("refs/heads/"))?.ref ?? "");
+    const tip = byRef.get(trunkRef);
+    if (!tip) throw new Error("the GitHub repo has no branches to import");
+    const fs = deps.fs();
+    const gitdir = "/import.git";
+    await deps.git.init({ fs, gitdir, bare: true, defaultBranch: "main" });
+    await deps.git.writeRef({ fs, gitdir, ref: "refs/heads/tip", value: tip, force: true });
+    const push = async (remoteRef: string, ref = "refs/heads/tip"): Promise<void> => {
+      const out = await deps.git.push({ fs, http: deps.http, gitdir, url: info.remote, ref, remoteRef, force: false, onAuth: auth });
+      if (!out.ok) throw new Error(`push ${remoteRef} failed${out.error ? `: ${out.error}` : ""}`);
+    };
+    // Forge trunks are main; a master-default repo gets main at its tip.
+    if (!byRef.has("refs/heads/main")) await push("refs/heads/main");
+    const lanes = Math.max(1, Math.min(deps.lanes ?? MAX_LANE_REFS, MAX_LANE_REFS));
+    let lanesCreated = 0;
+    for (let i = 0; i < lanes; i++) {
+      if (byRef.has(`refs/heads/forge/lane-${i}`)) continue;
+      await push(`refs/heads/forge/lane-${i}`);
+      lanesCreated++;
+    }
+    if (!byRef.has("refs/notes/why")) {
+      await deps.git.addNote({ fs, gitdir, ref: "refs/notes/why", oid: tip, note: "", author: { name: "Flare Forge", email: "forge@flare.invalid" } });
+      await push("refs/notes/why", "refs/notes/why");
+    }
+    return { ok: true, status: "ready", repo: name, scoped: `${deps.namespace}/${name}`, trunk: tip, source, lanesCreated };
+  } catch (err) {
+    return { ok: false, status: 502, code: "repo_create_failed", error: `imported, but preparing trains failed: ${err instanceof Error ? err.message : String(err)} (retry the import)` };
+  }
 }
 
 export interface WorkspaceArtifacts {
