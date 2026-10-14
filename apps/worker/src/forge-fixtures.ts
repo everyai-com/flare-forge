@@ -216,6 +216,18 @@ const intents: FixtureIntent[] = [
     train_id: "t-142", landed_sha: PREFIX, lease_expires_in_s: null, route: "audit", escalation: null,
     evidence: { run_id: "r-886", sha: PREFIX, status: "success", tests: 41, duration_s: 22, reviewer: "disagrees" }, created_at: "2026-10-12T13:47:58Z",
   },
+  {
+    id: "i-a6f1", goal_id: "g-2", title: "Batch author lookups on /books into one IN query", agent: "a-05", state: "ready",
+    risk: 31, risk_terms: [size(6, 4), { term: "weak_evidence", points: 10, detail: "no test covers src/lib/db.ts" }, { term: "reviewer_disagrees", points: 15, detail: "reviewer: the IN list is unbounded for a 100-item page" }],
+    path: "src/lib/store.ts",
+    footprint: { declared: ["src/lib/store.ts", "src/lib/db.ts", "src/routes/books.ts", "test/books-batch.test.ts"], actual: ["src/lib/store.ts", "src/lib/db.ts", "src/routes/books.ts", "test/books-batch.test.ts"], drift: [] },
+    reasoning: "Each /books page runs one author query per book (N+1). Collect the author ids and fetch them with a single IN query, then join in memory.",
+    accept: "node --test test/books-batch.test.ts", rejected: ["A JOIN in the books query: the author shape is reused by /authors and would fork."],
+    plan: ["Collect author ids per page", "Add getAuthorsByIds with one IN query", "Join authors in memory", "Test one query per page"],
+    train_id: null, landed_sha: null, lease_expires_in_s: null, route: "human",
+    escalation: "Risk 31 > auto-land line 30: CI is green, but the reviewer flagged an unbounded IN list. Approve the landing or send it back.",
+    evidence: { run_id: "r-908", sha: "f3a9c2e", status: "success", tests: 44, duration_s: 33, reviewer: "disagrees", note: "IN list unbounded" }, created_at: "2026-10-12T13:58:31Z",
+  },
 ];
 
 const tree = [
@@ -448,6 +460,147 @@ function plannerProposals() {
   ];
 }
 
+// Demo diffs (GET /v1/forge/intents/:id/diff shape): unified patches of
+// a few intents' fork heads against their base. Demo data, not real SHAs.
+type FixtureDiffFile = { path: string; status: "added" | "modified" | "deleted"; patch: string };
+function demoDiff(base: string, head: string, files: Array<{ path: string; status: "added" | "modified" | "deleted"; lines: string[] }>) {
+  const out: FixtureDiffFile[] = files.map((f) => ({ path: f.path, status: f.status, patch: f.lines.join("\n") }));
+  const stat = { added: 0, modified: 0, deleted: 0 };
+  for (const f of out) stat[f.status]++;
+  return { demo: true, base, head, stat, files: out, truncated: false };
+}
+
+const diffs = {
+  "i-1d4e": demoDiff("a07c3e9", "4be17a2", [
+    { path: "src/middleware/logging.ts", status: "modified", lines: [
+      "@@ -3,11 +3,14 @@",
+      " // Access log: one JSON line per request.",
+      " export function withLogging(next: Handler): Handler {",
+      "   return async (req, env) => {",
+      "+    const requestId = req.headers.get(\"x-request-id\") ?? req.headers.get(\"cf-ray\") ?? crypto.randomUUID();",
+      "     const res = await next(req, env);",
+      "-    console.log(formatLogLine(req, res.status));",
+      "+    res.headers.set(\"x-request-id\", requestId);",
+      "+    console.log(formatLogLine(req, res.status, requestId));",
+      "     return res;",
+      "   };",
+      " }",
+      " ",
+      "-export function formatLogLine(req: Request, status: number): string {",
+      "+export function formatLogLine(req: Request, status: number, requestId: string): string {",
+      "   const url = new URL(req.url);",
+      "-  return JSON.stringify({ method: req.method, path: url.pathname, status });",
+      "+  return JSON.stringify({ method: req.method, path: url.pathname, status, requestId });",
+      " }",
+    ] },
+    { path: "test/request-id.test.ts", status: "added", lines: [
+      "@@ -0,0 +1,12 @@",
+      "+import { test } from \"node:test\";",
+      "+import assert from \"node:assert/strict\";",
+      "+import { withLogging } from \"../src/middleware/logging.ts\";",
+      "+",
+      "+test(\"reuses the caller's x-request-id\", async () => {",
+      "+  const handler = withLogging(async () => new Response(\"ok\"));",
+      "+  const res = await handler(new Request(\"https://x/books\", { headers: { \"x-request-id\": \"abc\" } }), {});",
+      "+  assert.equal(res.headers.get(\"x-request-id\"), \"abc\");",
+      "+});",
+      "+",
+      "+test(\"mints an id when absent\", async () => {",
+      "+  assert.match((await withLogging(async () => new Response(\"ok\"))(new Request(\"https://x/\"), {})).headers.get(\"x-request-id\") ?? \"\", /^[0-9a-f-]{36}$/);",
+      "+});",
+    ] },
+  ]),
+  "i-a6f1": demoDiff(HEAD, "f3a9c2e", [
+    { path: "src/lib/db.ts", status: "modified", lines: [
+      "@@ -18,6 +18,13 @@ export async function getAuthor(db: D1Database, id: string) {",
+      "   return db.prepare(\"SELECT * FROM authors WHERE id = ?\").bind(id).first<Author>();",
+      " }",
+      " ",
+      "+export async function getAuthorsByIds(db: D1Database, ids: string[]): Promise<Author[]> {",
+      "+  if (!ids.length) return [];",
+      "+  const marks = ids.map(() => \"?\").join(\", \");",
+      "+  const res = await db.prepare(\"SELECT * FROM authors WHERE id IN (\" + marks + \")\").bind(...ids).all<Author>();",
+      "+  return res.results;",
+      "+}",
+      "+",
+      " export async function listBooks(db: D1Database, page: Page) {",
+    ] },
+    { path: "src/lib/store.ts", status: "modified", lines: [
+      "@@ -40,9 +40,10 @@ export async function bookPage(db: D1Database, page: Page) {",
+      "   const books = await listBooks(db, page);",
+      "-  for (const b of books) {",
+      "-    b.author = await getAuthor(db, b.authorId);",
+      "-  }",
+      "+  const ids = [...new Set(books.map((b) => b.authorId))];",
+      "+  const authors = new Map((await getAuthorsByIds(db, ids)).map((a) => [a.id, a]));",
+      "+  for (const b of books) b.author = authors.get(b.authorId) ?? null;",
+      "   return books;",
+      " }",
+    ] },
+    { path: "src/routes/books.ts", status: "modified", lines: [
+      "@@ -12,7 +12,7 @@ export async function listBooksRoute(req: Request, env: Env) {",
+      "   const page = parsePage(new URL(req.url));",
+      "-  const books = await bookPageSlow(env.DB, page);",
+      "+  const books = await bookPage(env.DB, page);",
+      "   return json({ books, page });",
+      " }",
+    ] },
+    { path: "test/books-batch.test.ts", status: "added", lines: [
+      "@@ -0,0 +1,9 @@",
+      "+import { test } from \"node:test\";",
+      "+import assert from \"node:assert/strict\";",
+      "+import { bookPage } from \"../src/lib/store.ts\";",
+      "+import { countingDb } from \"./helpers.ts\";",
+      "+",
+      "+test(\"one author query per page\", async () => {",
+      "+  const db = countingDb();",
+      "+  await bookPage(db, { limit: 30, offset: 0 });",
+      "+  assert.equal(db.queries.filter((q) => q.includes(\"FROM authors\")).length, 1);",
+      "+});",
+    ] },
+  ]),
+  "i-7f3a": demoDiff(HEAD, "e4a90c1", [
+    { path: "src/middleware/rateLimit.ts", status: "added", lines: [
+      "@@ -0,0 +1,16 @@",
+      "+import type { Handler } from \"../lib/http.ts\";",
+      "+import { clientIp } from \"../lib/ip.ts\";",
+      "+",
+      "+const windows = new Map<string, { start: number; n: number }>();",
+      "+",
+      "+export function withRateLimit(next: Handler, limit = 600): Handler {",
+      "+  return async (req, env) => {",
+      "+    const ip = clientIp(req);",
+      "+    const now = Date.now();",
+      "+    const w = windows.get(ip);",
+      "+    if (!w || now - w.start >= 60_000) windows.set(ip, { start: now, n: 1 });",
+      "+    else if (++w.n > limit) return new Response(\"rate limited\", { status: 429 });",
+      "+    return next(req, env);",
+      "+  };",
+      "+}",
+    ] },
+    { path: "src/index.ts", status: "modified", lines: [
+      "@@ -8,7 +8,7 @@ import { withCors } from \"./middleware/cors.ts\";",
+      " ",
+      "-export default { fetch: withCors(withLogging(router)) };",
+      "+export default { fetch: withCors(withRateLimit(withLogging(router))) };",
+    ] },
+    { path: "src/lib/ip.ts", status: "added", lines: [
+      "@@ -0,0 +1,3 @@",
+      "+export function clientIp(req: Request): string {",
+      "+  return req.headers.get(\"cf-connecting-ip\") ?? \"unknown\";",
+      "+}",
+    ] },
+  ]),
+};
+
+// Demo path history (GET /v1/forge/history shape). Demo data.
+const history = {
+  "src/middleware/logging.ts": [
+    { hash: "4be17a2c0f6d9e1b7a3c5d8e2f4a6b8c0d1e3f5a", message: "Tag every request with an x-request-id and log it", author: "forge-train", at: "2026-10-12T13:44:48Z", change: "modified", intents: [{ id: "i-1d4e", title: "Tag every request with an x-request-id and log it" }] },
+    { hash: "a07c3e91b2d4f6a8c0e2d4f6b8a0c2e4f6a8b0c2", message: "Bookshelf API scaffold: access-log middleware", author: "maintainer", at: "2026-10-12T09:12:00Z", change: "added", intents: [] },
+  ],
+};
+
 export const FORGE_FIXTURES = {
   v: 1,
   note: "Demo fixtures. Not measurements.",
@@ -464,6 +617,8 @@ export const FORGE_FIXTURES = {
   sessions,
   mailbox,
   planner: plannerProposals(),
+  diffs,
+  history,
 };
 
 // JSON for an inline <script type="application/json">. "<" is escaped so

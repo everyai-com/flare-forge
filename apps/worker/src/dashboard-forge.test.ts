@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { DASHBOARD_HTML, DASHBOARD_UI_ACTIONS, FORGE_MCP_TOOL_NAMES, dashboardRedirectUrl } from "./dashboard";
+import { DASHBOARD_HTML, DASHBOARD_UI_ACTIONS, FORGE_MCP_TOOL_NAMES, FORGE_REST_ACTIONS, dashboardRedirectUrl } from "./dashboard";
 import { FORGE_FIXTURES, forgeFixturesJson } from "./forge-fixtures";
-import { FORGE_JS } from "./dashboard-forge-js";
+import { FORGE_JS, FORGE_PURE_JS } from "./dashboard-forge-js";
 import { FORGE_CSS, FORGE_PANE_HTML, FORGE_OVERLAYS_HTML, FORGE_NAV_HTML } from "./dashboard-forge-ui";
 
 // Static guards for the Forge screens (docs/FORGE-UX.md). Runtime-free:
@@ -40,12 +40,16 @@ describe("forge dashboard", () => {
   });
 
   it("maps every data-action to an MCP tool or a declared UI-only verb", () => {
-    const allowed = new Set<string>([...FORGE_MCP_TOOL_NAMES, ...DASHBOARD_UI_ACTIONS]);
+    const allowed = new Set<string>([...FORGE_MCP_TOOL_NAMES, ...FORGE_REST_ACTIONS, ...DASHBOARD_UI_ACTIONS]);
     const actions = dataActions();
     expect(actions.size).toBeGreaterThan(10);
     for (const a of actions) expect(allowed, "data-action " + a).toContain(a);
-    // and the REST map the actions call covers only declared tools
-    for (const m of FORGE_JS.matchAll(/^ {4}([a-z_]+): \{ m: "POST"/gm)) expect(FORGE_MCP_TOOL_NAMES).toContain(m[1]);
+    // and the REST map the actions call covers only declared tools (or
+    // the admin REST-only verbs, which have no MCP tool)
+    const tools = new Set<string>([...FORGE_MCP_TOOL_NAMES, ...FORGE_REST_ACTIONS]);
+    for (const m of FORGE_JS.matchAll(/^ {4}([a-z_]+): \{ m: "POST"/gm)) expect(tools).toContain(m[1]);
+    // REST-only verbs are never also MCP tool names (no silent overlap)
+    for (const a of FORGE_REST_ACTIONS) expect(FORGE_MCP_TOOL_NAMES as readonly string[]).not.toContain(a);
   });
 
   it("pins Home (the signed-in landing screen) first, then the agent forge group", () => {
@@ -354,6 +358,137 @@ describe("forge simple detail views", () => {
     for (const pro of ['["Approve plan ", h("kbd", { text: "a" })]', "Both intents' why, side by side", "merge into stacked lanes", '"Baseline vs Forge"', "Could not load this screen", '["Fork session"]', '"Copy chain"', "Live updates paused · press p to resume", "Launch intents", "Each intent needs a title and at least one footprint path", "\"Why · line \" + line"]) {
       expect(FORGE_JS).toContain(pro);
     }
+  });
+});
+
+// Backend verbs that gained a dashboard surface: approve-landing,
+// abandon, intent diff, path history + server-side file read on Why,
+// and the full session.
+type PureHelpers = {
+  fxApproveKind: (it: Record<string, unknown> | null) => string;
+  fxDiffLines: (patch: string, max: number) => { rows: Array<{ cls: string; text: string }>; add: number; del: number; cut: number };
+  fxEpochIso: (at: unknown) => string;
+  FX_WRITE_ACTIONS: string[];
+};
+function pure(): PureHelpers {
+  return new Function(FORGE_PURE_JS + "\nreturn { fxApproveKind: fxApproveKind, fxDiffLines: fxDiffLines, fxEpochIso: fxEpochIso, FX_WRITE_ACTIONS: FX_WRITE_ACTIONS };")() as PureHelpers;
+}
+
+describe("forge dashboard: UI for approve-landing, abandon, diff, history, session", () => {
+  it("routes inbox approvals: plans to approve_plan, ready human-routed items to approve_landing", () => {
+    const { fxApproveKind } = pure();
+    expect(fxApproveKind({ reason: "plan", bucket: "needs_you", state: "awaiting_plan" })).toBe("plan");
+    expect(fxApproveKind({ reason: "escalation", bucket: "needs_you", state: "ready" })).toBe("landing");
+    // already approved, or not ready yet: nothing to approve
+    expect(fxApproveKind({ reason: "escalation", bucket: "needs_you", state: "ready", landingApproved: true })).toBe("");
+    expect(fxApproveKind({ reason: "escalation", bucket: "needs_you", state: "failed" })).toBe("");
+    // the API's approve.kind wins
+    expect(fxApproveKind({ reason: "escalation", bucket: "needs_you", state: "ready", approve: { kind: "plan" } })).toBe("plan");
+    expect(fxApproveKind({ reason: "escalation", bucket: "needs_you", state: "working", approve: { kind: "landing" } })).toBe("landing");
+    expect(fxApproveKind({ approve: { kind: "bogus" } })).toBe("");
+    expect(fxApproveKind(null)).toBe("");
+    expect(FORGE_JS).toContain('if (kind === "landing") { fxCommitWithUndo(');
+    expect(FORGE_JS).toContain('return fxCall("approve_landing", it.id, {});');
+    // the inbox keeps the API's approve hint
+    expect(FORGE_JS).toContain("approve: it.approve || null, landingApproved: !!it.landingApproved");
+  });
+
+  it("calls the real REST routes for the new write verbs", () => {
+    expect(FORGE_JS).toContain('approve_landing: { m: "POST", p: "/v1/forge/intents/:id/approve-landing" }');
+    expect(FORGE_JS).toContain('abandon: { m: "POST", p: "/v1/forge/intents/:id/abandon" }');
+    for (const ep of ["/v1/forge/intents/\" + encodeURIComponent(i.id) + \"/diff", "/session?limit=1000", "/v1/forge/history?repo=", "/v1/forge/read?repo="]) expect(FORGE_JS).toContain(ep);
+  });
+
+  it("hides every write control on the spectator page, including the new ones", () => {
+    const { FX_WRITE_ACTIONS } = pure();
+    for (const a of ["approve_landing", "abandon"]) expect(FX_WRITE_ACTIONS).toContain(a);
+    for (const a of [...FX_WRITE_ACTIONS, "load_full_session"]) expect(FORGE_CSS, a).toContain('body.fx-public [data-action="' + a + '"]');
+    // spectator API has no diff/session/history: those panels never render there
+    expect(FORGE_JS).toContain("if (!FX.pub) {\n      left.appendChild(fxDiffPanel(i));");
+    expect(FORGE_JS).toContain("if (FX.pub) return null;");
+    expect(FORGE_JS).toContain('else if (!FX.pub) {\n      var more = h("button", { type: "button", cls: "ghost fx-mini", "data-action": "load_full_session"');
+    // admin-only buttons are gated on fxCanAct (false on /watch)
+    expect(FORGE_JS).toContain("if (fxNeedsLanding(i) && fxCanAct()) acts.appendChild(");
+    expect(FORGE_JS).toContain("if (FX_ABANDONABLE[i.state] && fxCanAct()) acts.appendChild(fxAbandonButton(i, box));");
+  });
+
+  it("confirms abandon before calling it", () => {
+    const fn = FORGE_JS.slice(FORGE_JS.indexOf("function fxAbandonButton("), FORGE_JS.indexOf("function fxWhyLink("));
+    expect(fn).toContain('"data-confirmed": "true"');
+    expect(fn).toContain("This cannot be undone.");
+    // the first button only asks; only the confirm button calls the API
+    expect(fn.match(/fxCall\("abandon"/g)).toHaveLength(1);
+    expect(fn.indexOf('fxCall("abandon"')).toBeGreaterThan(fn.indexOf('"data-confirmed": "true"'));
+  });
+
+  it("works in demo mode: reads come from fixtures, writes mutate them in memory", () => {
+    // demo reads never hit the network; live reads never fall back to fixtures
+    expect(FORGE_JS).toContain("FX.demo ? Promise.resolve(fxFxDiff(i)) : fxFetch(");
+    expect(FORGE_JS).toContain("FX.demo ? Promise.resolve(fxFxHistory(path)) : fxFetch(");
+    expect(FORGE_JS).toContain("FX.demo ? Promise.resolve(fxFxSession(i)) : fxFetch(");
+    expect(FORGE_JS).not.toMatch(/fxLoad\("\/v1\/forge\/(history|read)|fxLoad\("\/v1\/forge\/intents\/" \+ encodeURIComponent\(i\.id\) \+ "\/(diff|session)/);
+    expect(FORGE_JS).toContain('else if (tool === "approve_landing" && i) {');
+    expect(FORGE_JS).toContain('else if (tool === "abandon" && i) { i.state = "abandoned";');
+    // fixtures: a ready intent routed to a human, diffs and history on real ids
+    const f = FORGE_FIXTURES;
+    const ids = new Set(f.intents.map((i) => i.id));
+    const landing = f.intents.filter((i) => i.state === "ready" && i.route === "human");
+    expect(landing.length).toBeGreaterThan(0);
+    for (const i of landing) expect(i.risk).toBeGreaterThan(30);
+    for (const [id, d] of Object.entries(f.diffs)) {
+      expect(ids.has(id), id).toBe(true);
+      expect(d.demo).toBe(true);
+      for (const file of d.files) for (const ln of file.patch.split("\n")) expect(ln, id + " " + file.path).toMatch(/^([ +-]|@@ )/);
+    }
+    expect(Object.keys(f.diffs)).toContain(landing[0].id);
+    for (const list of Object.values(f.history)) for (const c of list) for (const x of c.intents) expect(ids.has(x.id)).toBe(true);
+    expect(Object.keys(f.history)).toContain(f.why.path);
+  });
+
+  it("caps rendered diffs and keeps the counts honest", () => {
+    const { fxDiffLines } = pure();
+    const r = fxDiffLines("@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n+more\n", 3);
+    expect(r.rows.map((x) => x.cls)).toEqual(["hunk", "", "del"]);
+    expect([r.add, r.del, r.cut]).toEqual([2, 1, 2]);
+    expect(fxDiffLines("", 10).rows).toEqual([]);
+    expect(FORGE_JS).toContain("var FX_DIFF_MAX_LINES = 1200;");
+    expect(FORGE_CSS).toContain(".fx-diff-pre .add { background: var(--tint-landed);");
+    expect(FORGE_CSS).toContain(".fx-diff-pre .del { background: var(--tint-conflict);");
+  });
+
+  it("links footprint paths to the Why screen and shows history + the file there", () => {
+    const { fxEpochIso } = pure();
+    expect(fxEpochIso(1760000000)).toBe(new Date(1760000000 * 1000).toISOString());
+    expect(fxEpochIso(1760000000000)).toBe(new Date(1760000000000).toISOString());
+    expect(fxEpochIso("2026-10-12T09:12:00Z")).toBe("2026-10-12T09:12:00.000Z");
+    expect(fxEpochIso(null)).toBe("");
+    expect(fxEpochIso("nope")).toBe("");
+    expect(FORGE_JS).toContain('h("td", {}, [fxWhyLink(p)])');
+    expect(FORGE_JS).toContain('return h("a", { href: "#/why?path=" + encodeURIComponent(p) + "&line=1"');
+    expect(FORGE_JS).toContain("if (b && b.kind === \"dir\") mount.appendChild(fxDirView(b, path));");
+    expect(FORGE_JS).toContain("fxScrollToLine(mount);");
+  });
+});
+
+describe("settings: spectator mode card", () => {
+  it("reads and sets public repos and mints a judge token shown once, never in a URL or log", () => {
+    const pane = DASHBOARD_HTML.slice(DASHBOARD_HTML.indexOf('<h2 id="setSpectator">'), DASHBOARD_HTML.indexOf("</section>", DASHBOARD_HTML.indexOf('<h2 id="setSpectator">')));
+    for (const id of ["spectatorForm", "spectatorRepos", "judgeTokenForm", "judgeTokenBox", "judgeTokenValue", "judgeTokenCopy"]) expect(pane).toContain('id="' + id + '"');
+    expect(pane).toContain("Shown once.");
+    const js = inlineScript();
+    const fn = js.slice(js.indexOf("function loadSpectator()"), js.indexOf("function loadSettings()"));
+    expect(fn).toContain('api("/v1/admin/forge/public")');
+    expect(fn).toContain('api("/v1/admin/forge/public", { method: "POST", body: JSON.stringify({ repos: repos }) })');
+    expect(fn).toContain('api("/v1/admin/forge/judge-token", { method: "POST", body: JSON.stringify(body) })');
+    expect(fn).toContain('document.getElementById("judgeTokenValue").textContent = String(d.token || "");');
+    // the token only ever lands in textContent: no logging, no URL, no storage
+    expect(fn).not.toMatch(/console\.|localStorage|sessionStorage|location\.(href|hash|search) *=|innerHTML/);
+    // each Settings load drops a previously shown token
+    expect(fn).toContain('document.getElementById("judgeTokenValue").textContent = "";');
+    expect(js).toContain("function loadSettings() {\n    loadSpectator();");
+    // demo mode never calls the admin API (a 401 would bounce the visitor to login)
+    expect(fn).toContain("if (isForgeDemo()) { renderSpectator(");
+    expect(fn).toContain('if (isForgeDemo()) { ok.textContent = plain("t_judge_demo", "Demo: no token minted.');
   });
 });
 
