@@ -90,6 +90,8 @@ import {
   setRepoSecret,
   releaseWebhookDelivery,
   setMirrorDefaultBranch,
+  getMirrorRow,
+  setMirrorRow,
   setRunPrComment,
   setScheduleEnabled,
   setSetting,
@@ -278,7 +280,7 @@ import {
 } from "./mergequeue";
 import git from "isomorphic-git";
 import { MemoryFS } from "./memory-fs";
-import { MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo } from "./workspace";
+import { FORGE_READY_DETAIL, MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo, prepareForgeTrunk } from "./workspace";
 import http from "isomorphic-git/http/web";
 import { registerTrainDispatch, runTrainTick } from "./train-workflow";
 import { cronMatches, validateCron } from "./cron";
@@ -1546,6 +1548,21 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
             });
             if (out.status === "failed") log("warn", "mirror provision failed", { repo, detail: out.detail ?? "" });
             else if (out.status === "ready") log("info", "mirror ready", { repo, mirror: out.mirror });
+            // Train-ready on the first push, hands-free: add main, the
+            // lane pool and refs/notes/why once (marked on the mirror
+            // row), so agents can land without a Bring into Forge click.
+            if (out.status === "ready" && env.ARTIFACTS) {
+              const row = await getMirrorRow(env.DB, repo);
+              if (row && row.detail !== FORGE_READY_DETAIL) {
+                try {
+                  const prep = await prepareForgeTrunk({ artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS() }, out.mirror);
+                  await setMirrorRow(env.DB, repo, out.mirror, "ready", FORGE_READY_DETAIL);
+                  log("info", "mirror train-ready", { repo, lanesCreated: prep.lanesCreated });
+                } catch (err) {
+                  log("warn", "mirror train prep failed", { repo, error: String(err) });
+                }
+              }
+            }
             // Trunk sync input: seats fast-forward the mirror's default
             // branch on pushes to it (see apps/seats trunkSyncScript),
             // keyed on the default branch recorded here (no-op write

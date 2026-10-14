@@ -10,12 +10,14 @@
 
 import type { FsClient, HttpClient } from "isomorphic-git";
 import { ensureRepoMirror, mirrorNameFor, type MirrorArtifactsNamespace } from "./artifacts-mirrors";
-import type { Db } from "./db";
+import { setMirrorRow, type Db } from "./db";
 import { nowIso } from "./db";
 import type { MemoryFS } from "./memory-fs";
 import { MAX_LANE_REFS } from "./train-core";
 
 export const MEMBER_REPO_LIMIT = 5;
+// artifacts_mirrors.detail once a mirror has its lane pool (push hook).
+export const FORGE_READY_DETAIL = "forge-ready";
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 
 export interface WorkspaceGit {
@@ -89,41 +91,55 @@ export async function importGithubRepo(
     return { ok: false, status: 502, code: "repo_create_failed", error: `import from GitHub failed: ${detail}${hint}` };
   }
   try {
-    const handle = await deps.artifacts.get(name);
-    const info = await handle.info();
-    const tok = await handle.createToken("write", 900);
-    if (!info?.remote) throw new Error("mirror has no remote");
-    const auth = () => ({ username: "x", password: tok.plaintext });
-    const heads = await deps.git.listServerRefs({ http: deps.http, url: info.remote, prefix: "refs/", onAuth: auth });
-    const byRef = new Map(heads.map((r) => [r.ref, r.oid]));
-    const trunkRef = byRef.has("refs/heads/main") ? "refs/heads/main" : byRef.has("refs/heads/master") ? "refs/heads/master" : (heads.find((r) => r.ref.startsWith("refs/heads/"))?.ref ?? "");
-    const tip = byRef.get(trunkRef);
-    if (!tip) throw new Error("the GitHub repo has no branches to import");
-    const fs = deps.fs();
-    const gitdir = "/import.git";
-    await deps.git.init({ fs, gitdir, bare: true, defaultBranch: "main" });
-    await deps.git.writeRef({ fs, gitdir, ref: "refs/heads/tip", value: tip, force: true });
-    const push = async (remoteRef: string, ref = "refs/heads/tip"): Promise<void> => {
-      const out = await deps.git.push({ fs, http: deps.http, gitdir, url: info.remote, ref, remoteRef, force: false, onAuth: auth });
-      if (!out.ok) throw new Error(`push ${remoteRef} failed${out.error ? `: ${out.error}` : ""}`);
-    };
-    // Forge trunks are main; a master-default repo gets main at its tip.
-    if (!byRef.has("refs/heads/main")) await push("refs/heads/main");
-    const lanes = Math.max(1, Math.min(deps.lanes ?? MAX_LANE_REFS, MAX_LANE_REFS));
-    let lanesCreated = 0;
-    for (let i = 0; i < lanes; i++) {
-      if (byRef.has(`refs/heads/forge/lane-${i}`)) continue;
-      await push(`refs/heads/forge/lane-${i}`);
-      lanesCreated++;
-    }
-    if (!byRef.has("refs/notes/why")) {
-      await deps.git.addNote({ fs, gitdir, ref: "refs/notes/why", oid: tip, note: "", author: { name: "Flare Forge", email: "forge@flare.invalid" } });
-      await push("refs/notes/why", "refs/notes/why");
-    }
-    return { ok: true, status: "ready", repo: name, scoped: `${deps.namespace}/${name}`, trunk: tip, source, lanesCreated };
+    const prep = await prepareForgeTrunk(deps, name);
+    await setMirrorRow(deps.db, source, name, "ready", FORGE_READY_DETAIL);
+    return { ok: true, status: "ready", repo: name, scoped: `${deps.namespace}/${name}`, trunk: prep.tip, source, lanesCreated: prep.lanesCreated };
   } catch (err) {
     return { ok: false, status: 502, code: "repo_create_failed", error: `imported, but preparing trains failed: ${err instanceof Error ? err.message : String(err)} (retry the import)` };
   }
+}
+
+// Make an Artifacts repo train-ready: main (at the default-branch tip
+// when main is absent), the lane-ref pool and refs/notes/why. Idempotent
+// (only missing refs are pushed) and cheap: every new ref points at a
+// tip the server already has, so each push sends an empty pack. Shared
+// by Bring into Forge and the first-push mirror hook.
+export async function prepareForgeTrunk(
+  deps: Pick<ImportRepoDeps, "artifacts" | "git" | "http" | "fs" | "lanes">,
+  name: string,
+): Promise<{ tip: string; lanesCreated: number }> {
+  const handle = await deps.artifacts.get(name);
+  const info = await handle.info();
+  const tok = await handle.createToken("write", 900);
+  if (!info?.remote) throw new Error("mirror has no remote");
+  const auth = () => ({ username: "x", password: tok.plaintext });
+  const heads = await deps.git.listServerRefs({ http: deps.http, url: info.remote, prefix: "refs/", onAuth: auth });
+  const byRef = new Map(heads.map((r) => [r.ref, r.oid]));
+  const trunkRef = byRef.has("refs/heads/main") ? "refs/heads/main" : byRef.has("refs/heads/master") ? "refs/heads/master" : (heads.find((r) => r.ref.startsWith("refs/heads/"))?.ref ?? "");
+  const tip = byRef.get(trunkRef);
+  if (!tip) throw new Error("the GitHub repo has no branches to import");
+  const fs = deps.fs();
+  const gitdir = "/import.git";
+  await deps.git.init({ fs, gitdir, bare: true, defaultBranch: "main" });
+  await deps.git.writeRef({ fs, gitdir, ref: "refs/heads/tip", value: tip, force: true });
+  const push = async (remoteRef: string, ref = "refs/heads/tip"): Promise<void> => {
+    const out = await deps.git.push({ fs, http: deps.http, gitdir, url: info.remote, ref, remoteRef, force: false, onAuth: auth });
+    if (!out.ok) throw new Error(`push ${remoteRef} failed${out.error ? `: ${out.error}` : ""}`);
+  };
+  // Forge trunks are main; a master-default repo gets main at its tip.
+  if (!byRef.has("refs/heads/main")) await push("refs/heads/main");
+  const lanes = Math.max(1, Math.min(deps.lanes ?? MAX_LANE_REFS, MAX_LANE_REFS));
+  let lanesCreated = 0;
+  for (let i = 0; i < lanes; i++) {
+    if (byRef.has(`refs/heads/forge/lane-${i}`)) continue;
+    await push(`refs/heads/forge/lane-${i}`);
+    lanesCreated++;
+  }
+  if (!byRef.has("refs/notes/why")) {
+    await deps.git.addNote({ fs, gitdir, ref: "refs/notes/why", oid: tip, note: "", author: { name: "Flare Forge", email: "forge@flare.invalid" } });
+    await push("refs/notes/why", "refs/notes/why");
+  }
+  return { tip, lanesCreated };
 }
 
 export interface WorkspaceArtifacts {
