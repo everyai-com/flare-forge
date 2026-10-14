@@ -624,9 +624,26 @@ body.explain .ex { display:block; }
   function ex(parent, text) { if (!text) return null; var e = add(parent, el("div", "ex", text)); return e; }
   function pageExplain(root) { ex(root, PAGE_EX[S.page]); }
   function stateOf(i) { return i.state === "awaiting_plan" ? "awaiting_plan" : i.state; }
+  // No flare.yml at trunk: trains cannot verify, so nothing lands. Say so
+  // plainly and offer the fix instead of leaving intents in Ready.
+  function ciBanner(root) {
+    var d = S.data; if (!d || !d.pipeline || d.pipeline.present) return;
+    var waiting = intents().filter(function (i) { return i.state === "ready"; }).length;
+    var b = add(root, el("div", "note warn")); b.style.marginBottom = "12px";
+    add(b, el("b", null, "This repo has no CI yet, so trains cannot land anything. "));
+    add(b, el("span", null, (waiting ? waiting + " ready intent" + (waiting === 1 ? " is" : "s are") + " waiting. " : "") + "Forge only moves main to a commit whose CI passed; add a flare.yml with the command that proves a change works."));
+    if (S.authed && !S.pub) {
+      var bt = add(b, el("button", "primary sm", "Add CI")); bt.style.marginLeft = "10px";
+      bt.addEventListener("click", function () { bt.disabled = true; bt.textContent = "Adding…"; api("/v1/me/repos/" + encodeURIComponent(S.repo) + "/ci", { method: "POST", body: {} }).then(function (r) {
+        if (r.status === 201 && r.body) { toast("landed", "Added a " + r.body.kind + " flare.yml: " + (r.body.steps || []).join(" → ")); poll(); }
+        else { bt.disabled = false; bt.textContent = "Add CI"; toast("conflict", fail(r)); }
+      }); });
+    }
+  }
   function pOverview(root) {
     var c = counters(), d = S.data, need = d.inbox && d.inbox.metrics ? d.inbox.metrics.needs_you || 0 : 0; var m = byIdMap();
     pageExplain(root);
+    ciBanner(root);
     var g = add(root, el("div", "grid g6"));
     add(g, stat("Agents active", num(c.agents), agents().length + " seen"));
     add(g, stat("Intents live", num(c.intents), (c.overlaps_caught || 0) + " overlaps caught"));
@@ -668,6 +685,7 @@ body.explain .ex { display:block; }
     }
     if (k === "routed") b = b.replace(/ *\\(run [^)]*\\) *$/, "");
     switch (k) {
+      case "ci_limit": return ["CI paused for this repo: " + b, "human"];
       case "github_push": { var gp = {}; try { gp = JSON.parse(b) || {}; } catch (e) { gp = {}; } return [who + " pushed " + (gp.commits || 1) + " commit" + (gp.commits === 1 ? "" : "s") + " to " + (gp.branch || "a branch") + " on GitHub, outside Forge" + (gp.message ? ": \u201c" + gp.message + "\u201d" : "") + " (" + short(gp.sha || "") + ")", "idle"]; }
       case "plan_approved": return [who + " approved the plan for \u201c" + title + "\u201d", "human"];
       case "landing_approved": return [who + " approved landing \u201c" + title + "\u201d", "human"];
@@ -706,7 +724,7 @@ body.explain .ex { display:block; }
   function renderActivity(parent) {
     var NOISE = { "notes.tip": 1, tokens_revoked: 1, forming: 1, "notes": 1 };
     var list = ((S.data && Array.isArray(S.data.activity)) ? S.data.activity : []).filter(function (l) { return !NOISE[l.kind]; }); var m = byIdMap();
-    if (!list.length) { empty(parent, "Nothing has happened yet", "The first declared intent starts the ledger.", S.pub ? "" : "npm run forge:agents -- --mode scripted --count 6"); return; }
+    if (!list.length) { var ee = empty(parent, "Nothing has happened yet", "The first declared intent starts the ledger. Connect an agent and ask it to declare one, or start with New goal.", ""); if (S.authed && !S.pub) { var eb = add(ee, el("div", "toolbar")); eb.style.marginTop = "8px"; var e1 = add(eb, el("button", "primary sm", "Connect an agent")); e1.addEventListener("click", function () { modal("Connect an agent", function (b) { connectPanel(b); }, []); }); var e2 = add(eb, el("button", "sm", "New goal")); e2.addEventListener("click", goalComposer); } return; }
     var box = add(parent, el("div", "feed"));
     list.slice(0, 40).forEach(function (l) { var sx = sentence(l, m); var row = add(box, el("div", "fi")); add(row, el("span", "d " + sx[1])); var t = add(row, el("span", "t", sx[0])); add(row, el("span", "w", ago(l.at))); var href = l.subjectKind === "intent" ? "#/intents/" + l.subjectId : l.subjectKind === "train" ? "#/trains/" + l.subjectId : l.subjectKind === "conflict" ? "#/conflicts/" + l.subjectId : ""; if (href) { row.classList.add("link"); row.addEventListener("click", function () { nav(href); }); } });
   }

@@ -4,8 +4,9 @@ import type { HttpClient } from "isomorphic-git";
 import { createToken, getMirrorRow } from "./db";
 import { forgeSqliteDb } from "./forge.testkit";
 import { MemoryFS } from "./memory-fs";
+import { parsePipeline } from "./pipeline";
 import { authIdentityFromToken, hashToken, MEMBER_TOKEN_SCOPE, memberRepos, NO_REPOS } from "./tokens";
-import { createMemberRepo, FORGE_READY_DETAIL, importGithubRepo, prepareForgeTrunk, listOwnedRepos, MEMBER_REPO_LIMIT, parseGithubRepo, starterFiles, validateWorkspaceName, type WorkspaceGit } from "./workspace";
+import { createMemberRepo, FORGE_READY_DETAIL, importGithubRepo, prepareForgeTrunk, starterPipeline, listOwnedRepos, MEMBER_REPO_LIMIT, parseGithubRepo, starterFiles, validateWorkspaceName, type WorkspaceGit } from "./workspace";
 
 // Real isomorphic-git on MemoryFS; only the network push is faked.
 function fakeGit(pushed: string[], failOn?: string): WorkspaceGit {
@@ -180,5 +181,35 @@ describe("importGithubRepo", () => {
     const out = await importGithubRepo(d, "github:sam", "sam/secret", { isPrivate: false });
     expect(out).toMatchObject({ ok: false, code: "repo_create_failed" });
     expect(out.ok ? "" : out.error).toContain("public repos only");
+  });
+});
+
+describe("starterPipeline (Add CI)", () => {
+  const base = { packageJson: null, lockfile: null, goMod: false, cargoToml: false, python: false } as const;
+  const steps = (yaml: string) => (parsePipeline(yaml) ?? []).flatMap((j) => j.steps.map((s) => ("run" in s ? s.run : "")));
+
+  it("node + npm lockfile: ci, then the real scripts, skipping npm's placeholder test", () => {
+    const pkg = JSON.stringify({ scripts: { build: "tsc -b && vite build", test: 'echo "Error: no test specified" && exit 1', lint: "eslint ." } });
+    const out = starterPipeline({ ...base, packageJson: pkg, lockfile: "npm" });
+    expect(out.kind).toBe("node");
+    expect(out.steps).toEqual(["npm ci --no-audit --no-fund", "npm run lint", "npm run build"]);
+    expect(steps(out.yaml)).toEqual(out.steps);
+  });
+
+  it("pnpm, yarn and no-lockfile npm", () => {
+    const pkg = JSON.stringify({ scripts: { test: "vitest run" } });
+    expect(starterPipeline({ ...base, packageJson: pkg, lockfile: "pnpm" }).steps).toEqual(["corepack enable", "pnpm install --frozen-lockfile", "pnpm test"]);
+    expect(starterPipeline({ ...base, packageJson: pkg, lockfile: "yarn" }).steps).toEqual(["corepack enable", "yarn install --immutable", "yarn test"]);
+    expect(starterPipeline({ ...base, packageJson: "{}", lockfile: null }).steps).toEqual(["npm install --no-audit --no-fund", "node --version"]);
+    expect(starterPipeline({ ...base, packageJson: "not json", lockfile: null }).kind).toBe("node");
+  });
+
+  it("go, rust, python and a generic placeholder all parse as valid flare.yml", () => {
+    for (const facts of [{ ...base, goMod: true }, { ...base, cargoToml: true }, { ...base, python: true }, base]) {
+      const out = starterPipeline(facts);
+      expect(steps(out.yaml)).toEqual(out.steps);
+    }
+    expect(starterPipeline({ ...base, goMod: true }).kind).toBe("go");
+    expect(starterPipeline(base).steps[0]).toContain("Replace this step");
   });
 });

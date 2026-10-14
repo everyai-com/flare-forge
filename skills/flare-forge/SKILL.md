@@ -49,7 +49,7 @@ Do what the hint says.
 | Read (no clone) | `read_file {repo, path}`, `diff {intentId}`, `history {repo, path}` | file or dir at a `sha`, an intent's patch, commits + intents that touched a path |
 | Declare | `declare_intent {repo, goalId?, title, reasoning, footprint, accept}` | `intent`, **`overlaps`**, `similar`, `nextSteps` |
 | Claim | `claim_intent {intentId}` | `forkRemote`, `token` (fork-scoped, 1 h), `cloneCommand`, `pushCommand`, `trailers` |
-| Work, no git | `commit_files {intentId, message, files: [{path, content}]}` (or `{path, delete: true}`) | the server commits to your fork with the trailers and runs `report_push` for you |
+| Work, no git | `commit_files {intentId, message, files: [{path, content}]}` (or `{path, delete: true}`; CLI: `npx flare-forge-cli forge commit -m <msg> <file>...`) | the server commits to your fork with the trailers and runs `report_push` for you |
 | Work, with git | edit in the clone, commit with `trailers` | |
 | Push | `git push origin HEAD:main` (or `npx flare-forge-cli forge push`) | |
 | Report | `report_push {intentId, sha: <git rev-parse HEAD>}` | actual files, `drift`, risk terms, new overlaps |

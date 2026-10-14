@@ -185,3 +185,33 @@ describe("cli forge", () => {
     expect(await runForge(["connect-agent", "--client", "vim"], harness().deps)).toBe(2);
   });
 });
+
+describe("forge commit (no git)", () => {
+  it("reads the files, posts them to /commit and prints the result", async () => {
+    const h = harness({
+      git: (args) => (args[0] === "config" ? { status: 0, stdout: "i1\n", stderr: "" } : { status: 0, stdout: "", stderr: "" }),
+      reply: () => ({ intent: INTENT, sha: SHA, actualFootprint: { files: ["src/a.ts"], truncated: false, source: "verified" }, drift: [], risk: { score: 12, terms: [] }, overlaps: [], inbox: [], nextSteps: [], committed: { sha: SHA, parent: "d".repeat(40), files: 2 } }),
+    });
+    h.files.set("/work/src/a.ts", "export const a = 2;\n");
+    expect(await runForge(["commit", "-m", "Bump a", "./src/a.ts", "--delete", "old.txt"], h.deps)).toBe(0);
+    expect(h.fetches[0]).toMatchObject({
+      method: "POST",
+      url: "https://ci.example.com/v1/forge/intents/i1/commit",
+      body: { message: "Bump a", files: [{ path: "src/a.ts", content: "export const a = 2;\n" }, { path: "old.txt", delete: true }] },
+    });
+    expect(h.out.join("\n")).toMatch(/committed cccccccccccc \(2 files\) -> i1/);
+    expect(h.gitCalls.map((c) => c.args[0])).toEqual(["config"]);
+  });
+
+  it("needs a message and at least one file", async () => {
+    const h = harness({ git: () => ({ status: 0, stdout: "i1\n", stderr: "" }) });
+    expect(await runForge(["commit", "src/a.ts"], h.deps)).toBe(2);
+    expect(await runForge(["commit", "-m", "x"], h.deps)).toBe(2);
+    expect(await runForge(["commit", "-m", "x", "missing.ts"], h.deps)).toBe(2);
+    const said = h.err.join("\n");
+    expect(said).toMatch(/commit message is required: -m <message>/i);
+    expect(said).toMatch(/at least one file/i);
+    expect(said).toMatch(/cannot read missing.ts/i);
+    expect(h.fetches).toHaveLength(0);
+  });
+});

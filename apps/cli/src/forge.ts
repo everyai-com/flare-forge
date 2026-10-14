@@ -51,6 +51,7 @@ export const FORGE_USAGE = [
   "                                                       declare an intent before editing (overlaps come back)",
   "  forge claim <intentId> [--clone [dir]] [--ttl S]     claim: own fork + 1 h fork token (--clone clones it)",
   "  forge push [intentId] [--files a,b] [--no-git] [-- <git push args>]",
+  "  forge commit -m <message> <file>... [--delete <path>] [--intent <id>]  no git: the server commits these files to your fork",
   "                                                       git push (default: origin HEAD:main) then report_push",
   "  forge heartbeat [intentId] [--refresh-token]         renew the lease; prints peer notes (untrusted)",
   "  forge ready [intentId]                               queue for the next CI-verified train",
@@ -98,7 +99,7 @@ function opsOf(v: unknown): Pick<OpsEconomics, "billable" | "landed" | "perLande
 // Backoff for `forge push` retries (fresh forks need a moment).
 export const PUSH_RETRY_DELAYS_MS = [2000, 4000, 6000];
 
-const FORGE_VERB_NAMES = ["goal", "declare", "claim", "push", "heartbeat", "ready", "note", "inbox", "status", "why", "conflicts", "trains", "snapshot", "done", "abandon", "fork", "approve", "connect-agent", "init"];
+const FORGE_VERB_NAMES = ["goal", "declare", "claim", "push", "commit", "heartbeat", "ready", "note", "inbox", "status", "why", "conflicts", "trains", "snapshot", "done", "abandon", "fork", "approve", "connect-agent", "init"];
 
 // Missing URL/token: the message already ends in its own next line, so
 // the top-level error handler prints it as-is.
@@ -384,6 +385,31 @@ export async function runForge(argv: string[], d: ForgeCliDeps): Promise<number>
       emit(d, "push", out, () => {
         d.out(`pushed ${sha.slice(0, 12)} -> ${out.intent.id} (${out.intent.state}) risk ${out.risk.score}`);
         d.out(`  files (${out.actualFootprint.source}): ${out.actualFootprint.files.join(", ") || "(none)"}`);
+        if (out.drift.length) d.out(`  DRIFT (undeclared): ${out.drift.join(", ")}`);
+        for (const o of out.overlaps) d.out(`  overlaps ${o.intentId} "${o.title}" (${o.state})`);
+        printNotes(d, out.inbox);
+        printSteps(d, out.nextSteps, { command: `forge ready ${out.intent.id}`, why: "when your check passes" });
+      });
+      return 0;
+    }
+    if (verb === "commit") {
+      const f = parseFlags(args.map((a) => (a === "-m" ? "--message" : a)), { values: ["agent", "message", "intent"], multi: ["delete"] });
+      const message = f.values["message"];
+      if (!message) throw new UsageError("a commit message is required: -m <message>");
+      const id = resolveIntent(d, f.values["intent"]);
+      const deletes = f.multi["delete"] ?? [];
+      if (!f.pos.length && !deletes.length) throw new UsageError("name at least one file to commit (or --delete <path>)");
+      const files: Array<{ path: string; content?: string; delete?: boolean }> = [];
+      for (const p of f.pos) {
+        const rel = p.replace(/^\.\//, "");
+        const content = d.readText(join(d.cwd, rel));
+        if (content === null) throw new UsageError(`cannot read ${p} (text files only; paths are relative to the repo root)`);
+        files.push({ path: rel, content });
+      }
+      for (const p of deletes) files.push({ path: p.replace(/^\.\//, ""), delete: true });
+      const out = await d.forge().commitFiles(id, message, files, { agent: agentOf(d, f.values) });
+      emit(d, "commit", out, () => {
+        d.out(`committed ${out.committed.sha.slice(0, 12)} (${out.committed.files} file${out.committed.files === 1 ? "" : "s"}) -> ${out.intent.id} (${out.intent.state}) risk ${out.risk.score}`);
         if (out.drift.length) d.out(`  DRIFT (undeclared): ${out.drift.join(", ")}`);
         for (const o of out.overlaps) d.out(`  overlaps ${o.intentId} "${o.title}" (${o.state})`);
         printNotes(d, out.inbox);

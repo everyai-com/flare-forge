@@ -281,9 +281,11 @@ import {
 } from "./mergequeue";
 import git from "isomorphic-git";
 import { MemoryFS } from "./memory-fs";
-import { FORGE_READY_DETAIL, MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo, prepareForgeTrunk } from "./workspace";
+import { FORGE_READY_DETAIL, MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo, prepareForgeTrunk, starterPipeline } from "./workspace";
+import { commitFilesToFork } from "./forge-commit";
+import { normalizeForgeRepo } from "./forge-service";
 import http from "isomorphic-git/http/web";
-import { registerTrainDispatch, runTrainTick } from "./train-workflow";
+import { registerTrainDispatch, registerTrainHold, runTrainTick } from "./train-workflow";
 import { cronMatches, validateCron } from "./cron";
 import { reportJobCheck } from "./checks";
 import {
@@ -540,6 +542,56 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
     await audit(env.DB, ident.actor, "repo.import", `${source} -> ${out.repo} (${out.status})`);
     return json({ ...out, app: `/app?repo=${encodeURIComponent(out.repo)}` }, out.status === "ready" ? 201 : 202);
   }
+  const ciMatch = /^\/v1\/me\/repos\/([^/]+)\/ci$/.exec(url.pathname);
+  if (request.method === "POST" && ciMatch) {
+    // Add CI: commit a starter flare.yml to trunk (owner or admin).
+    // Trains land nothing without one, so this unblocks a fresh import.
+    if (!env.ARTIFACTS) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const repo = normalizeForgeRepo(ns, decodeURIComponent(ciMatch[1]));
+    if (!/^[\w.-]{1,100}$/.test(repo)) return json(apiError("invalid_request", "repo: a Forge repo name"), 400);
+    if (ident.scope !== "admin") {
+      const holder = await env.DB.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(repo).first<{ owner: string }>();
+      if (!holder || holder.owner !== owner) return json(apiError("repo_not_allowed", "only the repo's owner (or an admin) can add CI"), 403);
+    }
+    let handle: Awaited<ReturnType<NonNullable<typeof env.ARTIFACTS>["get"]>> | null = null;
+    try {
+      handle = await env.ARTIFACTS.get(repo).catch(() => null);
+      if (!handle) return json(apiError("invalid_request", `no Forge repo named ${repo}`), 404);
+      const h = handle;
+      const read = async (path: string): Promise<string | null> => {
+        const f = await h.readFile({ ref: "main", path }).catch(() => null);
+        return f && f.size <= 256 * 1024 ? await f.text() : null;
+      };
+      if ((await read("flare.yml"))?.trim()) return json(apiError("invalid_request", "this repo already has a flare.yml; edit it through an intent"), 409);
+      const [pkg, npmLock, pnpmLock, yarnLock, bunLock, bunLockb, goMod, cargo, pyproject, requirements] = await Promise.all(
+        ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", "go.mod", "Cargo.toml", "pyproject.toml", "requirements.txt"].map((p) => read(p)),
+      );
+      const plan = starterPipeline({
+        packageJson: pkg,
+        lockfile: npmLock !== null ? "npm" : pnpmLock !== null ? "pnpm" : yarnLock !== null ? "yarn" : bunLock !== null || bunLockb !== null ? "bun" : null,
+        goMod: goMod !== null,
+        cargoToml: cargo !== null,
+        python: pyproject !== null || requirements !== null,
+      });
+      const info = await h.info();
+      const tok = await h.createToken("write", 600);
+      const committed = await commitFilesToFork(
+        { git, http, fs: new MemoryFS() },
+        { url: info.remote, token: tok.plaintext, changes: [{ path: "flare.yml", bytes: new TextEncoder().encode(plan.yaml) }], message: `CI: starter flare.yml (${plan.kind})\n\nAdded from the app so trains can verify and land work.`, author: { name: "Flare Forge", email: "forge@flare.invalid" } },
+      );
+      await audit(env.DB, ident.actor, "repo.add_ci", `${repo} ${committed.sha.slice(0, 12)} ${plan.kind}`);
+      return json({ repo, sha: committed.sha, kind: plan.kind, steps: plan.steps, flareYml: plan.yaml }, 201);
+    } catch (err) {
+      log("warn", "add ci failed", { repo, error: String(err).slice(0, 200) });
+      return json(apiError("repo_create_failed", `could not add CI: ${String(err).slice(0, 200)}`), 502);
+    } finally {
+      try {
+        handle?.[Symbol.dispose]?.();
+      } catch {
+        // Disposal never fails a request.
+      }
+    }
+  }
   if (request.method === "GET" && url.pathname === "/v1/me/tokens") {
     const res = await env.DB.prepare("SELECT id, name, scopes, created_at, revoked_at FROM api_tokens WHERE owner = ? ORDER BY created_at DESC LIMIT 50").bind(owner).all<{ id: string; name: string; scopes: string; created_at: string; revoked_at: string | null }>();
     return json({ tokens: res.results.map((t) => ({ id: t.id, name: t.name, createdAt: t.created_at, revoked: t.revoked_at !== null })) });
@@ -552,6 +604,23 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
     return json({ ok: true });
   }
   return null;
+}
+
+const MEMBER_CI_MINUTES = 300;
+
+async function memberCiHold(env: WorkerEnv, repo: string): Promise<string | null> {
+  const holder = await env.DB.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(repo).first<{ owner: string }>();
+  if (!holder || holder.owner.startsWith("token:")) return null;
+  const [adminEmail, adminGithub] = await Promise.all([getSetting(env.DB, SETTING_KEYS.adminEmail), getSetting(env.DB, SETTING_KEYS.adminGithubUser)]);
+  const owner = holder.owner.toLowerCase();
+  if ((adminEmail && owner === `email:${adminEmail.toLowerCase()}`) || (adminGithub && owner === `github:${adminGithub.toLowerCase()}`)) return null;
+  const month = monthStartIso();
+  const used = await monthlyComputeMinutes(env.DB, `${env.ARTIFACTS_NAMESPACE ?? ""}/${repo}`, month);
+  if (used < MEMBER_CI_MINUTES) return null;
+  const reason = `monthly CI limit reached (${Math.round(used)} of ${MEMBER_CI_MINUTES} minutes); trains resume next month`;
+  const told = await env.DB.prepare("SELECT 1 AS x FROM forge_ledger WHERE repo = ? AND kind = 'ci_limit' AND created_at >= ? LIMIT 1").bind(repo, month).first<{ x: number }>();
+  if (!told) await appendForgeLedger(env.DB, { repo, subjectKind: "goal", subjectId: "ci-limit", kind: "ci_limit", body: reason, actor: "forge" });
+  return reason;
 }
 
 // Repo-scoped tokens: empty allowlist means every repo (exact
@@ -2784,6 +2853,11 @@ export { ForgePushWorkflow } from "./forge-push-workflow";
 // export, and trains dispatch CI through the same dispatchRun + seat
 // wake path as every other run.
 export { TrainWorkflow } from "./train-workflow";
+// Open sign-up spends the operator's container minutes: a repo owned by
+// a member (not an admin, not a mirror) gets MEMBER_CI_MINUTES of train
+// CI a month. Over the cap no train is cut (intents stay ready) and the
+// repo's feed says so once a month.
+registerTrainHold(async (env, repo) => memberCiHold(env, repo));
 registerTrainDispatch(async (env, input) => {
   const out = await dispatchRun(env, input);
   for (const jobId of out.queuedIds) await wakeSeat(env, jobId);
