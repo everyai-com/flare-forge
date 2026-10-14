@@ -2251,6 +2251,162 @@ paths:
                 type: string
         '400':
           $ref: '#/components/responses/BadRequest'
+  /v1/me:
+    get:
+      tags: [admin]
+      operationId: getMe
+      summary: The signed-in account (role, owned repos, MCP URL)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Account summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [actor, role, mcpUrl]
+                properties:
+                  actor: { type: string }
+                  role: { type: string, enum: [admin, member, runner, readonly] }
+                  repos:
+                    type: array
+                    nullable: true
+                    items: { type: string }
+                  repoLimit: { type: integer, nullable: true }
+                  mcpUrl: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/repos:
+    post:
+      tags: [admin]
+      operationId: createMyRepo
+      summary: Create a Forge repo you own, seeded with a starter project (session only)
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+      responses:
+        '201':
+          description: Repo created and seeded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repo, headSha, lanes, app]
+                properties:
+                  repo: { type: string }
+                  headSha: { type: string }
+                  lanes: { type: integer }
+                  app: { type: string }
+        '400':
+          description: Invalid name (invalid_request)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Name taken (repo_exists) or repo limit reached (repo_limit)
+        '502':
+          description: Artifacts create or seed failed (repo_create_failed)
+        '503':
+          description: Artifacts is not configured (artifacts_unconfigured)
+  /v1/me/agent-token:
+    post:
+      tags: [admin]
+      operationId: createMyAgentToken
+      summary: One-click agent token bound to you, with ready-to-paste MCP commands (session only, shown once)
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 60 }
+      responses:
+        '201':
+          description: Token created (plaintext shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, token, mcpUrl, commands]
+                properties:
+                  id: { type: string }
+                  token: { type: string }
+                  mcpUrl: { type: string }
+                  commands:
+                    type: object
+                    properties:
+                      claude: { type: string }
+                      codex: { type: string }
+                      cursor: { type: string }
+                      env: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Too many live agent tokens (token_limit)
+  /v1/me/tokens:
+    get:
+      tags: [admin]
+      operationId: listMyTokens
+      summary: Your self-serve agent tokens (metadata only)
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Your tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        createdAt: { type: string }
+                        revoked: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/tokens/{id}/revoke:
+    post:
+      tags: [admin]
+      operationId: revokeMyToken
+      summary: Revoke one of your agent tokens
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Not your token, or already revoked (token_not_found)
   /v1/admin/tokens:
     get:
       tags: [admin]

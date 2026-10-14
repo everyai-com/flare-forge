@@ -25,8 +25,18 @@ The login screen (`/app?login=1`) offers:
 
 The **first account** of any kind becomes the owner (admin) of the
 deployment; the claim is atomic, so two first sign-ups cannot both win.
-Everyone after that is a reader until the owner changes it. Readers see
-everything, run nothing.
+Everyone after that is a **member**. A member runs Forge end to end on
+the repos they create (app: **+ New repo**, `POST /v1/me/repos`): goals,
+intents, trains, plan approval and review. **Connect an agent → Create
+my agent token** mints a token bound to the member (scope `member`,
+`POST /v1/me/agent-token`) that follows their repos, so a new repo needs
+no new token. Members never see Settings, secrets, other accounts'
+repos, or the CI executor routes; their agent tokens cannot approve
+their own plans (a human session does). Limits: 5 repos and 10 live
+agent tokens per account.
+
+To sign in with GitHub as the owner of an email-claimed deployment, set
+**Settings → Team → Owner's GitHub login** (`adminGithubUser`).
 
 ## How it is built
 
@@ -47,7 +57,7 @@ Better Auth owns **credentials only**. Authorization stays Flare's:
    - a known account → signed in;
    - no owner yet → this account claims admin, exactly like
      `/v1/admin/bootstrap`;
-   - otherwise → a reader account if open registration is on, else
+   - otherwise → a member account if open registration is on, else
      `403 registration is closed` with a hint to ask for an invite.
 3. The bridge mints the Flare session (cookie `flare_session`, D1
    `sessions`) that every page and API read uses.

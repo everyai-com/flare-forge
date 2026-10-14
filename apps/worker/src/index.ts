@@ -124,7 +124,7 @@ import {
   validateSecretName,
   validateSecretValue,
 } from "./secrets";
-import { SETTING_KEYS, isBadgeHiddenRepo, parseAiGatewayId, parseBadgeHiddenRepos, parseBudgetMinutes, parseBudgetMode, parseBudgetKillMultiplier, parseFairSharePerRepo, parseFairSharePerAgent, parseAgentTag, parseGithubRunnerLabels, parseGithubRunnerMode, parseHealOnFailure, parseMcpWriteConfirm, parseOpenRegistration, parseRunnerGroupCache, parseStoredBudgets, parseSupersedeBranchRuns, parseTriageWebSearch, runnerGroupCacheGet, runnerGroupCacheSet, validateBillingApiToken, validateCloudEntitlements, validateCloudMetering, validateCloudflareAccountId, validateGithubRunnerGroupName, validateNotifyFromEmail, validateNotifyMode, validateNotifyWebhookUrl, validateRunnerVersion, validateTriageModel, validateTurnstileSecretKey, validateTurnstileSiteKey, validateWebhookSecret } from "./settings";
+import { SETTING_KEYS, isBadgeHiddenRepo, parseAiGatewayId, parseBadgeHiddenRepos, parseBudgetMinutes, parseBudgetMode, parseBudgetKillMultiplier, parseFairSharePerRepo, parseFairSharePerAgent, parseAgentTag, parseGithubRunnerLabels, parseGithubRunnerMode, parseHealOnFailure, parseMcpWriteConfirm, parseOpenRegistration, parseGithubLogin, parseRunnerGroupCache, parseStoredBudgets, parseSupersedeBranchRuns, parseTriageWebSearch, runnerGroupCacheGet, runnerGroupCacheSet, validateBillingApiToken, validateCloudEntitlements, validateCloudMetering, validateCloudflareAccountId, validateGithubRunnerGroupName, validateNotifyFromEmail, validateNotifyMode, validateNotifyWebhookUrl, validateRunnerVersion, validateTriageModel, validateTurnstileSecretKey, validateTurnstileSiteKey, validateWebhookSecret } from "./settings";
 import {
   addAllowedUser,
   beginOAuth,
@@ -194,6 +194,10 @@ import {
 } from "./ratelimit";
 import {
   authIdentityFromToken,
+  memberRepos,
+  MEMBER_TOKEN_SCOPE,
+  NO_REPOS,
+  type ApiTokenIdentity,
   hashToken,
   newTokenValue,
   normalizeRepos,
@@ -273,8 +277,9 @@ import {
   validateMergeEnqueue,
 } from "./mergequeue";
 import git from "isomorphic-git";
-import http from "isomorphic-git/http/web";
 import { MemoryFS } from "./memory-fs";
+import { MEMBER_REPO_LIMIT, createMemberRepo, listOwnedRepos } from "./workspace";
+import http from "isomorphic-git/http/web";
 import { registerTrainDispatch, runTrainTick } from "./train-workflow";
 import { cronMatches, validateCron } from "./cron";
 import { reportJobCheck } from "./checks";
@@ -392,7 +397,7 @@ function getBearer(request: Request): string | null {
 // login sessions (admin, everyone else reads). Admin does everything;
 // runner runs + reads; readonly only reads runs. `repos` is the token's
 // repo allowlist ([] = all repos).
-async function authIdentity(request: Request, env: WorkerEnv): Promise<{ scope: AuthScope; actor: string; repos: string[] } | null> {
+async function authIdentity(request: Request, env: WorkerEnv): Promise<ApiTokenIdentity | null> {
   const bearer = getBearer(request);
   if (bearer) {
     return authIdentityFromToken(bearer, { db: env.DB, adminToken: env.ADMIN_TOKEN, runnerToken: env.RUNNER_TOKEN });
@@ -403,7 +408,90 @@ async function authIdentity(request: Request, env: WorkerEnv): Promise<{ scope: 
   if (!session || Date.parse(session.expires_at) <= Date.now()) return null;
   const kind = session.kind === "email" ? "email" : "github";
   const actor = `${kind}:${session.github_user}`;
-  return session.is_admin ? { scope: "admin", actor, repos: [] } : { scope: "readonly", actor, repos: [] };
+  if (session.is_admin) return { scope: "admin", actor, repos: [] };
+  // Everyone else is a self-serve member: Forge end to end on the repos
+  // they own, nothing else (see tokens.ts AuthScope).
+  return { scope: "member", actor, repos: await memberRepos(env.DB, actor), owner: actor };
+}
+
+// /v1/me*: the self-serve surface. Members create and own Forge repos
+// and mint agent tokens bound to themselves (scope member, resolved to
+// their repos per request); admins get the same one-click token as a
+// runner token. Session-only writes: an agent token cannot mint tokens
+// or create repos.
+const MEMBER_TOKEN_LIMIT = 10;
+
+async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Response | null> {
+  const ident = await authIdentity(request, env);
+  if (!ident) return json(apiError("unauthorized", "sign in first"), 401);
+  const owner = ident.owner ?? ident.actor;
+  const isSession = !ident.actor.startsWith("token:") && ident.actor !== "break-glass" && ident.actor !== "env:runner";
+  const ns = env.ARTIFACTS_NAMESPACE ?? "";
+  if (request.method === "GET" && url.pathname === "/v1/me") {
+    const repos = ident.scope === "admin" ? null : (await listOwnedRepos(env.DB, owner)).map((r) => r.repo);
+    return json({
+      actor: ident.actor,
+      role: ident.scope === "admin" ? "admin" : ident.scope === "member" ? "member" : ident.scope,
+      repos,
+      repoLimit: ident.scope === "admin" ? null : MEMBER_REPO_LIMIT,
+      mcpUrl: new URL("/mcp", url).toString(),
+    });
+  }
+  if (!isSession || (ident.scope !== "admin" && ident.scope !== "member")) {
+    return json(apiError("unauthorized", "sign in to the app to manage repos and tokens"), 401);
+  }
+  if (request.method === "POST" && url.pathname === "/v1/me/repos") {
+    if (!env.ARTIFACTS) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const body = (await request.json().catch(() => ({}))) as { name?: unknown };
+    const out = await createMemberRepo(
+      { db: env.DB, artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS(), namespace: ns },
+      owner,
+      body.name,
+    );
+    if (!out.ok) return json(apiError(out.code, out.error), out.status);
+    await audit(env.DB, ident.actor, "repo.create", out.scoped);
+    return json({ repo: out.repo, headSha: out.headSha, lanes: out.lanes, app: `/app?repo=${encodeURIComponent(out.repo)}` }, 201);
+  }
+  if (request.method === "POST" && url.pathname === "/v1/me/agent-token") {
+    const body = (await request.json().catch(() => ({}))) as { name?: unknown };
+    const label = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 60) : "agent";
+    const live = await env.DB.prepare("SELECT COUNT(*) AS n FROM api_tokens WHERE owner = ? AND revoked_at IS NULL").bind(owner).first<{ n: number }>();
+    if ((live?.n ?? 0) >= MEMBER_TOKEN_LIMIT) return json(apiError("token_limit", `revoke an old agent token first (limit ${MEMBER_TOKEN_LIMIT})`), 409);
+    const id = crypto.randomUUID();
+    const value = newTokenValue();
+    // Members: a member token that follows their repos. Admins: a runner
+    // token (every repo), like Settings → Tokens but in one click.
+    const scopes = ident.scope === "admin" ? "runner" : MEMBER_TOKEN_SCOPE;
+    await createToken(env.DB, { id, name: `${label} (${owner})`.slice(0, 100), tokenHash: await hashToken(value), scopes, repos: "", owner });
+    await audit(env.DB, ident.actor, "token.create.self", id);
+    const mcpUrl = new URL("/mcp", url).toString();
+    return json(
+      {
+        id,
+        token: value,
+        mcpUrl,
+        commands: {
+          claude: `claude mcp add --transport http flare-forge ${mcpUrl} --header "Authorization: Bearer ${value}"`,
+          codex: `[mcp_servers.flare-forge]\nurl = "${mcpUrl}"\nhttp_headers = { Authorization = "Bearer ${value}" }`,
+          cursor: JSON.stringify({ mcpServers: { "flare-forge": { url: mcpUrl, headers: { Authorization: `Bearer ${value}` } } } }, null, 2),
+          env: `export FLARE_ACTIONS_URL=${url.origin}\nexport FLARE_TOKEN=${value}`,
+        },
+      },
+      201,
+    );
+  }
+  if (request.method === "GET" && url.pathname === "/v1/me/tokens") {
+    const res = await env.DB.prepare("SELECT id, name, scopes, created_at, revoked_at FROM api_tokens WHERE owner = ? ORDER BY created_at DESC LIMIT 50").bind(owner).all<{ id: string; name: string; scopes: string; created_at: string; revoked_at: string | null }>();
+    return json({ tokens: res.results.map((t) => ({ id: t.id, name: t.name, createdAt: t.created_at, revoked: t.revoked_at !== null })) });
+  }
+  const revoke = /^\/v1\/me\/tokens\/([^/]+)\/revoke$/.exec(url.pathname);
+  if (request.method === "POST" && revoke) {
+    const done = await env.DB.prepare("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND owner = ? AND revoked_at IS NULL").bind(new Date().toISOString(), revoke[1], owner).run();
+    if (!done.meta.changes) return json(apiError("token_not_found", "token not found"), 404);
+    await audit(env.DB, ident.actor, "token.revoke.self", revoke[1]);
+    return json({ ok: true });
+  }
+  return null;
 }
 
 // Repo-scoped tokens: empty allowlist means every repo (exact
@@ -486,6 +574,11 @@ async function serveMcpRequest(
   basin?: BasinSink,
   ctx?: ExecutionContext,
 ): Promise<Response> {
+  // Non-admin OAuth grants only reach the repos their account owns now
+  // (members' repos are private); a grant without an owner reads nothing.
+  if (!props.isAdmin && props.actor.startsWith("oauth:")) {
+    props = { ...props, repos: props.owner ? await memberRepos(env.DB, props.owner) : [NO_REPOS] };
+  }
   const handler = createMcpHandler(() =>
     buildMcpServer({
       db: env.DB,
@@ -649,7 +742,7 @@ async function requireScope(
   request: Request,
   env: WorkerEnv,
   need: "run" | "read",
-): Promise<{ scope: AuthScope; actor: string; repos: string[] } | null> {
+): Promise<ApiTokenIdentity | null> {
   const ident = await authIdentity(request, env);
   if (!ident) return null;
   if (ident.scope === "admin" || ident.scope === "runner") return ident;
@@ -2129,6 +2222,7 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
       triageWebSearch?: unknown;
       healOnFailure?: unknown;
       openRegistration?: unknown;
+      adminGithubUser?: unknown;
       budgetMinutes?: unknown;
       budgetMode?: unknown;
       budgetKillMultiplier?: unknown;
@@ -2162,6 +2256,7 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
     const hasWebSearch = body.triageWebSearch !== undefined;
     const hasHeal = body.healOnFailure !== undefined;
     const hasOpenReg = body.openRegistration !== undefined;
+    const hasAdminGithub = body.adminGithubUser !== undefined;
     const hasBudget = body.budgetMinutes !== undefined;
     const hasBudgetMode = body.budgetMode !== undefined;
     const hasKillMultiplier = body.budgetKillMultiplier !== undefined;
@@ -2178,7 +2273,7 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
     if (
       !hasWebhook && !hasNotifyFrom && !hasNotifyMode && !hasNotifyWebhook && !hasBadgeHidden &&
       !hasTurnstileSite && !hasTurnstileSecret && !hasFairShare && !hasAgentShare && !hasGateway && !hasWriteConfirm && !hasWebSearch &&
-      !hasHeal && !hasOpenReg && !hasBudget && !hasBudgetMode && !hasKillMultiplier && !hasSupersede && !hasGhMode && !hasGhLabels && !hasGhGroup && !hasBillingToken && !hasAccountId && !hasTriageModel && !hasRunnerVersion && !hasCloudEnt && !hasCloudMetering
+      !hasHeal && !hasOpenReg && !hasAdminGithub && !hasBudget && !hasBudgetMode && !hasKillMultiplier && !hasSupersede && !hasGhMode && !hasGhLabels && !hasGhGroup && !hasBillingToken && !hasAccountId && !hasTriageModel && !hasRunnerVersion && !hasCloudEnt && !hasCloudMetering
     ) {
       return json({ error: "no settings provided" }, 400);
     }
@@ -2317,6 +2412,14 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
       await setSetting(env.DB, SETTING_KEYS.openRegistration, parsed.on ? "1" : "0");
       await audit(env.DB, ident.actor, "settings.open_registration", parsed.on ? "on" : "off");
       log("info", "open registration toggled", { on: parsed.on });
+    }
+    if (hasAdminGithub) {
+      // Links the owner's GitHub login so "Continue with GitHub" signs
+      // the owner in as admin (an email-claimed deploy has none).
+      const parsed = parseGithubLogin(body.adminGithubUser);
+      if ("error" in parsed) return json({ error: parsed.error }, 400);
+      await setSetting(env.DB, SETTING_KEYS.adminGithubUser, parsed.login);
+      await audit(env.DB, ident.actor, "settings.admin_github_user", parsed.login);
     }
     if (hasBudget) {
       const parsed = parseBudgetMinutes(body.budgetMinutes);
@@ -2739,7 +2842,10 @@ export default {
         if (!getBearer(request)) {
           const session = await oauthSession(request, env);
           if (session) {
-            const { props, canWrite } = principalFromSession(session);
+            const base = principalFromSession(session);
+            // Non-admin sessions only see the repos they own.
+            const props = session.isAdmin ? base.props : { ...base.props, repos: await memberRepos(env.DB, session.actor), owner: session.actor };
+            const canWrite = base.canWrite;
             return serveMcpRequest(request, env, props, canWrite, basinSink(env, ctx), ctx);
           }
         }
@@ -4010,6 +4116,12 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/admin/tokens") {
         return await handleCreateToken(request, env);
       }
+      // Self-serve account surface (any signed-in account or its agent
+      // token): who am I, my repos, one-click agent tokens.
+      if (url.pathname === "/v1/me" || url.pathname.startsWith("/v1/me/")) {
+        const meResponse = await handleMe(request, env, url);
+        if (meResponse) return meResponse;
+      }
       const revokeMatch = /^\/v1\/admin\/tokens\/([^/]+)\/revoke$/.exec(url.pathname);
       if (request.method === "POST" && revokeMatch) {
         const ident = await authIdentity(request, env);
@@ -4285,7 +4397,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/v1/admin/github/login") {
         const creds = await getOAuthCreds(env);
         if (!creds) {
-          return Response.redirect(new URL("/dashboard?github=error&reason=noapp", url).toString(), 302);
+          return Response.redirect(new URL("/app?login=1&github=noapp", url).toString(), 302);
         }
         const state = await beginOAuth(env.DB);
         const redirectUri = new URL("/v1/admin/github/oauth/callback", url).toString();
@@ -4293,7 +4405,7 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/v1/admin/github/oauth/callback") {
         const fail = (reason: string): Response =>
-          Response.redirect(new URL(`/dashboard?github=error&reason=${reason}`, url).toString(), 302);
+          Response.redirect(new URL(`/app?login=1&github=${reason}`, url).toString(), 302);
         const state = url.searchParams.get("state") ?? "";
         const code = url.searchParams.get("code") ?? "";
         if (!state || !code) return fail("missing");
@@ -4308,7 +4420,7 @@ export default {
         let decision = await decideLogin(env.DB, login);
         if (!decision.allowed) {
           log("info", "github login denied", { login });
-          return Response.redirect(new URL("/dashboard?github=forbidden", url).toString(), 302);
+          return Response.redirect(new URL("/app?login=1&github=forbidden", url).toString(), 302);
         }
         if (!decision.claimed) {
           // Atomic gate for the first login: a concurrent first login
@@ -4322,7 +4434,7 @@ export default {
             decision = await decideLogin(env.DB, login);
             if (!decision.allowed) {
               log("info", "github login denied", { login });
-              return Response.redirect(new URL("/dashboard?github=forbidden", url).toString(), 302);
+              return Response.redirect(new URL("/app?login=1&github=forbidden", url).toString(), 302);
             }
           }
         }
@@ -4331,7 +4443,9 @@ export default {
         return new Response(null, {
           status: 302,
           headers: {
-            Location: new URL("/dashboard", url).toString(),
+            // The product app is the home after sign-in (the legacy
+            // dashboard stays at /dashboard).
+            Location: new URL("/app", url).toString(),
             "Set-Cookie": sessionSetCookie(sessionId, url.protocol === "https:"),
           },
         });

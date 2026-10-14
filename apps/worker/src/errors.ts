@@ -47,6 +47,11 @@ export const ERROR_CODES = [
   "conflict_not_claimable",
   "admin_required",
   "not_implemented",
+  "repo_exists",
+  "repo_limit",
+  "repo_create_failed",
+  "token_limit",
+  "token_not_found",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -94,6 +99,11 @@ export const ERROR_HINTS: Record<ErrorCode, string> = {
   conflict_not_claimable: "the conflict is already claimed, resolved, or out of replay attempts — list open ones with GET /v1/forge/conflicts?repo=<repo>&state=open",
   admin_required: "plan approval is a human decision — an admin approves it in the dashboard Inbox (or with an admin token)",
   not_implemented: "that forge capability is not wired on this deployment yet — use the suggested fallback in the error message",
+  repo_exists: "that repo name is taken — pick another name",
+  repo_limit: "this account owns the maximum number of repos — use one of them, or ask the owner of the deployment for more",
+  repo_create_failed: "creating or seeding the repo on Artifacts failed — retry in a few seconds with another name",
+  token_limit: "too many live agent tokens — revoke an old one in Agent MCP → Your agent tokens (POST /v1/me/tokens/<id>/revoke)",
+  token_not_found: "no live token with that id belongs to you — list yours with GET /v1/me/tokens",
 };
 
 export interface ApiErrorBody {

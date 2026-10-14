@@ -57,7 +57,7 @@ import type { FeedPort, ForgeCoordinatorPort, TrainPort, WhyPort } from "./forge
 import type { GoalPlanner } from "./forge-planner";
 
 export interface ForgeIdentity {
-  scope: string; // admin | runner | readonly
+  scope: string; // admin | runner | readonly | member
   actor: string;
   repos: string[];
 }
@@ -103,7 +103,10 @@ function principalOf(ident: ForgeIdentity, request: Request): ForgePrincipal {
     actor: ident.actor,
     repos: ident.repos,
     isAdmin: ident.scope === "admin",
-    canWrite: ident.scope === "admin" || ident.scope === "runner",
+    canWrite: ident.scope === "admin" || ident.scope === "runner" || ident.scope === "member",
+    // Human review verbs: admins, and members signed in as themselves on
+    // the repos they own (their agent tokens cannot approve their work).
+    reviewer: ident.scope === "admin" || (ident.scope === "member" && !ident.actor.startsWith("token:")),
     agent: request.headers.get("X-Flare-Agent") ?? undefined,
   };
 }

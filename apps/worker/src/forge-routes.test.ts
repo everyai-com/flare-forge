@@ -10,6 +10,10 @@ import type { GoalPlanner } from "./forge-planner";
 const RUNNER: ForgeIdentity = { scope: "runner", actor: "token:runner1", repos: [] };
 const ADMIN: ForgeIdentity = { scope: "admin", actor: "email:pat@example.com", repos: [] };
 const READONLY: ForgeIdentity = { scope: "readonly", actor: "token:ro", repos: [] };
+// A self-serve member who owns ns/demo, its agent token, and a stranger.
+const MEMBER: ForgeIdentity = { scope: "member", actor: "email:sam@example.com", repos: ["ns/demo"] };
+const MEMBER_AGENT: ForgeIdentity = { scope: "member", actor: "token:sam-agent", repos: ["ns/demo"] };
+const STRANGER: ForgeIdentity = { scope: "member", actor: "email:eve@example.com", repos: ["-/-"] };
 
 interface Harness {
   db: Db;
@@ -420,5 +424,33 @@ describe("forge routes: conflicts, trains, fork sessions, feed", () => {
     const wired = harness({ feed: { upgrade: async () => new Response("{}", { status: 200 }) } });
     expect((await wired.call("GET", "/v1/forge/feed?repo=demo")).status).toBe(426);
     expect((await wired.call("GET", "/v1/forge/feed?repo=demo", undefined, RUNNER, { Upgrade: "websocket" })).status).toBe(200);
+  });
+});
+
+describe("forge routes: self-serve members", () => {
+  it("members drive their own repo end to end and approve plans there; their agents cannot approve", async () => {
+    const h = harness();
+    h.fake.repos.get("demo")?.files.set(".flare/policy.yml", "protected: [\"src/auth/**\"]\n");
+    const d = await declare(h, { title: "Gate admin behind SSO", footprint: ["src/auth/sso.ts"], agent: "sam-agent" }, MEMBER_AGENT);
+    const id = rec(d.intent).id as string;
+    expect(rec(d.intent).state).toBe("awaiting_plan");
+    const byAgent = await h.call("POST", `/v1/forge/intents/${id}/approve-plan`, {}, MEMBER_AGENT);
+    expect(byAgent.body.code).toBe("admin_required");
+    const byOwner = await h.call("POST", `/v1/forge/intents/${id}/approve-plan`, {}, MEMBER);
+    expect(byOwner.status).toBe(200);
+    expect(rec(byOwner.body.intent).state).toBe("draft");
+    const claim = await h.call("POST", `/v1/forge/intents/${id}/claim`, { agent: "sam-agent" }, MEMBER_AGENT);
+    expect(claim.status).toBe(200);
+  });
+
+  it("other members cannot see, declare on, or approve in a repo they do not own", async () => {
+    const h = harness();
+    const d = await declare(h, { title: "Add x", footprint: ["x"] }, MEMBER);
+    const id = rec(d.intent).id as string;
+    const write = await h.call("POST", "/v1/forge/intents", { repo: "demo", title: "t", reasoning: "r", accept: "npm test", footprint: ["y"] }, STRANGER);
+    expect(write.body.code).toBe("repo_not_allowed");
+    expect((await h.call("GET", "/v1/forge/intents?repo=demo", undefined, STRANGER)).body.code).toBe("repo_not_allowed");
+    expect((await h.call("GET", `/v1/forge/intents/${id}`, undefined, STRANGER)).status).toBe(404);
+    expect((await h.call("POST", `/v1/forge/intents/${id}/approve-plan`, {}, STRANGER)).status).toBe(404);
   });
 });

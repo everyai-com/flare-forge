@@ -107,6 +107,9 @@ export interface ForgePrincipal {
   isAdmin: boolean;
   // run scope (runner/admin tokens, flare:run OAuth): every write verb.
   canWrite: boolean;
+  // Human review verbs (approve plan/landing, send back, review sample):
+  // admins, or a member's own session on its own repos. Unset = isAdmin.
+  reviewer?: boolean;
   // Agent tag from X-Flare-Agent (MCP) — a default for `agent` args.
   agent?: string;
 }
@@ -308,6 +311,12 @@ function repoArg(deps: ForgeServiceDeps, p: ForgePrincipal, v: unknown): { repo:
   }
   if (!tournamentAllowed(p.repos, deps.namespace, repo)) return forgeFail("repo_not_allowed", "token is not scoped to that repo");
   return { repo };
+}
+
+// Review verbs load the intent through the principal's repo scope, so a
+// member reviewer only ever reaches the repos it owns.
+function canReview(p: ForgePrincipal): boolean {
+  return p.isAdmin || p.reviewer === true;
 }
 
 function isOutcome(v: unknown): v is ForgeOutcome {
@@ -1042,7 +1051,7 @@ export async function markReadyOp(deps: ForgeServiceDeps, p: ForgePrincipal, arg
 }
 
 export async function approvePlanOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "plan approval needs an admin");
+  if (!canReview(p)) return forgeFail("admin_required", "plan approval needs an admin or the repo's owner");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   const done = await approvePlan(deps.db, intent.id, p.actor);
@@ -1056,7 +1065,7 @@ export async function approvePlanOp(deps: ForgeServiceDeps, p: ForgePrincipal, a
 // approve_landing (human/admin): a ready intent routed `human` (risk
 // above policy) may ride trains from now on, still CI-gated.
 export async function approveLandingOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "landing approval needs an admin");
+  if (!canReview(p)) return forgeFail("admin_required", "landing approval needs an admin or the repo's owner");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   if (!deps.trains.approveLanding) {
@@ -2062,7 +2071,7 @@ function reviewReason(v: unknown, required: boolean): { reason: string } | Forge
 // gate); landed work is never moved (the review feeds the disagreement
 // rate and the note asks for a follow-up intent).
 export async function sendBackOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "send_back is a human review verb (admin); agents use send_note");
+  if (!canReview(p)) return forgeFail("admin_required", "send_back is a human review verb (admin or repo owner); agents use send_note");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   const rr = reviewReason(args.reason, true);
@@ -2095,7 +2104,7 @@ export async function sendBackOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
 // disagree -> `review.disagreed` (+ a note to the owner). Both feed the
 // inbox disagreement rate; neither moves state.
 export async function reviewSampleOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "review_sample is a human review verb (admin)");
+  if (!canReview(p)) return forgeFail("admin_required", "review_sample is a human review verb (admin or repo owner)");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   const decision = args.decision === undefined || args.decision === null || args.decision === "" ? "agree" : args.decision;
