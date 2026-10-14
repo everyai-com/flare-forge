@@ -237,7 +237,7 @@ import { READ_CACHE_PREFIX } from "./read-cache";
 import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerCheckout } from "./artifacts-push";
 import { forgeOpsLookups, handleArtifactsOpEvent, isAccountEventType } from "./forge-ops";
 import { coordinatorFor } from "./coordinator";
-import { ensureRepoMirror } from "./artifacts-mirrors";
+import { ensureRepoMirror, mirrorNameFor } from "./artifacts-mirrors";
 import { resolvePairDedupe } from "./event-dedupe";
 import {
   claimAttempt,
@@ -278,7 +278,7 @@ import {
 } from "./mergequeue";
 import git from "isomorphic-git";
 import { MemoryFS } from "./memory-fs";
-import { MEMBER_REPO_LIMIT, createMemberRepo, listOwnedRepos } from "./workspace";
+import { MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo } from "./workspace";
 import http from "isomorphic-git/http/web";
 import { registerTrainDispatch, runTrainTick } from "./train-workflow";
 import { cronMatches, validateCron } from "./cron";
@@ -318,7 +318,7 @@ import { buildMcpServer, mcpDiscovery } from "./mcp";
 import { forgeDepsFromEnv, handleForgeRequest } from "./forge-routes";
 import { forgeAdaptersFromEnv } from "./forge-adapters";
 import { bindingRateLimiter, handleForgePublicRequest } from "./forge-public"; // forge-spectator
-import { listAppRepos, loadSetupFacts, setupSteps } from "./setup";
+import { listAppRepos, loadSetupFacts, publicGithubRepo, repoInstallationAccess, setupSteps } from "./setup";
 import { resolveRunnerRef, runnerScript } from "./runner-script";
 import {
   describeScope,
@@ -479,6 +479,57 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
       },
       201,
     );
+  }
+  if (request.method === "GET" && url.pathname === "/v1/me/github-repos") {
+    // Admins: every repo the Flare App sees. Members signed in with
+    // GitHub: the App-visible repos under their own login. Anyone can
+    // still import a public repo by name.
+    const creds = await getAppCreds(env);
+    const slug = creds ? await getSetting(env.DB, SETTING_KEYS.githubAppSlug) : null;
+    const login = ident.actor.startsWith("github:") ? ident.actor.slice(7).toLowerCase() : null;
+    const all = creds ? ((await listAppRepos(creds)) ?? []) : [];
+    const visible = ident.scope === "admin" ? all : login ? all.filter((r) => r.fullName.toLowerCase().startsWith(`${login}/`)) : [];
+    const owners = await env.DB.prepare("SELECT repo, owner FROM repo_owners").all<{ repo: string; owner: string }>();
+    const ownerOf = new Map(owners.results.map((r) => [r.repo, r.owner]));
+    const mirrors = new Set((await listMirrorRows(env.DB)).filter((m) => m.status === "ready").map((m) => m.mirror));
+    return json({
+      githubLogin: login,
+      installUrl: slug ? installUrl(slug) : null,
+      repos: visible.map((r) => {
+        const name = mirrorNameFor(r.fullName) ?? "";
+        const holder = ownerOf.get(name);
+        return { fullName: r.fullName, private: r.private, defaultBranch: r.defaultBranch, forgeRepo: name, inForge: holder === owner || (ident.scope === "admin" && (holder !== undefined || mirrors.has(name))), takenByOther: holder !== undefined && holder !== owner && ident.scope !== "admin" };
+      }),
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/v1/me/import") {
+    if (!env.ARTIFACTS) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const body = (await request.json().catch(() => ({}))) as { repo?: unknown };
+    const source = parseGithubRepo(body.repo);
+    if (!source) return json(apiError("invalid_request", "repo: a GitHub owner/name or URL"), 400);
+    const creds = await getAppCreds(env);
+    const access = creds ? await repoInstallationAccess(creds, source) : null;
+    const login = ident.actor.startsWith("github:") ? ident.actor.slice(7).toLowerCase() : null;
+    // Private repos: admins through any installation; members only for
+    // repos under their own GitHub login. Everything else: public only.
+    const mayUsePrivate = access !== null && (ident.scope === "admin" || (login !== null && source.toLowerCase().startsWith(`${login}/`)));
+    let isPrivate = false;
+    let token: string | null = null;
+    if (access && mayUsePrivate) {
+      isPrivate = access.isPrivate;
+      token = access.isPrivate ? access.token : null;
+    } else if (!(await publicGithubRepo(source))) {
+      return json(apiError("repo_not_allowed", "that repo is private or does not exist: install the Flare GitHub App on it and sign in with that GitHub account"), 403);
+    }
+    const out = await importGithubRepo(
+      { db: env.DB, artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS(), namespace: env.ARTIFACTS_NAMESPACE ?? "" },
+      owner,
+      source,
+      { isPrivate, installationToken: token, limit: ident.scope === "admin" ? null : MEMBER_REPO_LIMIT },
+    );
+    if (!out.ok) return json(apiError(out.code, out.error), out.status);
+    await audit(env.DB, ident.actor, "repo.import", `${source} -> ${out.repo} (${out.status})`);
+    return json({ ...out, app: `/app?repo=${encodeURIComponent(out.repo)}` }, out.status === "ready" ? 201 : 202);
   }
   if (request.method === "GET" && url.pathname === "/v1/me/tokens") {
     const res = await env.DB.prepare("SELECT id, name, scopes, created_at, revoked_at FROM api_tokens WHERE owner = ? ORDER BY created_at DESC LIMIT 50").bind(owner).all<{ id: string; name: string; scopes: string; created_at: string; revoked_at: string | null }>();

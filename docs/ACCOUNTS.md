@@ -35,6 +35,15 @@ repos, or the CI executor routes; their agent tokens cannot approve
 their own plans (a human session does). Limits: 5 repos and 10 live
 agent tokens per account.
 
+**Bring GitHub repos in.** Repos → **Your GitHub repos** lists what
+you can import (`GET /v1/me/github-repos`: admins see every repo the
+Flare GitHub App can reach; members signed in with GitHub see their own),
+and **Bring into Forge** (`POST /v1/me/import`) copies one into
+Artifacts, adds `main` (at the default branch tip), the train lane pool
+and `refs/notes/why`, and makes you its owner. Any public repo imports
+by `owner/name`; private ones need the App installed on them. GitHub
+stays the source of truth (coordination mode).
+
 To sign in with GitHub as the owner of an email-claimed deployment, set
 **Settings → Team → Owner's GitHub login** (`adminGithubUser`).
 

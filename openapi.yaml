@@ -2355,6 +2355,78 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           description: Too many live agent tokens (token_limit)
+  /v1/me/github-repos:
+    get:
+      tags: [admin]
+      operationId: listMyGithubRepos
+      summary: 'GitHub repos you can bring into Forge (admins see every App-visible repo; members signed in with GitHub see their own)'
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Repos with their Forge status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repos]
+                properties:
+                  githubLogin: { type: string, nullable: true }
+                  installUrl: { type: string, nullable: true }
+                  repos:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fullName: { type: string }
+                        private: { type: boolean }
+                        defaultBranch: { type: string }
+                        forgeRepo: { type: string }
+                        inForge: { type: boolean }
+                        takenByOther: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/import:
+    post:
+      tags: [admin]
+      operationId: importGithubRepo
+      summary: Bring a GitHub repo into Forge (Artifacts import + train lane pool); you own it
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo]
+              properties:
+                repo: { type: string, description: 'owner/name or a github.com URL' }
+      responses:
+        '201':
+          description: Imported and ready for trains
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ready] }
+                  repo: { type: string }
+                  trunk: { type: string }
+                  lanesCreated: { type: integer }
+                  app: { type: string }
+        '202':
+          description: GitHub is still copying; call again in a minute
+        '400':
+          description: Not a GitHub owner/name (invalid_request)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Private or missing, and not reachable through your GitHub App access (repo_not_allowed)
+        '409':
+          description: In Forge under another account (repo_exists) or repo limit reached (repo_limit)
+        '502':
+          description: Import or lane setup failed (repo_create_failed)
   /v1/me/tokens:
     get:
       tags: [admin]

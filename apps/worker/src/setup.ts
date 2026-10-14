@@ -146,6 +146,47 @@ export async function listAppRepos(creds: { appId: string; privateKey: string },
   }
 }
 
+// The installation covering one repo plus a short-lived token for it
+// (null when the App is not installed there). Used to import private
+// repos into Forge; the token stays in memory.
+export async function repoInstallationAccess(
+  creds: { appId: string; privateKey: string },
+  fullName: string,
+  timeoutMs = 5000,
+): Promise<{ installationId: number; token: string; isPrivate: boolean; defaultBranch: string } | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const jwt = await mintAppJwt(creds.appId, creds.privateKey);
+    const inst = await ghJson<{ id?: number }>(`https://api.github.com/repos/${fullName}/installation`, jwt, ctl.signal);
+    if (!inst || typeof inst.id !== "number") return null;
+    const tok = await installationToken(jwt, inst.id, ctl.signal);
+    if (!tok) return null;
+    const repo = await ghJson<GhRepo>(`https://api.github.com/repos/${fullName}`, tok, ctl.signal);
+    return { installationId: inst.id, token: tok, isPrivate: repo?.private === true, defaultBranch: repo?.default_branch || "main" };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Public-repo facts without credentials (null = missing or private). */
+export async function publicGithubRepo(fullName: string, timeoutMs = 5000): Promise<{ defaultBranch: string } | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`https://api.github.com/repos/${fullName}`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "flare-forge" }, signal: ctl.signal });
+    if (!res.ok) return null;
+    const r = (await res.json()) as GhRepo;
+    return r.private === true ? null : { defaultBranch: r.default_branch || "main" };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function loadSetupFacts(
   db: Db,
   opts: {

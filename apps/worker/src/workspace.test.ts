@@ -5,7 +5,7 @@ import { createToken } from "./db";
 import { forgeSqliteDb } from "./forge.testkit";
 import { MemoryFS } from "./memory-fs";
 import { authIdentityFromToken, hashToken, MEMBER_TOKEN_SCOPE, memberRepos, NO_REPOS } from "./tokens";
-import { createMemberRepo, listOwnedRepos, MEMBER_REPO_LIMIT, starterFiles, validateWorkspaceName, type WorkspaceGit } from "./workspace";
+import { createMemberRepo, importGithubRepo, listOwnedRepos, MEMBER_REPO_LIMIT, parseGithubRepo, starterFiles, validateWorkspaceName, type WorkspaceGit } from "./workspace";
 
 // Real isomorphic-git on MemoryFS; only the network push is faked.
 function fakeGit(pushed: string[], failOn?: string): WorkspaceGit {
@@ -95,5 +95,80 @@ describe("member agent tokens", () => {
     // A member-scoped row without an owner is refused, not widened.
     await createToken(d.db, { id: "t2", name: "x", tokenHash: await hashToken("secret-2"), scopes: MEMBER_TOKEN_SCOPE, repos: "" });
     expect(await authIdentityFromToken("secret-2", { db: d.db })).toBeNull();
+  });
+});
+
+describe("importGithubRepo", () => {
+  function importDeps(over: { refs?: Array<{ ref: string; oid: string }>; importFails?: string } = {}) {
+    const db = forgeSqliteDb();
+    const pushed: Array<{ remoteRef: string; ref: string }> = [];
+    const tip = "a".repeat(40);
+    const refs = over.refs ?? [{ ref: "refs/heads/master", oid: tip }];
+    return {
+      db,
+      pushed,
+      tip,
+      d: {
+        db,
+        artifacts: {
+          import: async () => {
+            if (over.importFails) throw Object.assign(new Error("x"), { code: over.importFails });
+            return { remote: "https://art/x.git" };
+          },
+          get: async () => ({ createToken: async () => ({ plaintext: "w" }), info: async () => ({ remote: "https://art/x.git" }) }),
+          delete: async () => true,
+        },
+        git: {
+          init: async () => undefined,
+          writeRef: async () => undefined,
+          addNote: async () => "n".repeat(40),
+          listServerRefs: async () => refs,
+          push: async (a: { remoteRef: string; ref: string }) => {
+            pushed.push({ remoteRef: a.remoteRef, ref: a.ref });
+            return { ok: true };
+          },
+        },
+        http: {} as HttpClient,
+        fs: () => new MemoryFS(),
+        namespace: "ns",
+        lanes: 2,
+      },
+    };
+  }
+
+  it("parses owner/name from names and URLs", () => {
+    expect(parseGithubRepo("everyai-com/flare-forge")).toBe("everyai-com/flare-forge");
+    expect(parseGithubRepo("https://github.com/everyai-com/flare-forge.git")).toBe("everyai-com/flare-forge");
+    expect(parseGithubRepo("github.com/a/b/")).toBe("a/b");
+    for (const bad of ["", "a", "a/b/c", "https://gitlab.com/a/b", "a/..", 3]) expect(parseGithubRepo(bad)).toBeNull();
+  });
+
+  it("imports, records the owner, adds main + lanes + notes at the tip without uploading history", async () => {
+    const { d, pushed, tip } = importDeps();
+    const out = await importGithubRepo(d, "github:sam", "sam/app", { isPrivate: false });
+    expect(out).toMatchObject({ ok: true, status: "ready", repo: "sam-app", scoped: "ns/sam-app", trunk: tip, lanesCreated: 2 });
+    expect(pushed).toEqual([
+      { remoteRef: "refs/heads/main", ref: "refs/heads/tip" },
+      { remoteRef: "refs/heads/forge/lane-0", ref: "refs/heads/tip" },
+      { remoteRef: "refs/heads/forge/lane-1", ref: "refs/heads/tip" },
+      { remoteRef: "refs/notes/why", ref: "refs/notes/why" },
+    ]);
+    expect(await memberRepos(d.db, "github:sam")).toEqual(["ns/sam-app"]);
+  });
+
+  it("is idempotent for the owner and refuses other accounts", async () => {
+    const tip = "b".repeat(40);
+    const { d, pushed } = importDeps({ refs: [{ ref: "refs/heads/main", oid: tip }, { ref: "refs/heads/forge/lane-0", oid: tip }, { ref: "refs/notes/why", oid: tip }] });
+    expect(await importGithubRepo(d, "github:sam", "sam/app", { isPrivate: false })).toMatchObject({ ok: true, lanesCreated: 1 });
+    expect(pushed.map((p) => p.remoteRef)).toEqual(["refs/heads/forge/lane-1"]);
+    expect(await importGithubRepo(d, "github:sam", "sam/app", { isPrivate: false })).toMatchObject({ ok: true });
+    expect(await importGithubRepo(d, "email:eve@x.io", "sam/app", { isPrivate: false })).toMatchObject({ ok: false, code: "repo_exists" });
+  });
+
+  it("explains a failed private import", async () => {
+    const { d } = importDeps({ importFails: "REMOTE_AUTH_REQUIRED" });
+    const out = await importGithubRepo(d, "github:sam", "sam/secret", { isPrivate: false });
+    expect(out).toMatchObject({ ok: false, code: "repo_create_failed" });
+    expect(out.ok ? "" : out.error).toContain("Flare GitHub App");
   });
 });

@@ -585,7 +585,7 @@ body.explain .ex { display:block; }
   function renderPage() {
     var root = clear(byId("page"));
     var staticPage = S.page === "how" || S.page === "mcp" || S.page === "demo" || S.page === "settings";
-    if (!S.repo && !staticPage) { empty(root, "No repo selected", S.pub ? "" : "Create the demo trunk on Artifacts, or pick a repo from the switcher.", S.pub ? "" : "npm run forge:demo"); return; }
+    if (!S.repo && !staticPage) { if (!S.pub && S.authed) { welcome(root); return; } empty(root, "No repo selected", S.pub ? "" : "Pick a repo from the switcher.", ""); return; }
     if (!S.data && !staticPage) { for (var i = 0; i < 6; i++) add(root, el("div", "skel")); return; }
     var fn = { overview: pOverview, intents: pIntents, trains: pTrains, conflicts: pConflicts, review: pReview, agents: pAgents, repos: pRepos, code: pCode, usage: pUsage, how: pHow, demo: pDemo, mcp: pMcp, settings: pSettings }[S.page];
     fn(root);
@@ -699,7 +699,7 @@ body.explain .ex { display:block; }
     var chips = add(tb, el("div", "chips")); var states = ["", "working", "ready", "in_train", "landed", "awaiting_plan", "conflicted", "replaying", "draft"]; var cnt = {}; intents().forEach(function (i) { cnt[i.state] = (cnt[i.state] || 0) + 1; });
     states.forEach(function (s) { if (s && !cnt[s]) return; var b = add(chips, el("button", S.filter.state === s ? "on" : "", (s || "all") + (s ? " " + cnt[s] : " " + intents().length))); b.addEventListener("click", function () { S.filter.state = s; renderPage(); }); });
     var list = intents().filter(function (i) { if (S.filter.state && i.state !== S.filter.state) return false; if (!S.filter.q) return true; var ql = S.filter.q.toLowerCase(); return (i.title + " " + i.agent + " " + ((i.footprint && i.footprint.paths) || []).join(" ")).toLowerCase().indexOf(ql) !== -1; });
-    if (!list.length) { empty(root, intents().length ? "No intent matches" : "No intents yet", intents().length ? "" : "An agent declares one before editing.", intents().length || S.pub ? "" : "npm run forge:agents -- --mode scripted --count 6"); return; }
+    if (!list.length) { var em = empty(root, intents().length ? "No intent matches" : "No intents yet", intents().length ? "" : "Pushing code does not create intents: an agent declares one before it edits. Connect Claude Code, Codex or Cursor, then ask it: \\"Declare an intent for <task> in " + S.repo + ", claim it, and land it through a train.\\" Or start with New goal and let AI plan the intents.", ""); if (!intents().length && !S.pub && S.authed) { var eb = add(em, el("div", "toolbar")); eb.style.marginTop = "10px"; var c1 = add(eb, el("button", "primary sm", "Connect an agent")); c1.addEventListener("click", function () { modal("Connect an agent", function (b) { connectPanel(b); }, []); }); var c2 = add(eb, el("button", "sm", "New goal")); c2.addEventListener("click", goalComposer); } return; }
     add(root, table([
       { h: "Intent", cell: function (i) { var w = el("div"); add(w, el("div", "t", i.title)); add(w, el("div", "s", goalText(i.goalId) || "")); return w; } },
       { h: "Agent", fit: true, cell: function (i) { var w = el("span"); add(w, ava(i.agent, i.state === "working")); add(w, el("span", null, " " + (i.agent || ""))); return w; } },
@@ -784,6 +784,45 @@ body.explain .ex { display:block; }
       add(box, table([{ h: "Token", cell: function (t) { return el("span", "t", t.name); } }, { h: "Created", fit: true, cell: function (t) { return el("span", "s", ago(t.createdAt)); } }, { h: "", fit: true, cell: function (t) { var b = el("button", "sm danger", "Revoke"); b.addEventListener("click", function (e) { e.stopPropagation(); if (!confirm("Revoke " + t.name + "? Agents using it stop working.")) return; api("/v1/me/tokens/" + encodeURIComponent(t.id) + "/revoke", { method: "POST", body: {} }).then(function () { renderPage(); }); }); return b; } }], list));
     });
   }
+  function openRepo(nm) { S.repo = nm; S.data = null; S.prev = null; var u = new URL(location.href); u.searchParams.set("repo", nm); history.replaceState(null, "", u.toString()); loadRepos(); nav("#/overview"); poll(); }
+  function importRepo(name, btn) {
+    if (!name) { toast("conflict", "Type a GitHub repo as owner/name"); return; }
+    var old = btn.textContent; btn.disabled = true; btn.textContent = "Importing…"; toast("idle", "Importing " + name + " from GitHub…");
+    api("/v1/me/import", { method: "POST", body: { repo: name } }).then(function (r) {
+      btn.disabled = false; btn.textContent = old;
+      if (r.status === 202 && r.body) { toast("idle", "GitHub is still copying " + r.body.repo + ". Click Bring into Forge again in a minute to finish."); return; }
+      if (r.status === 201 && r.body) { toast("landed", "Imported " + r.body.repo + ". Connect an agent and it can start."); openRepo(r.body.repo); return; }
+      toast("conflict", fail(r));
+    });
+  }
+  function githubImport(parent) {
+    var gh = add(parent, card("Your GitHub repos", "bring any of them into Forge")); gh.id = "ghCard";
+    ex(gh, "Import copies the repo into Cloudflare Artifacts and prepares it for trains. GitHub stays the source of truth: its CI keeps running on Flare Actions and the Forge trunk follows your default branch.");
+    var tb = add(gh, el("div", "toolbar")); var inp = add(tb, el("input")); inp.placeholder = "owner/name or a github.com URL"; inp.style.minWidth = "240px"; var go = add(tb, el("button", "primary sm", "Import")); go.addEventListener("click", function () { importRepo(inp.value.trim(), go); }); inp.addEventListener("keydown", function (e) { if (e.key === "Enter") importRepo(inp.value.trim(), go); });
+    var holder = add(gh, el("div")); holder.style.marginTop = "8px"; add(holder, el("div", "skel"));
+    Promise.all([api("/v1/me/github-repos"), S.admin ? api("/v1/usage") : Promise.resolve({ status: 0 })]).then(function (rs) {
+      clear(holder); var d = rs[0].status === 200 && rs[0].body ? rs[0].body : {}; var list = d.repos || []; var jobs = {}; ((rs[1].status === 200 && rs[1].body && rs[1].body.topRepos) || []).forEach(function (t) { jobs[t.repo] = t; });
+      if (!list.length) add(holder, el("div", "small muted", d.githubLogin ? "No repos from @" + d.githubLogin + " are visible to the Flare GitHub App yet. Give it access below, or import any public repo above." : "Sign in with GitHub to list your own repos here. Any public repo can be imported above."));
+      else {
+        var q = add(holder, el("input")); q.type = "search"; q.placeholder = "filter " + list.length + " repos"; q.style.minWidth = "220px"; q.style.marginBottom = "6px"; var rowsBox = add(holder, el("div"));
+        var draw = function () { clear(rowsBox); var ql = q.value.trim().toLowerCase(); var rows = list.filter(function (r) { return !ql || r.fullName.toLowerCase().indexOf(ql) !== -1; }); rows.sort(function (a, b) { return (b.inForge ? 1 : 0) - (a.inForge ? 1 : 0) || ((jobs[b.fullName] || {}).jobs || 0) - ((jobs[a.fullName] || {}).jobs || 0) || a.fullName.localeCompare(b.fullName); });
+          add(rowsBox, table([
+            { h: "Repo", cell: function (r) { var w = el("div"); add(w, el("div", "t mono", r.fullName)); add(w, el("div", "s", (r.private ? "private" : "public") + " · " + (r.defaultBranch || "main") + (jobs[r.fullName] ? " · " + jobs[r.fullName].jobs + " CI jobs on Flare (30 d)" : ""))); return w; } },
+            { h: "", fit: true, cell: function (r) { if (r.inForge) { var o = el("button", "sm", "Open in Forge"); o.addEventListener("click", function (e) { e.stopPropagation(); openRepo(r.forgeRepo); }); return o; } if (r.takenByOther) return el("span", "s", "in Forge (another account)"); var b = el("button", "sm primary", "Bring into Forge"); b.addEventListener("click", function (e) { e.stopPropagation(); importRepo(r.fullName, b); }); return b; } }
+          ], rows.slice(0, 50), S.admin ? function (r) { openRepoRuns(r.fullName); } : null)); if (rows.length > 50) add(rowsBox, el("div", "small muted", "+ " + (rows.length - 50) + " more; filter to find one")); };
+        q.addEventListener("input", draw); draw();
+      }
+      if (d.installUrl) { var ia = add(holder, el("a", "small", "Give the Flare GitHub App access to more repos →")); ia.href = d.installUrl; ia.rel = "noopener"; ia.style.display = "inline-block"; ia.style.marginTop = "8px"; }
+    });
+  }
+  function welcome(root) {
+    var h = add(root, card("Welcome to Flare Forge", "two ways to start")); add(h, el("div", null, "Many agents, one repo: agents declare what they will change, work in their own forks, and land through trains that CI verifies. Start with a repo."));
+    var g = add(root, el("div", "grid g2")); g.style.marginTop = "12px";
+    var n = add(g, card("Start fresh", "a new repo with a test and CI")); add(n, el("div", "small muted", "Ready for agents in a few seconds.")); var nb = add(n, el("button", "primary", "Create a repo")); nb.style.marginTop = "10px"; nb.addEventListener("click", newRepo);
+    var w = add(g, el("div")); githubImport(w);
+    var d = add(root, el("div", "small muted")); d.style.marginTop = "12px"; d.textContent = "Just looking? The live demo repo: ";
+    var a = add(d, el("a", null, "watch bookshelf")); a.href = "/app?repo=bookshelf"; a.rel = "noopener";
+  }
   function newRepo() {
     modal("Create a repo", function (b) {
       add(b, el("div", "small muted", "A new Forge repo with a starter project, a test and CI. Agents can start on it right away; only you (and the owner of this deployment) can change it."));
@@ -837,15 +876,7 @@ body.explain .ex { display:block; }
       { h: "Updated", fit: true, cell: function (x) { return el("span", "s", ago(x.updatedAt)); } },
     ], S.repos, function (x) { S.repo = x.name; S.data = null; renderRepoBox(); nav("#/overview"); poll(); }));
     var t = add(right, card("Current trunk", S.repo)); kv(t, [["Namespace", S.data.namespace || ""], ["Head", short(S.data.snapshot.headSha)], ["Remote", S.data.remote ? el("span", "mono", S.data.remote) : ""], ["Policy", "auto-land ≤ " + num((S.data.snapshot.policy || {}).autoLandMaxRisk) + " · protected " + (((S.data.snapshot.policy || {}).protected || []).join(", ") || "none")]]);
-    var gh = add(left, card("GitHub repos via the Flare App", "")); gh.id = "ghCard"; gh.style.marginTop = "12px"; ex(gh, "Repos the Flare GitHub App can see. Their CI already runs on Flare Actions (click one for its runs). A trunk mirror is created in Artifacts on the repo's first push through the App; mirrored repos also appear in the table above."); add(gh, el("div", "skel"));
-    Promise.all([api("/v1/setup"), api("/v1/usage")]).then(function (rs) { var c = byId("ghCard"); if (!c) return; var sk = c.querySelector(".skel"); if (sk) sk.remove(); var h = c.querySelector("h3 .r"); var setup = rs[0].status === 200 ? rs[0].body || {} : {}; var list = setup.repos || []; var jobs = {}; ((rs[1].status === 200 && rs[1].body && rs[1].body.topRepos) || []).forEach(function (t) { jobs[t.repo] = t; }); if (h) h.textContent = (setup.githubConnected ? "connected · " : "not connected · ") + list.length + " repos";
-      if (!setup.githubConnected) { var n = add(c, el("div", "note warn", "Connect the GitHub App in Settings to list repos and run their CI on Flare.")); return; }
-      var tb = add(c, el("div", "toolbar")); var q = add(tb, el("input")); q.type = "search"; q.placeholder = "filter repos"; q.style.minWidth = "220px"; var holder = add(c, el("div"));
-      function draw() { clear(holder); var ql = q.value.trim().toLowerCase(); var rows = list.filter(function (r) { return !ql || r.fullName.toLowerCase().indexOf(ql) !== -1; }); rows.sort(function (a, b) { return ((jobs[b.fullName] || {}).jobs || 0) - ((jobs[a.fullName] || {}).jobs || 0) || a.fullName.localeCompare(b.fullName); });
-        add(holder, table([{ h: "Repo", cell: function (r) { var w = el("div"); add(w, el("div", "t mono", r.fullName)); var mirror = (S.repos || []).some(function (x) { return x.name === r.fullName.replace("/", "-"); }); add(w, el("div", "s", (r.private ? "private" : "public") + " · " + (r.defaultBranch || "main") + (mirror ? " · mirrored in Artifacts" : ""))); return w; } }, { h: "CI on Flare (30 d)", fit: true, cell: function (r) { var j = jobs[r.fullName]; return el("span", "s num", j ? j.jobs + " jobs · " + Math.round(j.computeMinutes) + " min" : "no runs yet"); } }, { h: "", fit: true, cell: function (r) { return pill(jobs[r.fullName] ? "landed" : "idle", jobs[r.fullName] ? "Flare Actions" : "connected"); } }], rows.slice(0, 40), function (r) { openRepoRuns(r.fullName); })); if (rows.length > 40) add(holder, el("div", "small muted", "+ " + (rows.length - 40) + " more; filter to find one")).style.marginTop = "6px"; }
-      q.addEventListener("input", draw); draw();
-      if (setup.installUrl) { var ia = add(c, el("a", "small", "Install the App on more repos →")); ia.href = setup.installUrl; ia.rel = "noopener"; ia.style.display = "inline-block"; ia.style.marginTop = "8px"; }
-    });
+    var ghw = add(left, el("div")); ghw.style.marginTop = "12px"; githubImport(ghw);
     var a = add(right, card("Add a repo", "three ways")); a.style.marginTop = "12px";
     add(a, cmdBox("npm run forge:demo -- --repo <name>", "Create the Bookshelf demo trunk (idempotent)"));
     var g2 = add(a, cmdBox("git remote add artifacts https://<account>.artifacts.cloudflare.net/git/" + (S.data.namespace || "<namespace>") + "/<name>.git\\ngit push artifacts main", "Push any repo to a new Artifacts remote (token from wrangler artifacts token)")); g2.style.marginTop = "8px";
