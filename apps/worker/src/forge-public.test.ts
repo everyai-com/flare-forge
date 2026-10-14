@@ -158,6 +158,14 @@ describe("forge public: scope", () => {
     const h = await harness();
     const snap = await h.get("/v1/public/forge/snapshot?repo=demo");
     expect(snap.status).toBe(200);
+    const story = await h.get("/v1/public/forge/overview?repo=demo");
+    expect(story.status).toBe(200);
+    const bundle = JSON.parse(story.text) as Record<string, unknown>;
+    expect(bundle.repo).toBe("demo");
+    expect(bundle.snapshot).toBeDefined();
+    expect(bundle.remote).toBeUndefined();
+    assertClean(story.text);
+    expect((await h.get("/v1/public/forge/overview?repo=other")).status).toBe(404);
     expect(snap.res.headers.get("Cache-Control")).toContain("public");
     expect(snap.res.headers.get("Access-Control-Allow-Origin")).toBe("*");
     for (const p of [

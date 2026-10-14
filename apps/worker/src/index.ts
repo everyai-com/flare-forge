@@ -110,6 +110,7 @@ import { commitFilesToNewBranch, deleteRunner, fetchChangedFiles, fetchJobLogDig
 import { processHealClaims, requestHeal } from "./heal";
 import { judgeFlaky } from "./judge";
 import { DASHBOARD_HTML, dashboardRedirectUrl } from "./dashboard";
+import { appHtml } from "./app";
 import { apiDocsPage } from "./apidocs";
 import { OPENAPI_YAML } from "./openapi-spec";
 import { llmsTxtFor } from "./llms";
@@ -2575,13 +2576,27 @@ export default {
         // /?demo=1#/live. Browsers carry the #fragment across a 302.
         // A bare visit with no session lands on the guided demo, not a
         // login form; signed-in users still go straight to the dashboard.
-        if (url.search === "" && parseSessionCookie(request) === null) {
-          return Response.redirect(new URL("/dashboard?demo=1&tour=1#/live", url).toString(), 302);
+        // The product app is the front door: signed in it opens the
+        // workspace, signed out it opens the public repo read-only (or the
+        // sign-in screen when nothing is public). ?demo=1 keeps the
+        // fixture tour on the classic dashboard.
+        if (url.searchParams.get("demo") !== null || url.searchParams.get("tour") !== null) {
+          return Response.redirect(dashboardRedirectUrl(url), 302);
         }
-        return Response.redirect(dashboardRedirectUrl(url), 302);
+        const app = new URL("/app", url);
+        app.search = url.search;
+        return Response.redirect(app.toString(), 302);
       }
       if (request.method === "GET" && url.pathname === "/dashboard") {
         return dashboardResponse();
+      }
+      // The product app (Forge): a static shell like /dashboard, served
+      // before the schema check; its client reads /v1/forge/overview (or the
+      // public bundle for spectators).
+      if (request.method === "GET" && url.pathname === "/app") {
+        return new Response(appHtml(), {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        });
       }
       await ensureSchema(env.DB);
       // CSRF defense-in-depth for cookie-authenticated mutations:

@@ -34,7 +34,7 @@ This repo is Flare Forge's entry for Cloudflare's
 ["Build the next Git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/)
 competition (Workers + Artifacts, submissions close Oct 14, 2026).
 
-1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live) (demo data, rendered in your tab).
+1. **Open the product**, no sign-in: [flare-actions.everyai-com.workers.dev/app?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf). The Forge workspace on the real `bookshelf` repo, read-only: overview (live map, train track, what needs a human), intents, trains, conflicts, the review inbox, agents, code with `why` on any line, and the Artifacts usage ledger. Signed in, the same app reviews, approves, launches goals, mints tokens and pairs runners. The guided tour on demo data is still at [/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live).
 2. **Watch a real repo** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf) shows the Bookshelf repo's live state and the record of its last swarm (Oct 14: 13 intents from 6 agents, 10 landed through CI-verified trains, 6 overlaps caught at declare time, one conflict replayed by the AI resolver and routed to the human inbox, two semantic failures bisected out, one protected intent waiting for plan approval; main never red), plus the Artifacts ops ledger. Between swarms the map is quiet; the record and the ledger stay. Or ask your own Claude Code:
 
    ```bash

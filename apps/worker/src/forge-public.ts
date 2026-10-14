@@ -46,6 +46,7 @@ import {
   type ForgeOutcome,
   type ForgePrincipal,
   type ForgeServiceDeps,
+  overviewOp,
 } from "./forge-service";
 import { hashToken, newTokenValue, type ApiTokenIdentity } from "./tokens";
 import { tournamentRepoKey } from "./tournaments";
@@ -317,10 +318,11 @@ function collectionOp(url: URL): ForgeOp | null {
   if (url.pathname === "/v1/public/forge/conflicts") return listConflictsOp;
   if (url.pathname === "/v1/public/forge/why") return whyOp;
   if (url.pathname === "/v1/public/forge/whats-happening") return whatsHappeningOp;
+  if (url.pathname === "/v1/public/forge/overview") return overviewOp;
   return null;
 }
 
-const PUBLIC_ENDPOINTS = ["snapshot", "live", "inbox", "goals", "goals/{id}", "intents", "intents/{id}", "trains", "trains/{id}", "conflicts", "conflicts/{id}", "why", "whats-happening", "feed", "join", "mcp"].map(
+const PUBLIC_ENDPOINTS = ["snapshot", "live", "inbox", "goals", "goals/{id}", "intents", "intents/{id}", "trains", "trains/{id}", "conflicts", "conflicts/{id}", "why", "whats-happening", "overview", "feed", "join", "mcp"].map(
   (p) => `/v1/public/forge/${p}`,
 );
 
