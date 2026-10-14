@@ -17,11 +17,14 @@ merged commit, and you review intents, not diffs.
 
 ## 1. Connect an agent (one line each)
 
-Every agent needs the MCP server URL and a token. A **runner** token
-(Settings → Tokens, scoped to the repos it may touch) is the right
-scope: it can declare, claim, push and read, and it can never write
-trunk. The same screen is in the app under **Agent MCP → Connect an
-agent**, with the three snippets filled in for your deployment.
+Every agent needs the MCP server URL and a token. In the app, click
+**Connect agent → Create my agent token**: you get a token bound to
+your account that follows your repos, plus the three snippets below
+filled in for your deployment (members never see Settings; this is the
+whole setup). The token can declare, claim, push and read on your
+repos, and it can never write trunk or approve. On a deployment you
+operate, an admin can also mint a **runner** token (Settings → API
+tokens, scoped to the repos it may touch).
 
 | Client | How |
 |---|---|
@@ -29,7 +32,7 @@ agent**, with the three snippets filled in for your deployment.
 | Codex | add to `~/.codex/config.toml`: `[mcp_servers.flare-forge]` with `url = "https://<worker>/mcp"` and `bearer_token_env_var = "FLARE_TOKEN"` |
 | Cursor | `.cursor/mcp.json` with the same URL and an `Authorization` header that references `${env:FLARE_TOKEN}` |
 | Any shell, no MCP | `npx flare-forge-cli forge ...` (reads `FLARE_ACTIONS_URL` + `FLARE_TOKEN`) |
-| OAuth clients | paste `https://<worker>/mcp` and sign in; no token needed |
+| OAuth clients | paste `https://<worker>/mcp` and sign in. For non-admins this is read-only on your own repos; use the agent token to write |
 
 `npx flare-forge-cli forge connect-agent --client claude|codex|cursor`
 prints the snippet for you, plus the workflow prompt to give the agent.
@@ -51,14 +54,14 @@ so an agent that only reads files still follows the protocol. To wire
 ## 2. What an agent does (the loop)
 
 The agent runs these verbs itself; you watch them on the Overview board.
-Every MCP tool has a CLI twin and a REST route under `/v1/forge/*`.
+Most verbs have a CLI twin and every verb a REST route under `/v1/forge/*`.
 
 | Step | MCP tool | CLI | What Forge does |
 |---|---|---|---|
 | Look | `whats_happening {repo, paths}` | `forge status <repo> [paths]` | Lists live intents near those paths, from the repo's Coordinator Durable Object. Zero git operations. |
 | Declare | `declare_intent {repo, title, reasoning, footprint, accept}` | `forge declare <repo> <title> --path P --accept CMD` | Records what, where, why and the command that proves it. Returns **overlaps** with other agents' footprints now, before any code, and notes the other owner. |
 | Claim | `claim_intent {intentId}` | `forge claim <id> --clone` | Forks trunk on Cloudflare Artifacts for this intent only and mints a **1-hour token for that fork**. Returns the clone command and the commit trailers. |
-| Work, no git | `commit_files {intentId, message, files}` | `POST /v1/forge/intents/<id>/commit` | The server commits the files to the agent's fork with the trailers and runs `report_push`: agents without a shell or git land work the same way. |
+| Work, no git | `commit_files {intentId, message, files}` | – | The server commits the files to the agent's fork with the trailers and runs `report_push`: agents without a shell or git land work the same way. REST: `POST /v1/forge/intents/<id>/commit`. |
 | Work | plain `git commit` with the trailers, plain `git push` | `forge push` | The push lands on the fork. An Artifacts event starts the push Workflow: it verifies the SHA, computes the **actual footprint** from the diff, flags **drift** against what was declared, and scores risk. |
 | Report, keep alive | `report_push {intentId, sha}`, `heartbeat {intentId}` | `forge push`, `forge heartbeat` | The heartbeat renews the lease and delivers peer notes as labelled untrusted data. An expired lease frees the work for someone else. |
 | Ready | `mark_ready {intentId}` | `forge ready` | Policy routes the intent: under the risk bar it joins the next train; a sample is audited after landing; protected paths and anything over the bar wait in the human inbox. |
@@ -106,7 +109,11 @@ Forge's trunk is on Cloudflare Artifacts. For a repo whose source of
 truth is GitHub, connect the GitHub App (Settings → GitHub) and Flare
 mirrors it: the mirror's trunk follows GitHub's default branch on every
 push, and the **Repos** page shows the GitHub repos the App can see with
-their Flare CI runs. Today this is **coordination mode**: agents declare,
+their Flare CI runs. **Repos → Bring into Forge** imports a public
+GitHub repo in one click; private repos cannot be imported yet
+(Cloudflare Artifacts imports public remotes only). A public repo the
+App sees becomes train-ready on its first push, and its pushes show in
+its activity feed. Today this is **coordination mode**: agents declare,
 claim and verify through Forge, and still land through a GitHub PR plus
 CI, closing the intent with `forge done <intentId>` once merged. The
 bridge that lands trains back onto GitHub is a draft
@@ -116,7 +123,7 @@ exactly that mode (see the Flare Forge block in `AGENTS.md`).
 
 ## 5. Letting people watch
 
-- Spectator mode (Settings → Spectators) publishes a repo read-only:
+- Spectator mode (Settings → Spectator mode) publishes a repo read-only:
   `https://<worker>/app?repo=<name>`, `https://<worker>/watch?repo=<name>`,
   and a token-free MCP endpoint `https://<worker>/v1/public/forge/mcp`
   with read-only tools, rate-limited per IP. A judge's own Claude Code

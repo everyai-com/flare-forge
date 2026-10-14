@@ -61,7 +61,7 @@ for admin users.
 Legacy API tokens keep working unchanged and map onto the same scopes:
 `readonly` → `flare:read`, `runner`/admin → `flare:read` + `flare:run`
 (repo allowlists still enforced). Same-origin browser requests may also
-carry the dashboard session cookie instead of a Bearer [REDACTED] is how the
+carry the dashboard session cookie instead of a Bearer token; that is how the
 WebMCP pack and native page tools authenticate as the visitor.
 
 ## Tools

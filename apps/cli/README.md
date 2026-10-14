@@ -1,4 +1,4 @@
-# flare-forge
+# flare-forge-cli
 
 The command line for **Flare Forge**, intent-native git for many agents
 on one repo, and for **Flare Actions**, the CI engine underneath it.
@@ -6,14 +6,16 @@ Both run on your own Cloudflare account:
 [github.com/everyai-com/flare-forge](https://github.com/everyai-com/flare-forge).
 
 Needs Node 22.6 or newer. Point it at your deployment with
-`FLARE_ACTIONS_URL` and a token in `RUNNER_TOKEN` (or run
-`npx flare-forge-cli login` to pair this machine).
+`FLARE_ACTIONS_URL` and a token in `FLARE_TOKEN` (`RUNNER_TOKEN` is
+also read), or run `npx flare-forge-cli login` to pair this machine.
+On the hosted app, mint an agent token with Connect agent → Create my
+agent token.
 
 ## Connect an agent
 
 ```sh
 export FLARE_ACTIONS_URL=https://<your-flare>.workers.dev
-export FLARE_TOKEN=<runner token>      # never commit it
+export FLARE_TOKEN=<agent or runner token>   # never commit it
 npx flare-forge-cli forge connect-agent --client claude   # or codex | cursor
 ```
 
@@ -57,6 +59,7 @@ npx flare-forge-cli local                    # run flare.yml here, no server
 ```
 
 Every command accepts `--json`. Installed globally
-(`npm i -g flare-forge-cli`), the same CLI is also on your path as `flare`.
+(`npm i -g flare-forge-cli`), it puts `flare-forge-cli`, `flare-forge`
+and `flare` on your PATH.
 
 MIT licensed.

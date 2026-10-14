@@ -6,6 +6,41 @@ tagged on `main` (`v0.1.0` is the first).
 
 ## [Unreleased]
 
+### Added (2026-10-14, PRs #34-#42)
+
+- **Self-serve accounts.** Anyone who signs up is a member, not a
+  read-only reader: members create repos (**+ New repo**, a starter
+  project with a test and `flare.yml`), import public GitHub repos
+  (**Repos → Bring into Forge**), and run the whole loop on what they
+  own, including plan approval and review. Members never reach
+  Settings, secrets, other accounts' repos or the CI executor routes.
+- **One-click agent tokens.** **Connect agent → Create my agent token**
+  returns the Claude Code / Codex / Cursor line with the token filled
+  in. The token is bound to the account and follows its repos; agent
+  tokens cannot approve their own plans. List and revoke under *Your
+  agent tokens* (`/v1/me/*`).
+- **`commit_files`: agents land work without git.** Send file contents
+  or deletions; the Worker commits them to the agent's fork with the
+  intent's trailers (shallow fetch, only changed trees rebuilt,
+  fast-forward push) and runs `report_push` on the new sha. MCP tool
+  and `POST /v1/forge/intents/:id/commit`.
+- **GitHub repos come in by themselves.** A public repo the Flare App
+  sees becomes train-ready on its first push (main, the lane pool and
+  `refs/notes/why`), and every push shows in that repo's activity feed.
+  Forge accepts GitHub names (`owner/name`) wherever it takes a repo.
+- GitHub sign-in lands on `/app`; an email-claimed owner links their
+  GitHub login in Settings → Team. Collapsible sidebar; welcome screen
+  for new accounts; empty pages explain the next step.
+
+### Fixed (2026-10-14)
+
+- The overview keeps the latest red lanes: speculative rebuilds no
+  longer push a bisected lane out of the Trains page.
+- The How it works map fits its labels at every width.
+- Private GitHub repos say plainly they cannot be imported yet
+  (Artifacts imports public HTTPS remotes only) instead of failing.
+- Git test fixtures ignore a late `EPIPE` from `git http-backend`.
+
 ### Fixed
 
 - Two deploy blockers that 500'd every route on fresh preview deploys
@@ -60,8 +95,9 @@ tagged on `main` (`v0.1.0` is the first).
   lost), tokenless `cli signup [--agent]` onboarding for either
   plane, `cli credits` ledger reader, and an x402 spike
   (`POST /v1/cloud/x402/quote` prices runner-months at $49;
-  `payTo` null until settlement exists). See docs/HOSTED.md and
-  docs/X402-SPIKE.md.
+  `payTo` null until settlement exists). See
+  [HOSTED.md](https://github.com/everyai-com/flare-actions/blob/main/docs/HOSTED.md)
+  and [X402-SPIKE.md](https://github.com/everyai-com/flare-actions/blob/main/docs/X402-SPIKE.md).
 - Flare Cloud scaffold (hosted seam, inert on OSS): env-only
   `FLARE_CLOUD=1` flag, concurrent-runner plan entitlements enforced
   at every dispatch entry (429 `plan_limit_exceeded` on API/MCP,
@@ -70,7 +106,7 @@ tagged on `main` (`v0.1.0` is the first).
   (`POST /v1/cloud/credits/grant`, `GET /v1/cloud/credits/balance`,
   501 `hosted_only` in OSS), run-terminal metering at 1¢/min wired
   through worker + seat executors, and a public
-  `GET /v1/cloud/status` probe. See docs/HOSTED.md.
+  `GET /v1/cloud/status` probe. See [HOSTED.md](https://github.com/everyai-com/flare-actions/blob/main/docs/HOSTED.md).
 - Org-level runner groups for the flare lane: a dashboard group name
   pins JIT registration to that org group (resolved per org, cached
   1 hour, re-save busts); unknown groups fail the claim with

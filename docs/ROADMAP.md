@@ -97,7 +97,7 @@ The recurring pains, in practitioners' own terms:
       trailers), session forks; MCP + REST + `cli forge` + the
       `flare-forge` skill
 - [x] `cli forge init`: AGENTS.md block + MCP config for any repo
-- [ ] Publish the CLI to npm as `flare-forge` (manual `npm publish`)
+- [x] Published to npm as `flare-forge-cli` (0.1.0, 2026-10-14)
 - [ ] Measured live numbers to replace the simulated bench
       (`docs/FORGE-BENCH.md`)
 - [ ] Dogfooding: mirror this repo into Artifacts and land Forge's own

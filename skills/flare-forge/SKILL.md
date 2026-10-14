@@ -104,7 +104,7 @@ token and a fetch command for the source fork's pushed work. Then
   and someone may `fork_session` it.
 - **Long sessions:** fork tokens last 1 h. Call
   `heartbeat {intentId, refreshToken: true}` (or
-  `flare forge heartbeat --refresh-token`) for a fresh one.
+  `npx flare-forge-cli forge heartbeat --refresh-token`) for a fresh one.
 - **Commit with the trailers** from `claim_intent`
   (`Flare-Goal/Intent/Agent/Session`). They power `why`.
 - **Before editing code you did not write**, call

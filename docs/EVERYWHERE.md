@@ -88,7 +88,7 @@ For more accounts or orgs, pick one:
   owner account.
 
 Scope runner and agent tokens per org with the token repo allowlist:
-in Settings → Tokens, set repos to `org/*`.
+in Settings → API tokens, set repos to `org/*`.
 
 ## 4. Cloudflare accounts
 
@@ -107,8 +107,11 @@ Keep the `flare-forge` name for the one `forge init --global` points at.
 
 ## 5. Teammates and their agents
 
-- People: Settings → People → invite link (single use, 24 h). Or turn on
-  open registration for read-only sign-up.
-- Their machines: they run section 1 against your URL. Their agents sign
-  in over OAuth, or get a runner token from a pairing code
+- People: turn on open registration (Settings → Team and access) and
+  anyone can sign up as a member: they create their own repos and mint
+  an agent token. For a closed deployment, send an invite link from
+  Settings → Team and access (single use, 24 h).
+- Their agents: in the app, Connect agent → Create my agent token
+  (OAuth is read-only for non-admins). Their machines can also get a
+  runner token from a pairing code
   (`npx flare-forge-cli login --code XXXX-XXXX`).

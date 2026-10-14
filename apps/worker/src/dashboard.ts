@@ -621,7 +621,7 @@ ${FORGE_NAV_BENCH_HTML}
 <div id="githubBox">
 <div class="divider" id="oauthDivider">or continue with</div>
 <button id="githubLoginBtn" class="btn-github btn-block">Login with GitHub</button>
-<p class="muted" id="githubOpenHint" hidden><span class="pro-only">Open registration is on — any GitHub user can log in (reader access).</span><span class="simple-only" data-simple="text">Anyone with GitHub can join and look around.</span></p>
+<p class="muted" id="githubOpenHint" hidden><span class="pro-only">Open registration is on — any GitHub user can log in (as a member).</span><span class="simple-only" data-simple="text">Anyone with GitHub can join and look around.</span></p>
 <p id="authInstallBox" hidden><a id="authInstallLink" href="#" target="_blank" rel="noopener"><span class="pro-only">Install the App on your repos first</span><span class="simple-only" data-simple="label">Pick your projects on GitHub first ↗</span></a></p>
 <p id="loginMsg"></p>
 <div id="breakGlassBox" hidden>

@@ -1,7 +1,7 @@
 # Recording the demo
 
 > Provenance: agent-drafted 2026-10-14. The beats below were walked on the
-> hosted deployment against the `bookshelf-story` repo (a fresh
+> hosted deployment against the `bookshelf` repo (a fresh
 > `forge:demo` + `forge:agents --mode scripted --count 6` run) through the
 > product app; nothing here depends on fixture data.
 
@@ -11,12 +11,10 @@ same script, a guided tour that walks it, and live readiness checks.
 
 ## Before you press record (15 minutes)
 
-1. **A runner must be executing train CI.** Managed seats are optional; a
-   local one is enough and fast (about 3 s per job):
+1. **Train CI.** Trains run on cloud seats; a local runner is optional:
    ```sh
-   npm run runner          # from a clone of this repo, with .env
+   npm run runner          # optional, from a clone of this repo, with .env
    ```
-   Leave it running in its own terminal.
 2. **Fresh trunk and goals**, then the swarm. `--recreate` resets the repo
    so the board starts empty; without it the swarm appends to what is there.
    ```sh

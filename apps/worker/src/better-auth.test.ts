@@ -10,7 +10,7 @@ describe("bridgeDecision", () => {
   it("lets the first account claim admin, like bootstrap", () => {
     expect(bridgeDecision({ existing: false, claimed: false, openRegistration: false })).toBe("claim_admin");
   });
-  it("registers a reader only when open registration is on", () => {
+  it("registers a member only when open registration is on", () => {
     expect(bridgeDecision({ existing: false, claimed: true, openRegistration: true })).toBe("register");
     expect(bridgeDecision({ existing: false, claimed: true, openRegistration: false })).toBe("deny");
   });

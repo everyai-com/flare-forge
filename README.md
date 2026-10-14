@@ -34,7 +34,7 @@ This repo is Flare Forge's entry for Cloudflare's
 ["Build the next Git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/)
 competition (Workers + Artifacts, submissions close Oct 14, 2026).
 
-1. **Open the product**, no sign-in: [flare-actions.everyai-com.workers.dev/app?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf). The Forge workspace on the real `bookshelf` repo, read-only. The overview is a lifecycle board (declared → in a fork → ready → in a train → landed, plus what needs a human and what is in conflict) over a plain-language activity feed; then intents, trains, conflicts, the review inbox, agents, a GitHub-shaped **Repository** view (files, commits that name their intent, branches, CI runs) with `why` on any line, and the Artifacts usage ledger. **How it works** carries a one-picture map of the system; **Demo** runs an 8-stop guided tour; **Agent MCP** shows the connection line and lets you try a tool. Signed in, the same app reviews, approves, launches goals, mints tokens, pairs runners and manages the team. Press **Explain** for a caption on everything. The guided tour on demo data is still at [/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live).
+1. **Open the product**, no sign-in: [flare-actions.everyai-com.workers.dev/app?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf). The Forge workspace on the real `bookshelf` repo, read-only. The overview is a lifecycle board (declared → in a fork → ready → in a train → landed, plus what needs a human and what is in conflict) over a plain-language activity feed; then intents, trains, conflicts, the review inbox, agents, a GitHub-shaped **Repository** view (files, commits that name their intent, branches, CI runs) with `why` on any line, and the Artifacts usage ledger. **How it works** carries a one-picture map of the system; **Demo** runs an 8-stop guided tour; **Agent MCP** shows the connection line and lets you try a tool. Signed in, members run the same loop on their own repos (approve plans, review, launch goals, agent tokens); the owner also pairs runners and manages the team. Press **Explain** for a caption on everything. The guided tour on demo data is still at [/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live).
 2. **Watch a real repo** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf) shows the Bookshelf repo's live state and the record of its last swarm (Oct 14: 13 intents from 6 agents, 10 landed through CI-verified trains, 6 overlaps caught at declare time, one conflict replayed by the AI resolver and routed to the human inbox, two semantic failures bisected out, one protected intent waiting for plan approval; main never red), plus the Artifacts ops ledger. Between swarms the map is quiet; the record and the ledger stay. Or ask your own Claude Code:
 
    ```bash
@@ -42,8 +42,9 @@ competition (Workers + Artifacts, submissions close Oct 14, 2026).
    ```
 
    Then: *"What happened in bookshelf, what is still open, and what has it cost in Artifacts operations?"*
-3. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)). The run ends with a `report.json`: timings plus the ops ledger.
-4. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
+3. **Use it yourself, in about a minute** (anyone can sign up): [create an account](https://flare-actions.everyai-com.workers.dev/app?login=1), then **+ New repo** (a starter project with a test and CI) or **Repos → Bring into Forge** for any public GitHub repo. **Connect agent → Create my agent token** returns the `claude mcp add ...` line with the token filled in; paste it into Claude Code (Codex and Cursor snippets are there too) and ask: *"Declare an intent for &lt;task&gt;, claim it, land it through a train."* Agents without a shell or git use **`commit_files`**: they send file contents and Forge writes the commit to their fork. Your repos are private to you; you approve plans and review your own work.
+4. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)). The run ends with a `report.json`: timings plus the ops ledger.
+5. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
 
 Artifacts gives every agent a repo. Forge gives every repo one plan.
 
@@ -150,7 +151,7 @@ calls that forges could standardize on. That is the layer Forge is.
 
 ## Try it
 
-1. **Watch, no sign-in.** Open the [live demo](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live): seven agents on the Bookshelf demo repo, with a four-step tour. It runs on sample data in your browser tab; nothing is written anywhere.
+1. **Watch, no sign-in.** Open the [product on the real Bookshelf repo](https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf) (read-only), or the [scripted demo](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live): seven agents with a four-step tour, on sample data in your browser tab; nothing is written anywhere.
 2. **Run the dashboard locally on demo data** (needs a Cloudflare login).
 
    ```bash
@@ -174,9 +175,14 @@ calls that forges could standardize on. That is the layer Forge is.
 
 ## Connect your agent
 
+On the hosted deployment the fastest path is in the app: sign in,
+**Connect agent → Create my agent token**, paste the printed line.
+The token is bound to your account and follows your repos, so a new
+repo needs no new token. From a shell, against any deployment:
+
 ```bash
 export FLARE_ACTIONS_URL=https://<your-flare>.workers.dev
-export FLARE_TOKEN=<runner token>                     # never commit it
+export FLARE_TOKEN=<agent or runner token>            # never commit it
 npx flare-forge-cli doctor                                # checks setup; ends with one next: command
 npx flare-forge-cli forge connect-agent --client claude   # or codex | cursor
 npx flare-forge-cli forge init                            # AGENTS.md block + .mcp.json for this repo
@@ -203,10 +209,13 @@ conflicts, review, GitHub-hosted repos) is
 sign-in and who can see what: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 
 ```
-plan_goal ─► whats_happening ─► declare_intent ─► claim_intent ─► edit ─► git push ─► report_push ─► mark_ready
-                                     │                 │                                 │
-                               overlaps? send_note     heartbeat (lease, notes, drift) ◄─┘
+plan_goal ─► whats_happening ─► declare_intent ─► claim_intent ─┬─► edit ─► git push ─► report_push ─┬─► mark_ready
+                                     │                 │          └─► commit_files (no git) ──────────┘
+                               overlaps? send_note     heartbeat (lease, notes, drift)
 ```
+
+Repo names can be Forge's (`everyai-com-gita`) or GitHub's
+(`everyai-com/gita`); Forge maps one to the other.
 
 ## How it's built
 
@@ -306,7 +315,7 @@ D1 and Queues edit, never account-wide credentials.
   coordinator, trains, webhook verify, queue consumer)
 - `apps/seats`: managed executor (seat Durable Object + container image)
 - `apps/runner`: external pull-runner
-- `apps/cli`: the `flare-forge` CLI
+- `apps/cli`: the CLI, published to npm as `flare-forge-cli`
 - `apps/sim`: Forge simulator and live load harness
 - `packages/runner-sdk`: shared client, job orchestrator, Actions importer
 - `examples/forge-demo`: the Bookshelf demo repo and its designed scenarios
