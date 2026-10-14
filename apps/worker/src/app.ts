@@ -1047,6 +1047,10 @@ body.explain .ex { display:block; }
       b.leaves.forEach(function (lf, i) { var y = top + i * 28; add(svg, svgEl("path", { d: "M " + (nx + b.side * 54) + " " + ny + " C " + (nx + b.side * 66) + " " + ny + " " + (lx - b.side * 12) + " " + y + " " + lx + " " + y, class: "lf", stroke: b.c })); add(svg, svgEl("circle", { cx: lx, cy: y, r: 3.5, fill: b.c })); add(svg, svgEl("text", { x: lx + b.side * 10, y: y + 4, "text-anchor": b.side > 0 ? "start" : "end", class: "lt" }, lf)); });
     });
     add(svg, svgEl("circle", { cx: cx, cy: cy, r: 52, class: "core" })); add(svg, svgEl("text", { x: cx, y: cy - 4, "text-anchor": "middle", class: "ct" }, "an intent")); add(svg, svgEl("text", { x: cx, y: cy + 15, "text-anchor": "middle", class: "cs" }, "the unit of work"));
+    // Fit the frame to what was drawn: leaf labels hang past the fixed
+    // 1120-wide box on both sides, so measure once laid out and pad.
+    var fit = function () { try { var bb = svg.getBBox(); if (bb.width > 0) svg.setAttribute("viewBox", Math.floor(bb.x - 16) + " " + Math.floor(bb.y - 16) + " " + Math.ceil(bb.width + 32) + " " + Math.ceil(bb.height + 32)); } catch (e) {} };
+    requestAnimationFrame(fit);
   }
   function flowStrip(parent) { var f = add(parent, el("div", "flow")); STAGES.forEach(function (st, ix) { var b = add(f, el("div", "fs" + (ix < STAGES.length - 1 ? " arrow" : ""))); add(b, el("div", "t", String(ix + 1) + ". " + st.title)); add(b, el("div", "x", st.ex)); }); return f; }
   function pHow(root) {
