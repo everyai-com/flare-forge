@@ -196,6 +196,12 @@ and error codes are in [docs/FORGE-AGENTS.md](docs/FORGE-AGENTS.md); the
 [flare-forge skill](skills/flare-forge/SKILL.md) teaches the loop to
 Claude Code.
 
+The plain-language guide to what happens when several Claude Code,
+Codex or Cursor sessions push at once (connect, the loop, trains,
+conflicts, review, GitHub-hosted repos) is
+[docs/WORKING-WITH-AGENTS.md](docs/WORKING-WITH-AGENTS.md). Accounts,
+sign-in and who can see what: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+
 ```
 plan_goal ─► whats_happening ─► declare_intent ─► claim_intent ─► edit ─► git push ─► report_push ─► mark_ready
                                      │                 │                                 │
@@ -304,7 +310,8 @@ D1 and Queues edit, never account-wide credentials.
 - `apps/sim`: Forge simulator and live load harness
 - `packages/runner-sdk`: shared client, job orchestrator, Actions importer
 - `examples/forge-demo`: the Bookshelf demo repo and its designed scenarios
-- `docs/`: [Forge agents](docs/FORGE-AGENTS.md), [Forge
+- `docs/`: [working with agents](docs/WORKING-WITH-AGENTS.md),
+  [accounts](docs/ACCOUNTS.md), [Forge agents](docs/FORGE-AGENTS.md), [Forge
   contracts](docs/FORGE.md), [demo runbook](docs/DEMO.md),
   [bench](docs/FORGE-BENCH.md), [pipelines](docs/PIPELINES.md),
   [runners](docs/RUNNERS.md), [MCP](docs/MCP.md),

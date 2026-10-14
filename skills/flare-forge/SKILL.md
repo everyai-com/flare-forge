@@ -137,4 +137,5 @@ npx flare-forge-cli forge why <repo> src/api/x.ts:42
 ```
 
 There is also a REST equivalent at `/v1/forge/*` (see
-`docs/FORGE-AGENTS.md`).
+`docs/FORGE-AGENTS.md`; the plain-language guide for humans is
+`docs/WORKING-WITH-AGENTS.md`).
