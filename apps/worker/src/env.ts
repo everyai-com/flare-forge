@@ -43,6 +43,8 @@ export interface WorkerSecrets {
   FLARE_RUNNER_REF?: string;
   // R2 bucket for cache + artifacts; absent on forks that skipped it.
   CACHE?: R2Bucket;
+  // "off" disables the Forge read cache (read-cache.ts): A/B runs and rollback.
+  FORGE_READ_CACHE?: string;
   // No seats binding here by design: wakes travel over the SEAT_QUEUE
   // producer (a plain queue binding like RUN_QUEUE), so the main worker
   // never couples — at deploy or runtime — to the seats worker.

@@ -81,6 +81,9 @@ export const MCP_TOOL_RISK: Record<string, McpToolRisk> = {
   claim_conflict: "contained-write",
   resolve_conflict: "contained-write",
   why: "read",
+  read_file: "read",
+  diff: "read",
+  history: "read",
   fork_session: "contained-write",
   forge_snapshot: "read",
   // Human tier: the reviewer's Inbox buttons. Admin tokens only (the ops
@@ -184,6 +187,28 @@ const FORGE_TOOL_SCHEMAS = {
     repo: forgeRepo,
     path: z.string().describe("File path in the repo (required)").optional(),
     line: z.number().describe("1-based line number (optional)").optional(),
+  }),
+  read_file: z.object({
+    repo: z.string().describe("Artifacts repo name, e.g. shop (required unless intentId)").optional(),
+    path: z.string().describe("Repo-relative file or directory; omit for the root").optional(),
+    ref: z.string().describe("Branch, tag or full sha (default main). Pin follow-up reads to the returned sha").optional(),
+    intentId: z.string().describe("Read an intent's fork at its last reported head instead of trunk").optional(),
+    startLine: z.number().describe("First line to return (1-based, optional)").optional(),
+    endLine: z.number().describe("Last line to return (optional)").optional(),
+  }),
+  diff: z.object({
+    intentId: z.string().describe("Intent whose pushed head to diff against its base (or pass repo + base)").optional(),
+    repo: z.string().describe("Artifacts repo name, with base/head instead of intentId").optional(),
+    base: z.string().describe("Base ref or sha (with repo)").optional(),
+    head: z.string().describe("Head ref or sha (with repo; default main)").optional(),
+    path: z.string().describe("Only this file or directory (optional)").optional(),
+  }),
+  history: z.object({
+    repo: z.string().describe("Artifacts repo name (required unless intentId)").optional(),
+    path: z.string().describe("Repo-relative file or directory (required)").optional(),
+    ref: z.string().describe("Branch, tag or sha to walk back from (default main)").optional(),
+    intentId: z.string().describe("Walk the intent's fork instead of trunk").optional(),
+    limit: z.number().describe("Commits to return, 1-30 (default 10)").optional(),
   }),
   fork_session: z.object({ intentId: z.string().describe("The intent whose work you continue (required)").optional(), agent: forgeAgent, confirm: forgeConfirm }),
   forge_snapshot: z.object({ repo: forgeRepo }),
@@ -327,6 +352,21 @@ export const FORGE_TOOLS: McpToolDef[] = [
     name: "why",
     description:
       "Call before changing a line you did not write: why does this line exist? Returns {chain: [line → commit → intent → goal → reason → evidence → session], exact, source}. exact=false means a footprint-based best effort (no notes for that line yet). Next: whats_happening on that path, then declare_intent. Scope: read.",
+  },
+  {
+    name: "read_file",
+    description:
+      "Call to look at code without cloning: a file (or a line range) or a directory listing, from trunk {repo, ref?} or an intent's fork {intentId}. Returns {kind: file|dir, sha, blob, text|entries, lines, truncated}. Reads are pinned to the returned sha; pass it as ref for follow-ups (served from the read cache, no Artifacts call). Clone only when you will edit. Next: why before changing lines you did not write. Scope: read.",
+  },
+  {
+    name: "diff",
+    description:
+      "Call to see what an intent changed (review, overlap check, conflict prep) without cloning: {intentId} diffs its pushed head against its base on the fork; {repo, base, head?} diffs any two refs. Returns {base, head, stat, files: [{path, status, patch|omitted}], truncated}; patches are unified hunks, bounded per call. Scope: read.",
+  },
+  {
+    name: "history",
+    description:
+      "Call to see which commits changed a path, newest first, each linked to the Forge intents that landed with it: {repo, path, ref?, limit?} or {intentId, path}. Returns {sha, commits: [{hash, message, author, at, change, intents}], scanned, truncated}. Next: why {repo, path, line} for one line's full chain. Scope: read.",
   },
   {
     name: "fork_session",

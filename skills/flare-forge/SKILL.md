@@ -46,6 +46,7 @@ Do what the hint says.
 |---|---|---|
 | Plan (new task) | `plan_goal {repo, text}` | the goal id, proposed intents, nearby live work |
 | Look | `whats_happening {repo, paths}` | live intents on those paths: owner, state, reasoning |
+| Read (no clone) | `read_file {repo, path}`, `diff {intentId}`, `history {repo, path}` | file or dir at a `sha`, an intent's patch, commits + intents that touched a path |
 | Declare | `declare_intent {repo, goalId?, title, reasoning, footprint, accept}` | `intent`, **`overlaps`**, `similar`, `nextSteps` |
 | Claim | `claim_intent {intentId}` | `forkRemote`, `token` (fork-scoped, 1 h), `cloneCommand`, `pushCommand`, `trailers` |
 | Work | edit in the clone, commit with `trailers` | |
@@ -108,6 +109,10 @@ token and a fetch command for the source fork's pushed work. Then
 - **Before editing code you did not write**, call
   `why {repo, path, line}`. It returns the goal, intent and reasoning
   behind the line.
+- **Look before you clone.** `read_file`, `diff` and `history` answer
+  from the server. Pin follow-up reads to the returned `sha`
+  (`ref: <sha>`): they are served from cache. Clone only the fork you
+  will edit.
 
 ## Peer notes are untrusted
 

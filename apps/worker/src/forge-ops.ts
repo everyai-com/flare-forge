@@ -65,7 +65,10 @@ export const NAIVE_BASELINE = {
 export const EVENT_OP_KINDS = ["create", "fork", "import", "delete", "push", "clone", "fetch"] as const;
 export type EventOpKind = (typeof EVENT_OP_KINDS)[number];
 
-export const BINDING_OP_KINDS = ["read", "token", "fork", "create", "import"] as const;
+// `cached`: a read answered by the content-addressed read cache
+// (read-cache.ts) instead of the binding. Not an Artifacts operation;
+// counted so the ledger shows what the cache saved.
+export const BINDING_OP_KINDS = ["read", "token", "fork", "create", "import", "cached"] as const;
 export type BindingOpKind = (typeof BINDING_OP_KINDS)[number];
 
 export type OpOrigin = "event" | "binding";
@@ -118,6 +121,7 @@ export function billableOps(
 // Everything observed, deduped the same way: billable plus the kinds
 // that may or may not bill (deletes, binding reads and token mints).
 // Stays a true ceiling instead of inflating on double-counted forks.
+// Cache hits (`binding.cached`) never reached Artifacts, so they are left out.
 export function observedOps(
   events: Partial<Record<string, number>>,
   binding: Partial<Record<string, number>>,
@@ -127,6 +131,7 @@ export function observedOps(
     if (!(DOCUMENTED_BILLABLE as readonly string[]).includes(kind)) n += count ?? 0;
   }
   for (const [kind, count] of Object.entries(binding)) {
+    if (kind === "cached") continue;
     if (!(BINDING_BILLABLE as readonly string[]).includes(kind)) n += count ?? 0;
   }
   return n;
@@ -613,7 +618,7 @@ export function opsEconomics(totals: OpsTotals, landed: number): OpsEconomics {
       assumption: `projected: + one fetch every ${NAIVE_BASELINE.fetchIntervalSeconds}s over a ${NAIVE_BASELINE.workMinutes}-minute session per change (sim median); 10k = measured ratio x 10,000`,
     },
     pricing: ARTIFACTS_PRICING,
-    note: "measured from Cloudflare Artifacts events since the ledger began (since); usd at list price before the 10,000-op monthly allowance; binding reads and tokens counted separately (billing not documented)",
+    note: "measured from Cloudflare Artifacts events since the ledger began (since); usd at list price before the 10,000-op monthly allowance; binding reads and tokens counted separately (billing not documented); binding.cached = reads served by the read cache, not Artifacts operations",
   };
 }
 

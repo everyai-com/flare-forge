@@ -5878,6 +5878,376 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/forge/read:
+    get:
+      tags:
+        - forge
+      operationId: forgeRead
+      summary: Read a file, line range or directory without cloning (read_file)
+      description: Served over the Artifacts binding at a resolved sha, so repeat reads come from the content-addressed read cache.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Artifacts repo name (e.g. shop); required unless intentId. Token allowlists scope it as `<namespace>/<repo>`
+        - name: intentId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Read the intent's fork at its last reported head instead of trunk
+        - name: ref
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Branch, tag or full sha (default main). Responses return the sha read; pin follow-up reads to it
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Repo-relative file or directory; omit for the root
+        - name: startLine
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: First line to return (1-based)
+        - name: endLine
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Last line to return
+      responses:
+        '200':
+          description: 'A file (kind: file) or a directory listing (kind: dir)'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo:
+                    type: string
+                  ref:
+                    type: string
+                  sha:
+                    type: string
+                  kind:
+                    type: string
+                    enum: [file, dir]
+                  path:
+                    type: string
+                  blob:
+                    type: string
+                  size:
+                    type: integer
+                  lines:
+                    type: integer
+                  text:
+                    type: string
+                    nullable: true
+                  binary:
+                    type: boolean
+                  truncated:
+                    type: boolean
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        type:
+                          type: string
+                          enum: [dir, file]
+                        hash:
+                          type: string
+                  nextSteps:
+                    $ref: '#/components/schemas/ForgeNextSteps'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/forge/diff:
+    get:
+      tags:
+        - forge
+      operationId: forgeDiff
+      summary: What an intent changed, or the diff between two refs (diff)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: intentId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Diff the intent's pushed head against its base on the fork
+        - name: repo
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Artifacts repo name (e.g. shop); required unless intentId. Token allowlists scope it as `<namespace>/<repo>`
+        - name: base
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Base ref or sha (with repo)
+        - name: head
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Head ref or sha (with repo; default main)
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Only this file or directory
+      responses:
+        '200':
+          description: Changed files with unified-diff hunks (bounded per call)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo:
+                    type: string
+                  intentId:
+                    type: string
+                  fork:
+                    type: string
+                  base:
+                    type: string
+                  head:
+                    type: string
+                  stat:
+                    type: object
+                    properties:
+                      added:
+                        type: integer
+                      modified:
+                        type: integer
+                      deleted:
+                        type: integer
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        status:
+                          type: string
+                          enum: [added, modified, deleted]
+                        patch:
+                          type: string
+                          nullable: true
+                        omitted:
+                          type: string
+                          enum: [binary, too_large, budget, listed]
+                  truncated:
+                    type: boolean
+                  nextSteps:
+                    $ref: '#/components/schemas/ForgeNextSteps'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/forge/intents/{id}/diff:
+    get:
+      tags:
+        - forge
+      operationId: forgeIntentDiff
+      summary: What an intent changed against its base (diff)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Only this file or directory
+      responses:
+        '200':
+          description: Changed files with unified-diff hunks (bounded per call)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo:
+                    type: string
+                  intentId:
+                    type: string
+                  fork:
+                    type: string
+                  base:
+                    type: string
+                  head:
+                    type: string
+                  stat:
+                    type: object
+                    properties:
+                      added:
+                        type: integer
+                      modified:
+                        type: integer
+                      deleted:
+                        type: integer
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        status:
+                          type: string
+                          enum: [added, modified, deleted]
+                        patch:
+                          type: string
+                          nullable: true
+                        omitted:
+                          type: string
+                          enum: [binary, too_large, budget, listed]
+                  truncated:
+                    type: boolean
+                  nextSteps:
+                    $ref: '#/components/schemas/ForgeNextSteps'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/forge/history:
+    get:
+      tags:
+        - forge
+      operationId: forgeHistory
+      summary: Commits that changed a path, linked to the intents that landed them (history)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Artifacts repo name (e.g. shop); required unless intentId. Token allowlists scope it as `<namespace>/<repo>`
+        - name: intentId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Read the intent's fork at its last reported head instead of trunk
+        - name: ref
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Branch, tag or full sha (default main). Responses return the sha read; pin follow-up reads to it
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Repo-relative file or directory
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 30
+          description: 1-30 (default 10)
+      responses:
+        '200':
+          description: Newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo:
+                    type: string
+                  sha:
+                    type: string
+                  path:
+                    type: string
+                  commits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hash:
+                          type: string
+                        message:
+                          type: string
+                        author:
+                          type: string
+                        at:
+                          type: integer
+                          nullable: true
+                        change:
+                          type: string
+                          enum: [added, modified, deleted]
+                        intents:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              title:
+                                type: string
+                  scanned:
+                    type: integer
+                  truncated:
+                    type: boolean
+                  nextSteps:
+                    $ref: '#/components/schemas/ForgeNextSteps'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/forge/conflicts:
     get:
       tags:

@@ -637,7 +637,7 @@ not O(time). The ledger (`apps/worker/src/forge-ops.ts`) measures it.
 | Source | What | How |
 |---|---|---|
 | `event` | `push`, `clone`, `fetch`, `create`, `fork`, `import`, `delete` | Cloudflare's own Artifacts events, through the triggers above. One count per event id (the Workflow instance id), deduped in the Coordinator for 3 days; a burst of ref creations on one repo in the same second counts as one push |
-| `binding` | `read` (readFile, readCommit, readTree, log, info, ...), `token` (createToken), and billable `fork` / `create` / `import` (charged to the new repo) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
+| `binding` | `read` (readFile, readCommit, readTree, log, info, ...), `token` (createToken), billable `fork` / `create` / `import` (charged to the new repo), and `cached` (a read the [read cache](#read-cache-and-server-side-reads) answered: no Artifacts call, never counted as an op) | `meterArtifacts` wraps the `ARTIFACTS` binding in `forgeDepsFromEnv`, `trainDepsFromEnv` and the push reconcile, and flushes one attributed batch per burst (`meteredArtifacts` in `coordinator.ts`) |
 
 **Repo creation has two witnesses, and the bill reconciles them.** A
 fork Forge makes through the binding is reported by the binding meter
@@ -706,6 +706,52 @@ Cross-check against Cloudflare: the Artifacts metrics for the
 namespace should match the `event` totals summed over the repos, minus
 names the ledger dropped (the `forge op metered` log line records each
 skip with its reason).
+
+### Read cache and server-side reads
+
+> Provenance: agent-drafted 2026-10-14, after Anthropic's "Redesigning
+> source control" post (Oct 13: server-side source-control queries,
+> content-addressed caching). Behaviour covered by `read-cache.test.ts`
+> and `forge-read.test.ts` (`npx vitest run`, 2026-10-14). The binding
+> reads it saves on a live repo are **not measured yet**: compare
+> `binding.read` and `binding.cached` in the ledger before and after.
+
+Two ideas, both in `apps/worker/src/`:
+
+**1. A content-addressed read cache under every server-side read**
+(`read-cache.ts`). A git object named by its hash never changes, so
+`readCommit(hash)`, `readTree(hash)`, `readFile({ref: <sha>, path})` and
+`log({ref: <sha>})` can be cached without invalidation or coordination.
+Keys are per repo (`<repo>/<kind>/<hash>`), so one fork's objects never
+answer an existence check for another. Never cached: branch or tag refs
+(they move), `null` results (an object can appear after a push), binary
+or non-UTF-8 files, `info`, tokens, forks. Tiers: an isolate-memory LRU
+(8M characters) in front of R2 (`CACHE` bucket, prefix `forge/read-cache/`,
+pruned after 30 days). `meteredArtifacts` wraps the cache *outside* the
+meter, so a hit never reaches the binding and is tallied as `cached`.
+Set the env var `FORGE_READ_CACHE=off` to bypass it (A/B runs, rollback).
+
+Where it pays: push footprints and replay rescoring diff trees that
+every intent shares with trunk; `why` walks history; the Live map read
+`.flare/policy.yml` by branch name on every poll. That read is now pinned
+to the trunk sha (one shared trunk lookup per request), so once the
+policy is cached a dashboard or spectator poll costs one binding read
+(the trunk head) instead of two.
+
+**2. Read verbs, so agents look without cloning** (`forge-read.ts`,
+wrapped in `forge-service.ts`):
+
+| Verb | REST | Returns |
+|---|---|---|
+| `read_file {repo, path?, ref?}` or `{intentId, path?}` | `GET /v1/forge/read` | a file (optionally `startLine`/`endLine`) or a directory listing, plus the `sha` read |
+| `diff {intentId}` or `{repo, base, head?}`, `path?` | `GET /v1/forge/diff`, `GET /v1/forge/intents/:id/diff` | changed files with unified hunks (25 files, 96 KB of patch per call) |
+| `history {repo, path, ref?, limit?}` or `{intentId, path}` | `GET /v1/forge/history` | commits that changed the path, newest first, each with the intents a train landed with it |
+
+Every answer is pinned to a sha and returns it, so an agent's follow-up
+reads (`ref: <sha>`) come from the cache. Clone only to edit. History
+walks at most 100 commits and 600 tree reads per call. Unchanged
+subtrees share hashes, so after the first walk almost every read is a
+hit.
 
 ### Benchmark: index at 100k intents
 

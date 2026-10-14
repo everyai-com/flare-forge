@@ -13,6 +13,7 @@ import type { WorkerEnv } from "./env";
 import type { Intent, RiskTerm } from "./intents-core";
 import { validateRepo } from "./intents";
 import { attributeTally, forgeOpsLookups, meterArtifacts, OpsTally, type OpEntry } from "./forge-ops";
+import { bucketReadCache, cacheArtifacts, ISOLATE_READ_CACHE, tieredReadCache } from "./read-cache";
 import {
   declare as coreDeclare,
   ensureIndexSchema,
@@ -463,13 +464,26 @@ export interface MeteredArtifacts {
 // Wraps env.ARTIFACTS for one execution context. `schedule` defaults to
 // the runtime's waitUntil (`cloudflare:workers`), so the flush outlives
 // the response. Metering is best-effort: a failed flush logs and drops.
+//
+// Reads go through the content-addressed read cache (read-cache.ts) in
+// front of the meter: a hit never reaches the binding and is tallied as
+// `cached`, a miss is metered as a `read` like before.
 export function meteredArtifacts(
-  env: { ARTIFACTS?: Artifacts | null; DB: WorkerEnv["DB"]; COORDINATOR?: DurableObjectNamespace<RepoCoordinator> | null },
+  env: {
+    ARTIFACTS?: Artifacts | null;
+    DB: WorkerEnv["DB"];
+    COORDINATOR?: DurableObjectNamespace<RepoCoordinator> | null;
+    CACHE?: R2Bucket | null;
+    FORGE_READ_CACHE?: string;
+  },
   schedule: ((p: Promise<unknown>) => void) | null = ctxWaitUntil,
 ): MeteredArtifacts {
   const binding = env.ARTIFACTS ?? null;
   const ns = env.COORDINATOR ?? null;
-  if (!binding || !ns) return { artifacts: binding, flush: async () => {} };
+  const cache = tieredReadCache(ISOLATE_READ_CACHE, env.CACHE ? bucketReadCache(env.CACHE) : null);
+  const cacheOn = env.FORGE_READ_CACHE !== "off";
+  if (!binding) return { artifacts: null, flush: async () => {} };
+  if (!ns) return { artifacts: cacheOn ? cacheArtifacts(binding, { cache, defer: schedule }) : binding, flush: async () => {} };
   const tally = new OpsTally();
   let pending: Promise<void> | null = null;
   const flush = async (): Promise<void> => {
@@ -500,9 +514,17 @@ export function meteredArtifacts(
       // Outside a request context: the explicit flush() still drains.
     }
   };
-  const artifacts = meterArtifacts(binding, (repoName, kind) => {
+  const metered = meterArtifacts(binding, (repoName, kind) => {
     tally.add(repoName, kind);
     kick();
+  });
+  const artifacts = !cacheOn ? metered : cacheArtifacts(metered, {
+    cache,
+    defer: schedule,
+    onHit: (repoName) => {
+      tally.add(repoName, "cached");
+      kick();
+    },
   });
   return {
     artifacts,

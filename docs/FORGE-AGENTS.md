@@ -67,6 +67,9 @@ plan_goal ─► whats_happening ─► declare_intent ─► claim_intent ─�
 | - | `claim_conflict {conflictId}` | `POST /v1/forge/conflicts/:id/claim` | `forge conflicts claim` | write |
 | - | `resolve_conflict {conflictId, sha}` | `POST /v1/forge/conflicts/:id/resolve` | `forge conflicts resolve` | write |
 | - | `why {repo, path, line?}` | `GET /v1/forge/why?repo&path&line` | `forge why <repo> <path>[:line]` | read |
+| - | `read_file {repo, path?, ref?, startLine?, endLine?}` or `{intentId, path?}` | `GET /v1/forge/read?repo&path&ref` | - | read |
+| - | `diff {intentId, path?}` or `{repo, base, head?}` | `GET /v1/forge/diff`, `GET /v1/forge/intents/:id/diff` | - | read |
+| - | `history {repo, path, ref?, limit?}` or `{intentId, path}` | `GET /v1/forge/history?repo&path` | - | read |
 | - | `fork_session {intentId}` | `POST /v1/forge/intents/:id/fork-session` | `forge fork` | write |
 | - | `forge_snapshot {repo}` | `GET /v1/forge/snapshot?repo` (alias `/live`) | `forge snapshot` | read |
 
@@ -142,6 +145,12 @@ risk descending, with the id as the final tiebreak.
 **forge_snapshot / `GET /v1/forge/snapshot`**: the dashboard Live-map
 contract (FORGE-UX §10):
 `{ counters: {agents, intents, overlaps_caught, conflicts_open, landed_today, main_red_minutes, human_minutes}, cells: [{path, files, intents, state, overlap_with, protected}] (≤64, rolled into other/), dots: [{intent, agent, path, state}], track: {current, recent}, head, source: "coordinator"|"d1" }`.
+
+**read_file**: `{ repo, ref, sha, kind: "file", path, blob, size, lines, range, binary, truncated, text }` or `{ ..., kind: "dir", tree, entries: [{name, type: dir|file, hash}] }`. Pass the returned `sha` as `ref` on follow-ups: those reads come from the read cache.
+
+**diff**: `{ base, head, stat: {added, modified, deleted}, files: [{path, status, patch | null, omitted?: binary|too_large|budget|listed}], truncated }`; with `intentId`, also `intentId` and `fork`.
+
+**history**: `{ sha, path, commits: [{hash, message, author, at, change: added|modified|deleted, intents: [{id, title}]}], scanned, truncated }`.
 
 **why**: `{ chain: [{kind: line|commit|intent|goal|reason|evidence|session, id, text, links}], exact, source: "notes"|"footprint" }`.
 `exact: false` marks the D1 fallback: the newest intent whose footprint

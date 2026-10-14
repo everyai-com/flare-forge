@@ -18,6 +18,9 @@ const FORGE_TOOL_NAMES = [
   "claim_conflict",
   "resolve_conflict",
   "why",
+  "read_file",
+  "diff",
+  "history",
   "fork_session",
   "forge_snapshot",
   "approve_plan",
@@ -93,7 +96,7 @@ describe("forge MCP tools: registry", () => {
       expect(MCP_TOOL_RISK[name]).toBeDefined();
       expect(MCP_TOOLS.some((t) => t.name === name)).toBe(true);
     }
-    for (const r of ["whats_happening", "read_inbox", "why", "forge_snapshot"]) expect(MCP_TOOL_RISK[r]).toBe("read");
+    for (const r of ["whats_happening", "read_inbox", "why", "read_file", "diff", "history", "forge_snapshot"]) expect(MCP_TOOL_RISK[r]).toBe("read");
     for (const w of ["plan_goal", "declare_intent", "claim_intent", "report_push", "mark_ready", "send_note", "fork_session"]) {
       expect(MCP_TOOL_RISK[w]).toBe("contained-write");
     }

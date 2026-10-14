@@ -227,6 +227,7 @@ import { cloudMetering, creditBalance, grantCredits, hostedMode, parseCloudEntit
 import { runGenerateWithStatus } from "./generate";
 import { getCacheStats, handleCacheGet, handleCachePut, listCacheEntries, parseRestoreKeysParam, pruneCacheStats, purgeCachePrefix, recordCacheOutcome } from "./cache";
 import { deleteJobArtifacts, handleArtifactGet, handleArtifactPut, listRunArtifacts, pruneOldCache } from "./artifacts";
+import { READ_CACHE_PREFIX } from "./read-cache";
 import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerCheckout } from "./artifacts-push";
 import { forgeOpsLookups, handleArtifactsOpEvent, isAccountEventType } from "./forge-ops";
 import { coordinatorFor } from "./coordinator";
@@ -1315,6 +1316,9 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
           }
           const staleCache = await pruneOldCache(env.CACHE);
           if (staleCache > 0) log("info", "pruned stale cache entries", { pruned: staleCache });
+          // Forge read cache: immutable objects, but forks get deleted.
+          const staleReads = await pruneOldCache(env.CACHE, 30, 1000, READ_CACHE_PREFIX);
+          if (staleReads > 0) log("info", "pruned stale forge read cache entries", { pruned: staleReads });
           const staleSources = await pruneOldSources(env.CACHE);
           if (staleSources > 0) log("info", "pruned stale sources", { pruned: staleSources });
           const staleStats = await pruneCacheStats(env.DB);
