@@ -652,6 +652,7 @@ body.explain .ex { display:block; }
     }
     if (k === "routed") b = b.replace(/ *\\(run [^)]*\\) *$/, "");
     switch (k) {
+      case "github_push": { var gp = {}; try { gp = JSON.parse(b) || {}; } catch (e) { gp = {}; } return [who + " pushed " + (gp.commits || 1) + " commit" + (gp.commits === 1 ? "" : "s") + " to " + (gp.branch || "a branch") + " on GitHub, outside Forge" + (gp.message ? ": \u201c" + gp.message + "\u201d" : "") + " (" + short(gp.sha || "") + ")", "idle"]; }
       case "plan_approved": return [who + " approved the plan for \u201c" + title + "\u201d", "human"];
       case "landing_approved": return [who + " approved landing \u201c" + title + "\u201d", "human"];
       case "declared": return [who + " declared “" + b + "”", "working"];
