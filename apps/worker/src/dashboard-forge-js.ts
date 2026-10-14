@@ -4233,7 +4233,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
       h("div", {}, [h("strong", { text: l.repo }), " ", h("span", { cls: "muted", text: "github.com/" + l.githubRepo + " · " + l.status + " · " + mode + (l.pullUpstream ? " · pulls on" : "") })]),
       l.prUrl ? h("a", { href: l.prUrl, target: "_blank", rel: "noopener", text: "Open sync PR #" + l.prNumber }) : null,
       l.detail ? h("div", { cls: "muted", text: l.detail }) : null,
-      h("div", { cls: "fx-actions" }, [open, sync])
+      h("div", { cls: "fx-actions" }, FX.demo ? [sync] : [open, sync])
     ]);
   }
   function fxLoadLinks() {
