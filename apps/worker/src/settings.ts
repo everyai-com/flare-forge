@@ -195,6 +195,13 @@ export function parseOpenRegistration(value: unknown): { on: boolean } | { error
   return { error: "openRegistration must be a boolean" };
 }
 
+// A GitHub login: 1-39 chars, alphanumerics and single inner hyphens.
+export function parseGithubLogin(value: unknown): { login: string } | { error: string } {
+  const v = typeof value === "string" ? value.trim().replace(/^@/, "") : "";
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(v)) return { error: "adminGithubUser must be a GitHub login" };
+  return { login: v };
+}
+
 // Spend guardrails: monthly compute-minute caps per repo, entered as
 // "owner/name=minutes, owner/other=minutes". Stored as JSON; `block`
 // refuses new runs once a repo is over its cap, `warn` (default) keeps

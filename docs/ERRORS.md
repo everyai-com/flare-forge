@@ -68,3 +68,8 @@ same as unknown ids (no existence oracle).
 | `conflict_not_claimable` | 409 | conflict already claimed/resolved, out of replay attempts, or resolved by a non-claimer | list `state=open` conflicts; only the claimer resolves |
 | `admin_required` | 403 | plan approval by a non-admin | a human admin approves in the dashboard Inbox |
 | `not_implemented` | 501 | capability not wired on this deployment (e.g. the live feed before the Coordinator) | follow the fallback in `hint` (poll `/v1/forge/snapshot`) |
+| `repo_exists` | 409 | `POST /v1/me/repos` with a name already taken | pick another name |
+| `repo_limit` | 409 | the account already owns the per-account repo limit | reuse a repo, or ask the deployment owner |
+| `repo_create_failed` | 502 | Artifacts create or the starter seed failed | retry with another name |
+| `token_limit` | 409 | too many live self-serve agent tokens | revoke one (`POST /v1/me/tokens/<id>/revoke`) |
+| `token_not_found` | 404 | revoking a token that is not yours or already revoked | `GET /v1/me/tokens` |

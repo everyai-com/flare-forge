@@ -61,7 +61,8 @@ export const SCHEMA_STATEMENTS = [
     repos TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     revoked_at TEXT,
-    expires_at TEXT
+    expires_at TEXT,
+    owner TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_tokens_hash ON api_tokens(token_hash)`,
   `CREATE TABLE IF NOT EXISTS app_settings (
@@ -138,6 +139,13 @@ export const SCHEMA_STATEMENTS = [
     updatedAt TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON auth_verification(identifier)`,
+  `CREATE TABLE IF NOT EXISTS repo_owners (
+    repo TEXT PRIMARY KEY,
+    scoped TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_repo_owners_owner ON repo_owners(owner)`,
   `CREATE TABLE IF NOT EXISTS repo_secrets (
     repo TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -578,6 +586,7 @@ export const ALTER_STATEMENTS = [
   `ALTER TABLE artifacts_mirrors ADD COLUMN trunk_sha TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE artifacts_mirrors ADD COLUMN trunk_detail TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE artifacts_mirrors ADD COLUMN trunk_at TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE api_tokens ADD COLUMN owner TEXT`,
 ];
 
 let schemaPromise: Promise<void> | null = null;
