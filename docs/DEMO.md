@@ -35,6 +35,14 @@ takes `--dry-run`, which prints the plan and touches nothing, and
 > placeholders until staging is live. Mechanics: docs/FORGE.md
 > "Spectator mode".
 
+**0. Open the product.** **`https://<WORKER_URL>/app?repo=bookshelf`** is
+the Forge workspace on the live repo, read-only for spectators: overview
+(live map, train track, what needs a human, the Artifacts bill), intents,
+trains, conflicts, review, agents, and code with `why` on any line. Signed
+in, the same app reviews and approves, launches goals (planner + launch),
+mints tokens, pairs runners and designates spectator repos. `⌘K` searches
+everything; `?theme=light` for a light recording.
+
 **1. Watch the swarm.** Open **`https://<WORKER_URL>/watch`**. That is
 the real live map of the public `bookshelf` repo, read-only. A scripted
 crew of 6 agents works the 3 Bookshelf goals on a loop of about 30

@@ -275,6 +275,18 @@ describe("forge routes: the agent workflow (declare -> claim -> push -> ready)",
     expect(snap.body.headSha).toBe(sha("0"));
     expect((snap.body.cells as Array<{ path: string; state: string }>).find((x) => x.path === "src/api")?.state).toBe("overlap");
     expect((await h.call("GET", "/v1/forge/live?repo=demo")).body.counters).toEqual(snap.body.counters);
+    // The app's single overview read bundles the other reads.
+    const story = await h.call("GET", "/v1/forge/overview?repo=demo");
+    expect(story.status).toBe(200);
+    expect(story.body.repo).toBe("demo");
+    expect(rec(rec(story.body.snapshot).counters)).toEqual(snap.body.counters);
+    expect((rec(story.body.intents).intents as unknown[]).length).toBe(2);
+    expect(rec(story.body.inbox).groups).toBeDefined();
+    expect(rec(story.body.agents).agents).toBeDefined();
+    expect(rec(story.body.goals).goals).toBeDefined();
+    expect(story.body.errors).toEqual({});
+    expect((story.body.activity as Array<{ kind: string }>).map((l) => l.kind)).toContain("declared");
+    expect((await h.call("GET", "/v1/forge/overview")).status).toBe(400);
     const why = await h.call("GET", "/v1/forge/why?repo=demo&path=src/api/cache.ts&line=3");
     expect(why.body.exact).toBe(false);
     expect((why.body.chain as Array<{ kind: string; id: string }>).find((x) => x.kind === "intent")?.id).toBe(aId);

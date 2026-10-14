@@ -5811,6 +5811,53 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/forge/overview:
+    get:
+      tags:
+        - forge
+      operationId: forgeOverview
+      summary: 'One read for the app: snapshot + agents + goals + intents + trains + conflicts + inbox'
+      description: Composes the read ops so a page polling every few seconds makes one request. Parts that fail come back as null with their error code under `errors`.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: repo
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Artifacts repo name (e.g. shop); token allowlists scope it as `<namespace>/<repo>`
+      responses:
+        '200':
+          description: Overview bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  repo:
+                    type: string
+                  generatedAt:
+                    type: string
+                  namespace:
+                    type: string
+                  remote:
+                    type: string
+                    description: The trunk's Artifacts git remote (empty when unknown)
+                  snapshot:
+                    $ref: '#/components/schemas/ForgeSnapshot'
+                  errors:
+                    type: object
+                    additionalProperties:
+                      type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/forge/why:
     get:
       tags:
@@ -6560,6 +6607,23 @@ paths:
                 $ref: '#/components/schemas/Error'
         '501':
           $ref: '#/components/responses/ForgeNotImplemented'
+  /app:
+    get:
+      tags:
+        - forge
+      operationId: forgeApp
+      summary: 'The Forge product app (static shell; signed in it reads /v1/forge/overview, spectators the public bundle)'
+      security: []
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 'Repo to open (default: the first repo the account can see, or the first public repo)'
+      responses:
+        '200':
+          description: App HTML (text/html)
   /watch:
     get:
       tags:
@@ -6879,6 +6943,32 @@ paths:
       responses:
         '200':
           description: Sanitized read-only payload (credentials, commands, mailboxes and nextSteps removed)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/public/forge/overview:
+    get:
+      tags:
+        - forge
+      operationId: forgePublicOverview
+      summary: 'Public overview bundle (sanitized): snapshot + agents + goals + intents + trains + conflicts + inbox'
+      security: []
+      parameters:
+        - name: repo
+          in: query
+          required: true
+          schema:
+            type: string
+          description: A repo the admin designated in forge_public_repos
+      responses:
+        '200':
+          description: Sanitized read-only payload (credentials, remotes, commands, mailboxes and nextSteps removed)
           content:
             application/json:
               schema:

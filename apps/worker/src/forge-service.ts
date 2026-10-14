@@ -2262,3 +2262,58 @@ export const FORGE_MCP_OPS: Record<string, ForgeOp> = {
   fork_session: forkSessionOp,
   forge_snapshot: snapshotOp,
 };
+
+// ---------------------------------------------------------------------------
+// Overview: one read for the app's live pages (/app). It composes the
+// existing read ops so a spectator tab polling every few seconds stays
+// well under the public read rate limit (one request instead of seven).
+// Parts that fail (a missing Artifacts binding, an empty repo) come back
+// as `null` with their error code under `errors`, never as a 500.
+// ---------------------------------------------------------------------------
+
+export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const r = repoArg(deps, p, args.repo);
+  if (isOutcome(r)) return r;
+  const base: ForgeArgs = { repo: r.repo };
+  const [snapshot, agents, goals, intents, trains, conflicts, inbox, activity] = await Promise.all([
+    snapshotOp(deps, p, base),
+    agentsOp(deps, p, base),
+    listGoalsOp(deps, p, base),
+    listIntentsOp(deps, p, { ...base, limit: 100 }),
+    listTrainsOp(deps, p, { ...base, limit: 12 }),
+    listConflictsOp(deps, p, { ...base, limit: 20 }),
+    storyInboxOp(deps, p, base),
+    // The repo-wide ledger, newest first: the app's activity feed reads
+    // it as plain sentences ("agent-4 declared …", "train cut …").
+    deps.db
+      .prepare("SELECT subject_kind, subject_id, kind, body, actor, created_at FROM forge_ledger WHERE repo = ? ORDER BY created_at DESC LIMIT 80")
+      .bind(r.repo)
+      .all<{ subject_kind: string; subject_id: string; kind: string; body: string; actor: string; created_at: string }>()
+      .then((x) => x.results.map((l) => ({ subjectKind: l.subject_kind, subjectId: l.subject_id, kind: l.kind, body: l.body.slice(0, 400), actor: l.actor, at: l.created_at })))
+      .catch(() => []),
+  ]);
+  if (!snapshot.ok) return snapshot;
+  const errors: Record<string, string> = {};
+  const part = (name: string, o: ForgeOutcome): Record<string, unknown> | null => {
+    if (o.ok) return o.data;
+    errors[name] = o.body.code;
+    return null;
+  };
+  return ok({
+    repo: r.repo,
+    generatedAt: nowIso(),
+    namespace: deps.namespace,
+    // The trunk's git remote on Artifacts (empty when the account id is
+    // unknown). Dropped from the public view like every other remote.
+    remote: forkRemote(deps, r.repo, ""),
+    snapshot: snapshot.data,
+    agents: part("agents", agents),
+    goals: part("goals", goals),
+    intents: part("intents", intents),
+    trains: part("trains", trains),
+    conflicts: part("conflicts", conflicts),
+    inbox: part("inbox", inbox),
+    activity,
+    errors,
+  });
+}
