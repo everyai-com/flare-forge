@@ -712,9 +712,8 @@ skip with its reason).
 > Provenance: agent-drafted 2026-10-14, after Anthropic's "Redesigning
 > source control" post (Oct 13: server-side source-control queries,
 > content-addressed caching). Behaviour covered by `read-cache.test.ts`
-> and `forge-read.test.ts` (`npx vitest run`, 2026-10-14). The binding
-> reads it saves on a live repo are **not measured yet**: compare
-> `binding.read` and `binding.cached` in the ledger before and after.
+> and `forge-read.test.ts` (`npx vitest run`, 2026-10-14). Measured with
+> the A/B below (2026-10-14, one run per arm).
 
 Two ideas, both in `apps/worker/src/`:
 
@@ -737,6 +736,29 @@ every intent shares with trunk; `why` walks history; the Live map read
 to the trunk sha (one shared trunk lookup per request), so once the
 policy is cached a dashboard or spectator poll costs one binding read
 (the trunk head) instead of two.
+
+**Measured A/B (2026-10-14).** Two local Workers (`wrangler dev`, local
+D1/DOs/R2) on the real `ARTIFACTS` binding in the `flare-forge-preview`
+namespace, one local runner for CI, a fresh trunk each (`forge:demo
+--recreate`), then the same `forge:agents --mode scripted --count 6`
+swarm and crons ticked every 10 s until the repo went quiet. The arms
+differ only in `FORGE_READ_CACHE=off`. Ledger `binding` counters at the
+first quiet snapshot (both: 13 intents, 10 landed, 1 conflict left open
+by the scripted resolver):
+
+| | Cache off | Cache on |
+|---|---|---|
+| Binding reads (reached Artifacts) | 397 | 326 (-18%) |
+| Reads served by the cache | 0 | 78 |
+| Binding reads per landed change | 39.7 | 32.6 |
+| Added reads per snapshot poll once quiet | ~2.25 | ~1.25 |
+
+Caveats: one run per arm. `wrangler dev` gets no Artifacts events, so
+the push-trigger Workflow (which diffs every push against its base and
+runs on prod) did not run in either arm. Those diffs are tree reads by
+hash, which the cache serves, so prod should save more, but that is not
+measured. Most of the remaining reads are by branch name (`main`, lane
+refs), which are never cached.
 
 **2. Read verbs, so agents look without cloning** (`forge-read.ts`,
 wrapped in `forge-service.ts`):
