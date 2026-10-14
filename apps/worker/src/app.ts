@@ -69,7 +69,18 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; }
 kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px; padding:0 5px; font-size:11px; font-family:inherit; color:var(--soft); background:var(--raise); }
 
 /* shell */
-#shell { display:grid; grid-template-columns:232px 1fr; height:100vh; }
+#shell { display:grid; grid-template-columns:232px 1fr; height:100vh; transition:grid-template-columns .15s ease; }
+#side .logo #sideBtn { margin-left:auto; }
+@media (min-width:801px) {
+#shell.collapsed { grid-template-columns:56px 1fr; }
+#shell.collapsed #side .logo { flex-direction:column; padding:12px 0 8px; }
+#shell.collapsed #side .logo #sideBtn { margin-left:0; }
+#shell.collapsed #side .logo > span:not(.f), #shell.collapsed #side .repo, #shell.collapsed #side nav .k, #shell.collapsed #side nav a > span:not(.ic), #shell.collapsed #side .foot .who { display:none; }
+#shell.collapsed #side nav { padding:4px 6px; }
+#shell.collapsed #side nav a { justify-content:center; padding:9px 0; }
+#shell.collapsed #side nav a .ic { font-size:14px; }
+#shell.collapsed #side .foot { flex-direction:column; padding:10px 0; }
+}
 #side { background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
 #side .logo { display:flex; align-items:center; gap:9px; padding:14px 14px 10px; font-weight:600; font-size:14px; }
 #side .logo .f { width:24px; height:24px; border-radius:7px; background:var(--accent); color:var(--accent-ink); display:grid; place-items:center; font-weight:700; font-size:13px; }
@@ -366,7 +377,7 @@ body.explain .ex { display:block; }
 
 <div id="shell" class="hidden">
   <aside id="side">
-    <div class="logo"><span class="f">F</span><span>Flare Forge</span></div>
+    <div class="logo"><span class="f">F</span><span>Flare Forge</span><button class="ghost sm" id="sideBtn" title="Collapse sidebar ( [ )" aria-label="Collapse sidebar">«</button></div>
     <div class="repo" id="repoBox"></div>
     <nav id="nav"></nav>
     <div class="foot"><span class="who" id="who"></span><button class="ghost sm" id="themeBtn" title="Toggle theme">◐</button><button class="ghost sm" id="logoutBtn" title="Sign out">⎋</button></div>
@@ -492,6 +503,11 @@ body.explain .ex { display:block; }
   }
   byId("logoutBtn").addEventListener("click", function () { fetch("/v1/admin/logout", { method: "POST", credentials: "include" }).then(function () { location.href = "/app?login=1"; }, function () { location.href = "/app?login=1"; }); });
   try { var exs = localStorage.getItem("ff-explain"); if (exs === "0") S.explain = false; } catch (e) {}
+  // Collapsible sidebar: icons only, more room for the page (remembered).
+  function setSide(collapsed) { byId("shell").classList.toggle("collapsed", collapsed); var sb = byId("sideBtn"); sb.textContent = collapsed ? "»" : "«"; sb.title = (collapsed ? "Expand" : "Collapse") + " sidebar ( [ )"; sb.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar"); try { localStorage.setItem("ff-side", collapsed ? "0" : "1"); } catch (e) {} if (S.page === "how") renderPage(); }
+  byId("sideBtn").addEventListener("click", function () { setSide(!byId("shell").classList.contains("collapsed")); });
+  document.addEventListener("keydown", function (e) { if (e.key !== "[" || e.metaKey || e.ctrlKey || e.altKey) return; var tg = e.target; if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT" || tg.isContentEditable)) return; setSide(!byId("shell").classList.contains("collapsed")); });
+  try { if (localStorage.getItem("ff-side") === "0") setSide(true); } catch (e) {}
   function applyExplain() { document.body.classList.toggle("explain", explainOn()); byId("explainBtn").classList.toggle("on", explainOn()); }
   byId("explainBtn").addEventListener("click", function () { S.explain = !S.explain; try { localStorage.setItem("ff-explain", S.explain ? "1" : "0"); } catch (e) {} applyExplain(); renderPage(); });
   applyExplain();
@@ -515,7 +531,7 @@ body.explain .ex { display:block; }
   }
   function renderNav() {
     var n = clear(byId("nav"));
-    PAGES.forEach(function (p) { if (GROUPS[p[0]]) { if (GROUPS[p[0]] === "Admin" && S.pub) return; add(n, el("div", "k", GROUPS[p[0]])); } if (S.pub && (p[0] === "settings" || p[0] === "usage")) return; var a = add(n, el("a")); a.href = "#/" + p[0]; a.dataset.page = p[0]; add(a, el("span", "ic", p[2])); add(a, el("span", null, p[1])); add(a, el("span", "b hidden")); });
+    PAGES.forEach(function (p) { if (GROUPS[p[0]]) { if (GROUPS[p[0]] === "Admin" && S.pub) return; add(n, el("div", "k", GROUPS[p[0]])); } if (S.pub && (p[0] === "settings" || p[0] === "usage")) return; var a = add(n, el("a")); a.href = "#/" + p[0]; a.dataset.page = p[0]; a.title = p[1]; add(a, el("span", "ic", p[2])); add(a, el("span", null, p[1])); add(a, el("span", "b hidden")); });
     updateNav();
   }
   function updateNav() {
@@ -1050,7 +1066,7 @@ body.explain .ex { display:block; }
     // Fit the frame to what was drawn: leaf labels hang past the fixed
     // 1120-wide box on both sides, so measure once laid out and pad.
     var fit = function () { try { var bb = svg.getBBox(); if (bb.width > 0) svg.setAttribute("viewBox", Math.floor(bb.x - 16) + " " + Math.floor(bb.y - 16) + " " + Math.ceil(bb.width + 32) + " " + Math.ceil(bb.height + 32)); } catch (e) {} };
-    requestAnimationFrame(fit);
+    fit(); requestAnimationFrame(fit);
   }
   function flowStrip(parent) { var f = add(parent, el("div", "flow")); STAGES.forEach(function (st, ix) { var b = add(f, el("div", "fs" + (ix < STAGES.length - 1 ? " arrow" : ""))); add(b, el("div", "t", String(ix + 1) + ". " + st.title)); add(b, el("div", "x", st.ex)); }); return f; }
   function pHow(root) {
