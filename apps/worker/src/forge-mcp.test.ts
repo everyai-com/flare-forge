@@ -12,6 +12,7 @@ const FORGE_TOOL_NAMES = [
   "claim_intent",
   "heartbeat",
   "report_push",
+  "commit_files",
   "mark_ready",
   "send_note",
   "read_inbox",

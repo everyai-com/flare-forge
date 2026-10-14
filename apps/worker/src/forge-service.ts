@@ -13,6 +13,7 @@
 // are minted only on `i-<id>` forks (invariant 1).
 //
 // Runtime-free: vitest drives it with node:sqlite + fake Artifacts.
+import { COMMIT_LIMITS, parseChanges } from "./forge-commit";
 import { audit, type Db, nowIso } from "./db";
 import { apiError, type ApiErrorBody, type ErrorCode } from "./errors";
 import {
@@ -141,7 +142,18 @@ export interface ForgeServiceDeps {
   waitUntil: ((p: Promise<unknown>) => void) | null;
   loadPolicy(repo: string): Promise<{ policy: ForgePolicy; warning: string | null }>;
   trunkHead(repo: string): Promise<string>;
+  // commit_files: write a commit to a fork without git on the agent side
+  // (forge-commit.ts on isomorphic-git); null = not wired here.
+  commitFiles: CommitFilesPort | null;
 }
+
+export type CommitFilesPort = (args: {
+  url: string;
+  token: string;
+  changes: Array<{ path: string; bytes: Uint8Array | null }>;
+  message: string;
+  author: { name: string; email: string };
+}) => Promise<{ sha: string; parent: string; changed: number }>;
 
 export type ForgeArgs = Record<string, unknown>;
 
@@ -168,6 +180,7 @@ export function forgeServiceDeps(input: {
   feed?: FeedPort | null;
   planner?: GoalPlanner | null;
   waitUntil?: ((p: Promise<unknown>) => void) | null;
+  commitFiles?: CommitFilesPort | null;
 }): ForgeServiceDeps {
   const artifacts = input.artifacts ?? null;
   // Deps live for one request: one trunk lookup per repo serves every
@@ -206,6 +219,7 @@ export function forgeServiceDeps(input: {
     feed: input.feed ?? null,
     planner: input.planner ?? null,
     waitUntil: input.waitUntil ?? null,
+    commitFiles: input.commitFiles ?? null,
     // `.flare/policy.yml` from trunk; missing = default, invalid =
     // default plus a warning surfaced to the agent (never a 500). Read at
     // the trunk sha when known, so the read cache can answer it.
@@ -304,8 +318,19 @@ function needWrite(p: ForgePrincipal, verb: string): ForgeOutcome | null {
   return forgeFail("unauthorized", `${verb} needs run scope`, "use a runner or admin token (OAuth: the flare:run scope); readonly tokens can only read the forge");
 }
 
+// Agents name repos the way they know them: "<namespace>/name" scopes
+// and GitHub "owner/name" both map to the Forge repo (Artifacts names
+// have no slash; a GitHub repo's Forge copy is "owner-name").
+export function normalizeForgeRepo(namespace: string, v: string): string {
+  if (!v.includes("/")) return v;
+  if (namespace && v.startsWith(`${namespace}/`) && !v.slice(namespace.length + 1).includes("/")) return v.slice(namespace.length + 1);
+  const m = /^(?:https?:\/\/)?(?:www\.)?(?:github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(v);
+  return m ? `${m[1]}-${m[2]}` : v;
+}
+
 function repoArg(deps: ForgeServiceDeps, p: ForgePrincipal, v: unknown): { repo: string } | ForgeOutcome {
-  const repo = str(v);
+  const raw = str(v);
+  const repo = raw ? normalizeForgeRepo(deps.namespace, raw) : raw;
   if (!repo || !validateRepo(repo)) {
     return forgeFail("invalid_request", "repo is required: the Artifacts repo name (e.g. shop)");
   }
@@ -922,6 +947,45 @@ export async function heartbeatOp(deps: ForgeServiceDeps, p: ForgePrincipal, arg
     drift,
     nextSteps: steps,
   });
+}
+
+// commit_files: the git-free twin of "edit, commit, git push": the agent
+// sends file contents (or deletions) and a message; the server commits
+// them on top of the fork's main with the intent's trailers, pushes, and
+// runs report_push on the new sha (footprint, drift, risk as usual).
+export async function commitFilesOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const denied = needWrite(p, "commit_files");
+  if (denied) return denied;
+  const who = resolveAgent(p, args.agent);
+  if (isOutcome(who)) return who;
+  const intent = await loadIntent(deps, p, args.intentId);
+  if (isOutcome(intent)) return intent;
+  const notOwner = await ownerCheck(deps, p, intent.id);
+  if (notOwner) return notOwner;
+  if (intent.agent !== who.agent) return forgeFail("not_owner", "intent is owned by another agent");
+  if (!intent.forkRepo || !["claimed", "working", "ready", "replaying"].includes(intent.state)) {
+    return forgeFail("not_pushable", `intent is ${intent.state}; claim it first`, "claim_intent gives you a fork; then commit_files writes to it");
+  }
+  const parsed = parseChanges(args.files);
+  if ("error" in parsed) return forgeFail("invalid_request", parsed.error, "files: [{path, content}] (content UTF-8, or encoding: \"base64\"), or {path, delete: true}");
+  const summary = str(args.message);
+  if (!summary || summary.length > COMMIT_LIMITS.message) return forgeFail("invalid_request", `message is required (1-${COMMIT_LIMITS.message} chars)`);
+  if (!deps.commitFiles || !deps.artifacts) return forgeFail("not_implemented", "commit_files is not wired on this deployment", "clone the fork and git push instead (claim_intent returns the commands)");
+  const minted = await mintForkToken(deps, intent.forkRepo, "write");
+  const url = minted ? forkRemote(deps, intent.forkRepo, minted.remote) : "";
+  if (!minted || !url) return forgeFail("fork_failed", "could not mint a write token for the fork", "retry in a few seconds");
+  const trailerFields = { goal: intent.goalId ?? "", intent: intent.id, agent: who.agent, session: intent.forkRepo };
+  let committed: { sha: string; parent: string; changed: number };
+  try {
+    committed = await deps.commitFiles({ url, token: minted.token, changes: parsed.changes, message: appendTrailers(summary, trailerFields), author: { name: who.agent, email: `${who.agent}@agents.flare.invalid` } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return forgeFail(/rejected|moved/.test(msg) ? "stale_state" : "invalid_request", `commit failed: ${msg.slice(0, 300)}`, "re-read the fork (read_file) and retry; nothing was written");
+  }
+  await auditWrite(deps, p, "intent.commit_files", `${intent.repo} ${intent.id} ${committed.sha.slice(0, 12)} (${committed.changed} files)`);
+  const pushed = await reportPushOp(deps, p, { intentId: intent.id, sha: committed.sha, agent: who.agent });
+  if (!pushed.ok) return pushed;
+  return ok({ ...pushed.data, committed: { sha: committed.sha, parent: committed.parent, files: committed.changed } });
 }
 
 export async function reportPushOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
@@ -2259,6 +2323,7 @@ export const FORGE_MCP_OPS: Record<string, ForgeOp> = {
   claim_intent: claimOp,
   heartbeat: heartbeatOp,
   report_push: reportPushOp,
+  commit_files: commitFilesOp,
   mark_ready: markReadyOp,
   send_note: sendNoteOp,
   read_inbox: readInboxOp,
