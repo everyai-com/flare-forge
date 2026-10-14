@@ -383,6 +383,7 @@ describe("forge routes: conflicts, trains, fork sessions, feed", () => {
     const red = await createTrain(h.db, { repo: "demo", lane: 0, baseSha: sha("0"), intentIds: ["bad"] });
     expect(await transitionTrain(h.db, red.id, "forming", "merging")).toBe(true);
     expect(await transitionTrain(h.db, red.id, "merging", "failed")).toBe(true);
+    await h.db.prepare("UPDATE trains SET created_at = ? WHERE id = ?").bind("2026-01-01T00:00:00.000Z", red.id).run();
     for (let i = 0; i < 12; i++) await createTrain(h.db, { repo: "demo", lane: i + 1, baseSha: sha("0"), intentIds: [`i${i}`] });
     const story = await h.call("GET", "/v1/forge/overview?repo=demo");
     const trains = rec(story.body.trains).trains as Array<{ id: string; state: string }>;
