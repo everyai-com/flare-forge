@@ -107,6 +107,18 @@ export async function deleteSeatSnapshot(db: Db, image: string, repo: string): P
   await db.prepare("DELETE FROM seat_snapshots WHERE image = ? AND repo = ?").bind(image, repo).run();
 }
 
+// Deletes the row only while it still names `snapshotId`, so a job that
+// restored an old snapshot never drops a newer one another job saved.
+export async function deleteSeatSnapshotIfCurrent(db: Db, image: string, repo: string, snapshotId: string): Promise<void> {
+  await db.prepare("DELETE FROM seat_snapshots WHERE image = ? AND repo = ? AND snapshot_id = ?").bind(image, repo, snapshotId).run();
+}
+
+// Snapshots are saved only from fresh boots (never from a restored one:
+// chained snapshots grew until npm ci hit ENOSPC on 2026-10-13), and a
+// snapshot older than this is not restored, so the next fresh boot saves
+// a current one.
+export const SEAT_SNAPSHOT_REFRESH_MS = 3 * 86400000;
+
 // Snapshots idle longer than this are never restored: the platform TTL is
 // 30 days, and the 5-day margin keeps boots from chasing ghosts. Shared
 // with the seats worker (restore gate) and the webhook sweep (prune).
