@@ -425,10 +425,19 @@ body.explain .ex { display:block; }
   // ---- api ----
   function api(path, opts) { opts = opts || {}; var cred = S.pub ? "omit" : "include"; var headers = { Accept: "application/json" }; if (opts.body) headers["Content-Type"] = "application/json"; return fetch(path, { method: opts.method || "GET", credentials: cred, headers: headers, body: opts.body ? JSON.stringify(opts.body) : undefined }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, body: j }; }); }); }
   function pubPath(p) { return S.pub ? p.replace("/v1/forge/", "/v1/public/forge/") : p; }
-  function fail(r) { return (r.body && (r.body.hint || r.body.error)) ? String(r.body.error || "") + (r.body.hint ? " · " + r.body.hint : "") : "HTTP " + r.status; }
+  function fail(r) { if (r.body && (r.body.hint || r.body.error || r.body.message)) return String(r.body.error || r.body.message || "") + (r.body.hint ? " · " + r.body.hint : ""); return "HTTP " + r.status; }
 
   // ---- boot + auth ----
+  function appHome() { return "/app" + (S.repo ? "?repo=" + encodeURIComponent(S.repo) : ""); }
+  // Better Auth vouched for an email (cookie set by /v1/auth/*); the bridge
+  // mints the Flare session the app reads. Used after sign-up / sign-in
+  // and when a magic link lands on /app?auth=1.
+  function bridge() { return api("/v1/admin/auth/bridge", { method: "POST", body: {} }).then(function (r) { if (r.status < 300) { location.replace(appHome()); return true; } S.authErr = fail(r); return false; }); }
   function boot() {
+    if (qs.get("auth") === "1") { bridge().then(function (ok) { if (!ok) bootStatus(true); }); return; }
+    bootStatus(false);
+  }
+  function bootStatus(forceLogin) {
     api("/v1/admin/status").then(function (r) {
       S.status = r.body || {};
       if (r.status === 200 && r.body && r.body.user) { S.authed = true; S.admin = !!r.body.user.admin; S.actor = String(r.body.user.actor || r.body.user.login || ""); S.openReg = !!r.body.openRegistration; startApp(); return; }
@@ -437,22 +446,39 @@ body.explain .ex { display:block; }
       return fetch("/v1/public/forge/join", { credentials: "omit" }).then(function (x) { return x.status === 200 ? x.json() : null; }).catch(function () { return null; }).then(function (join) {
         var repos = join && Array.isArray(join.repos) ? join.repos : [];
         S.pubRepos = repos;
-        if (repos.length && (!S.repo || repos.indexOf(S.repo) !== -1) && qs.get("login") !== "1") { S.pub = true; S.authed = false; if (!S.repo) S.repo = repos[0]; startApp(); return; }
+        if (repos.length && (!S.repo || repos.indexOf(S.repo) !== -1) && qs.get("login") !== "1" && !forceLogin) { S.pub = true; S.authed = false; if (!S.repo) S.repo = repos[0]; startApp(); return; }
         showAuth(repos);
       });
     });
   }
   function showAuth(repos) {
     byId("auth").classList.remove("hidden"); byId("shell").classList.add("hidden");
-    byId("aRegister").classList.toggle("hidden", !S.openReg && !!(S.status && S.status.claimed));
+    var canRegister = S.openReg || !(S.status && S.status.claimed);
+    byId("aRegister").classList.toggle("hidden", !canRegister);
     var w = clear(byId("aWatch"));
-    if (repos && repos.length) { add(w, el("span", null, "No account? ")); var a = add(w, el("a", null, "Watch " + repos[0] + " read-only")); a.href = "/app?repo=" + encodeURIComponent(repos[0]); } else add(w, el("span", null, "The first account to sign up becomes the owner of this deployment."));
-    function go(path) { var email = byId("aEmail").value.trim(), pw = byId("aPw").value; byId("aErr").textContent = ""; if (!email || !pw) { byId("aErr").textContent = "Email and password are required."; return; } api(path, { method: "POST", body: { email: email, password: pw } }).then(function (r) { if (r.status < 300) { location.href = "/app" + (S.repo ? "?repo=" + encodeURIComponent(S.repo) : ""); } else byId("aErr").textContent = fail(r); }); }
-    byId("aLogin").onclick = function () { go("/v1/admin/login"); };
-    byId("aRegister").onclick = function () { go("/v1/admin/register"); };
-    byId("aPw").onkeydown = function (e) { if (e.key === "Enter") go("/v1/admin/login"); };
+    if (repos && repos.length) { add(w, el("span", null, canRegister ? "Just looking? " : "No account? ")); var a = add(w, el("a", null, "Watch " + repos[0] + " read-only")); a.href = "/app?repo=" + encodeURIComponent(repos[0]); } else add(w, el("span", null, S.status && S.status.claimed ? (canRegister ? "New here? Create an account with your email, or ask the owner for an invite." : "Ask the owner for an invite link.") : "The first account to sign up becomes the owner of this deployment."));
+    if (S.authErr) { byId("aErr").textContent = S.authErr; S.authErr = ""; }
+    function creds() { var email = byId("aEmail").value.trim(), pw = byId("aPw").value; byId("aErr").style.color = ""; byId("aErr").textContent = ""; if (!email || !pw) { byId("aErr").textContent = "Email and password are required."; return null; } return { email: email, password: pw }; }
+    function busy(on) { ["aLogin", "aRegister", "aMagic", "aGithub"].forEach(function (id) { byId(id).disabled = on; }); }
+    function signIn() {
+      var c = creds(); if (!c) return; busy(true);
+      // Better Auth first; accounts that predate it still open the legacy door.
+      api("/v1/auth/sign-in/email", { method: "POST", body: c }).then(function (r) {
+        if (r.status < 300) return bridge().then(function (ok) { if (!ok) { busy(false); byId("aErr").textContent = S.authErr; S.authErr = ""; } });
+        return api("/v1/admin/login", { method: "POST", body: c }).then(function (l) { if (l.status < 300) { location.replace(appHome()); return; } busy(false); byId("aErr").textContent = fail(l); });
+      });
+    }
+    byId("aLogin").onclick = signIn;
+    byId("aRegister").onclick = function () {
+      var c = creds(); if (!c) return; busy(true);
+      api("/v1/auth/sign-up/email", { method: "POST", body: { name: c.email.split("@")[0], email: c.email, password: c.password } }).then(function (r) {
+        if (r.status < 300) return bridge().then(function (ok) { if (!ok) { busy(false); byId("aErr").textContent = S.authErr; S.authErr = ""; } });
+        busy(false); byId("aErr").textContent = fail(r);
+      });
+    };
+    byId("aPw").onkeydown = function (e) { if (e.key === "Enter") signIn(); };
     byId("aGithub").onclick = function () { location.href = "/v1/admin/github/login"; };
-    byId("aMagic").onclick = function () { var email = byId("aEmail").value.trim(); byId("aErr").textContent = ""; if (!email) { byId("aErr").textContent = "Enter your email first."; return; } byId("aMagic").disabled = true; api("/v1/admin/magic/request", { method: "POST", body: { email: email } }).then(function (r) { byId("aMagic").disabled = false; byId("aErr").style.color = r.status < 300 ? "var(--landed)" : ""; byId("aErr").textContent = r.status < 300 ? "If that address has an account, a one-time sign-in link is on its way." : fail(r); }); };
+    byId("aMagic").onclick = function () { var email = byId("aEmail").value.trim(); byId("aErr").style.color = ""; byId("aErr").textContent = ""; if (!email) { byId("aErr").textContent = "Enter your email first."; return; } byId("aMagic").disabled = true; api("/v1/auth/sign-in/magic-link", { method: "POST", body: { email: email, callbackURL: "/app?auth=1" + (S.repo ? "&repo=" + encodeURIComponent(S.repo) : "") } }).then(function (r) { byId("aMagic").disabled = false; byId("aErr").style.color = r.status < 300 ? "var(--landed)" : ""; byId("aErr").textContent = r.status < 300 ? "Check your inbox: a one-time sign-in link is on its way. New addresses get an account on first use." : fail(r); }); };
   }
   function startApp() {
     byId("auth").classList.add("hidden"); byId("shell").classList.remove("hidden");

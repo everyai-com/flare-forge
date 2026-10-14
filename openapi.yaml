@@ -2881,6 +2881,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Ok'
+  /v1/auth/{endpoint}:
+    get:
+      tags: [auth]
+      operationId: betterAuthGet
+      summary: Better Auth endpoints (magic-link verify, session, sign-out) — handled by better-auth
+      security: []
+      parameters:
+        - name: endpoint
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Better Auth response
+        '302':
+          description: Redirect (magic-link verify)
+    post:
+      tags: [auth]
+      operationId: betterAuthPost
+      summary: Better Auth endpoints (sign-up/email, sign-in/email, sign-in/magic-link, sign-out) — handled by better-auth
+      security: []
+      parameters:
+        - name: endpoint
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Better Auth response
+  /v1/admin/auth/bridge:
+    post:
+      tags: [auth]
+      operationId: bridgeBetterAuthSession
+      summary: Mint a Flare session from the Better Auth session cookie (first account claims admin; otherwise open registration decides)
+      security: []
+      responses:
+        '200':
+          description: Flare session cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  admin:
+                    type: boolean
+        '401':
+          description: No Better Auth session
+        '403':
+          description: Registration closed, or admin already claimed
   /v1/admin/magic/request:
     post:
       tags: [auth]

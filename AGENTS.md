@@ -318,6 +318,11 @@ exhaustion) → runner polls `GET /v1/jobs/next?labels=` → executes →
 Auth model: env secrets take precedence; dashboard-managed D1 settings fill
 gaps so one-click deploys need zero `wrangler secret` commands.
 
+- Account creation + email sign-in (password, magic link) run on
+  Better Auth (`better-auth.ts`, routes `/v1/auth/*`, tables `auth_*`,
+  migration 0051). It owns credentials only: `POST /v1/admin/auth/bridge`
+  turns its session into a Flare session (first account claims admin,
+  then open registration decides). The legacy doors below still work.
 - Auth: Login with GitHub (`oauth.ts`) or email + password
   (`email.ts`, PBKDF2, D1 `users`); sessions in D1 `sessions` (kind
   github|email), cookie `flare_session`. First login of either kind
