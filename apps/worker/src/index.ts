@@ -158,6 +158,7 @@ import {
   validatePassword,
   verifyPassword,
 } from "./email";
+import { bridgeDecision, createBetterAuth } from "./better-auth";
 import {
   defaultPipeline,
   emptyProfiles,
@@ -560,6 +561,34 @@ async function isClaimed(env: WorkerEnv): Promise<boolean> {
 
 // Open registration (admin toggle, default off): anyone may create a
 // non-admin reader account from the dashboard, by email or GitHub.
+// Better Auth instance for this request (see better-auth.ts): same D1,
+// request origin as base URL, the deployment's secrets key as secret
+// (env wins, D1 fills the gap — resolveSecretsKey generates it once).
+async function betterAuthFor(env: WorkerEnv, url: URL) {
+  await resolveSecretsKey(env.DB, env.SECRETS_KEY);
+  const secret = env.SECRETS_KEY || (await getSetting(env.DB, SETTING_KEYS.secretsKey)) || "";
+  return createBetterAuth({
+    db: env.DB,
+    baseURL: url.origin,
+    secret,
+    sendMagicLink: async ({ email, url: link }) => {
+      const sender = resolveNotifySender(env.NOTIFY_FROM_EMAIL, await getSetting(env.DB, SETTING_KEYS.notifyFromEmail));
+      const mailer = env.EMAIL;
+      if (!sender || !mailer) {
+        log("info", "better-auth magic link skipped (email not configured)", { sender: !!sender, mail: !!mailer });
+        return;
+      }
+      await mailer.send({
+        from: { name: "Flare Forge", email: sender },
+        to: email,
+        subject: "[flare] Sign in to Flare Forge",
+        text: `Sign in to Flare Forge as ${email}.\n\n${link}\n\nThe link expires in 15 minutes and works once. If this was not you, ignore this email.`,
+      });
+      await audit(env.DB, "magic", "session.magic_sent", email);
+    },
+  });
+}
+
 async function isOpenRegistration(env: WorkerEnv): Promise<boolean> {
   const parsed = parseOpenRegistration(await getSetting(env.DB, SETTING_KEYS.openRegistration));
   return "on" in parsed && parsed.on;
@@ -2599,6 +2628,13 @@ export default {
         });
       }
       await ensureSchema(env.DB);
+      // Better Auth owns /v1/auth/* (sign-up, sign-in, magic-link verify,
+      // sign-out, session). It does its own origin checks and rate
+      // limiting; a Flare session comes from /v1/admin/auth/bridge.
+      if (url.pathname.startsWith("/v1/auth/")) {
+        const auth = await betterAuthFor(env, url);
+        return auth.handler(request);
+      }
       // CSRF defense-in-depth for cookie-authenticated mutations:
       // browsers send Origin on cross-site and same-origin fetch/form
       // POSTs, so a mismatch is rejected. Bearer flows (API, MCP) and
@@ -4359,6 +4395,55 @@ export default {
         const invite = await peekInvite(env.DB, decodeURIComponent(inviteMatch[1]));
         if (!invite) return json({ error: "invite invalid or expired" }, 404);
         return json({ email: invite.email });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/admin/auth/bridge") {
+        // Better Auth vouched for an email (cookie flare_auth.session_token);
+        // mint the Flare session the rest of the app reads. Same doors as
+        // the legacy routes: known account → login, first account → admin,
+        // otherwise open registration decides (bridgeDecision).
+        const auth = await betterAuthFor(env, url);
+        const vouched = await auth.api.getSession({ headers: request.headers });
+        if (!vouched) return json(apiError("unauthorized", "no Better Auth session", "sign in or create an account first"), 401);
+        const emailErr = validateEmail(vouched.user.email);
+        if (emailErr) return json(apiError("invalid_request", emailErr), 400);
+        const email = normalizeEmail(vouched.user.email);
+        const existing = await getUser(env.DB, email);
+        const decision = bridgeDecision({
+          existing: existing !== null,
+          claimed: await isClaimed(env),
+          openRegistration: await isOpenRegistration(env),
+        });
+        let isAdmin = existing?.is_admin === 1;
+        if (decision === "deny") {
+          return json({ error: "registration is closed on this deployment", hint: "ask the owner for an invite link, or for open registration in Settings" }, 403);
+        }
+        if (decision === "claim_admin") {
+          if (!(await claimAdminMarker(env.DB))) return json(apiError("already_claimed", "already claimed"), 403);
+          try {
+            await createUser(env.DB, { email, passwordHash: await hashPassword(crypto.randomUUID()), isAdmin: true });
+            await setSetting(env.DB, SETTING_KEYS.adminEmail, email);
+          } catch (err) {
+            await releaseAdminMarker(env.DB);
+            throw err;
+          }
+          isAdmin = true;
+          await audit(env.DB, `email:${email}`, "admin.claim", "better-auth");
+          log("info", "admin claimed", { email, via: "better-auth" });
+        } else if (decision === "register") {
+          // Credentials live in Better Auth; the Flare row carries an
+          // unguessable placeholder so the legacy password door stays shut.
+          await createUser(env.DB, { email, passwordHash: await hashPassword(crypto.randomUUID()), isAdmin: false });
+          await audit(env.DB, `email:${email}`, "session.register", "better-auth");
+        }
+        const sessionId = await createLoginSession(env.DB, { kind: "email", login: email, isAdmin });
+        await audit(env.DB, `email:${email}`, "session.login", "better-auth");
+        return new Response(JSON.stringify({ ok: true, admin: isAdmin }), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "Set-Cookie": sessionSetCookie(sessionId, url.protocol === "https:"),
+          },
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/admin/register") {
         const body = (await request.json().catch(() => ({}))) as { token?: unknown; email?: unknown; password?: unknown; turnstileToken?: unknown };
