@@ -240,6 +240,7 @@ import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerChe
 import { forgeOpsLookups, handleArtifactsOpEvent, isAccountEventType } from "./forge-ops";
 import { coordinatorFor } from "./coordinator";
 import { ensureRepoMirror, mirrorNameFor } from "./artifacts-mirrors";
+import { appendForgeLedger } from "./intents";
 import { resolvePairDedupe } from "./event-dedupe";
 import {
   claimAttempt,
@@ -850,6 +851,10 @@ export interface GitHubWebhookPayload {
     number?: number;
   };
   action?: string;
+  // Push events: who pushed and what (activity feed of the Forge mirror).
+  pusher?: { name?: string };
+  commits?: Array<{ message?: string }>;
+  head_commit?: { message?: string } | null;
   // Runner mode (`runs-on: flare`): structurally matches ghrunners'
   // WorkflowJobPayload so the parsed body passes through without casts.
   workflow_job?: {
@@ -1551,6 +1556,23 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
             // Train-ready on the first push, hands-free: add main, the
             // lane pool and refs/notes/why once (marked on the mirror
             // row), so agents can land without a Bring into Forge click.
+            // Pushes made outside Forge (any agent or person with GitHub
+            // access) still show up: one plain-language activity row on
+            // the mirror's feed. It rides subject kind "goal" (the
+            // ledger CHECK allows four kinds) with its own event kind.
+            if (event === "push" && (out.status === "ready" || out.status === "importing")) {
+              const n = Array.isArray(payload.commits) ? payload.commits.length : 0;
+              const msg = (payload.head_commit?.message ?? "").split("\n")[0].slice(0, 120);
+              const pusher = (payload.pusher?.name ?? "").replace(/[^\w.-]/g, "").slice(0, 39);
+              await appendForgeLedger(env.DB, {
+                repo: out.mirror,
+                subjectKind: "goal",
+                subjectId: sha.slice(0, 40),
+                kind: "github_push",
+                body: JSON.stringify({ branch, commits: n, sha: sha.slice(0, 40), message: msg }),
+                actor: pusher ? `github-${pusher}` : "github",
+              });
+            }
             if (out.status === "ready" && env.ARTIFACTS) {
               const row = await getMirrorRow(env.DB, repo);
               if (row && row.detail !== FORGE_READY_DETAIL) {
