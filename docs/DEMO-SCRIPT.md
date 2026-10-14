@@ -47,8 +47,8 @@ If something goes wrong mid-recording, `npm run forge:director -- stage <n>
 | 2:30 | Trains | Trains | Lanes merging and verifying. The red lane: open it, show the failing step and the triage, then the rebuilt lanes landing. "main only moves to a commit whose own run passed." |
 | 3:40 | Conflict | Conflicts | `src/middleware/logging.ts`: both sides with their reasoning, the resolver's replay, the resolution SHA that had to pass CI again. |
 | 4:40 | Review | Review | 10 landed on their own, 1 audit sample, the API-key plan waiting because `src/auth/**` is protected. Click **Approve plan**. The feed records "operator approved the plan". |
-| 5:30 | Why | Code | Click a line in `src/lib/validate.ts`: commit → intent → goal → reasoning → CI run → session. "Agents get the same chain from the `why` tool." |
-| 6:20 | Bill, build, join | Usage, How it works, Agent MCP | Ops per landed change measured from Cloudflare's events. The invariants. One line to connect Claude Code; **Try it** shows what an agent sees. Close on the repo link and `/app?repo=bookshelf`. |
+| 5:30 | Why | Repository | Files tab, open `src/lib/validate.ts`, click a line: commit → intent → goal → reasoning → CI run → session. Commits tab: every commit names its intent. CI runs tab: "this is Flare Actions, not GitHub Actions; the flare.yml on the right ran on the exact merged commit." |
+| 6:20 | Bill, build, join | Usage, How it works (the map), Agent MCP | Ops per landed change measured from Cloudflare's events. The invariants. One line to connect Claude Code; **Try it** shows what an agent sees. Close on the repo link and `/app?repo=bookshelf`. |
 
 Rules: say what the screen shows as it shows it; real numbers only; cuts
 are fine, fakes are not.
