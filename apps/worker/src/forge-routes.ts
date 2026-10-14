@@ -35,6 +35,7 @@ import {
   planGoal,
   readInboxOp,
   reportPushOp,
+  commitFilesOp,
   resolveConflictOp,
   sendNoteOp,
   sessionOp,
@@ -53,6 +54,10 @@ import {
   type ForgeServiceDeps,
 } from "./forge-service";
 import { meteredArtifacts } from "./coordinator";
+import git from "isomorphic-git";
+import http from "isomorphic-git/http/web";
+import { commitFilesToFork } from "./forge-commit";
+import { MemoryFS } from "./memory-fs";
 import type { FeedPort, ForgeCoordinatorPort, TrainPort, WhyPort } from "./forge-ports";
 import type { GoalPlanner } from "./forge-planner";
 
@@ -83,6 +88,8 @@ export function forgeDepsFromEnv(env: WorkerEnv, adapters: ForgeAdapters = {}): 
     artifacts,
     namespace: env.ARTIFACTS_NAMESPACE ?? "",
     accountId: env.ARTIFACTS_ACCOUNT_ID ?? "",
+    // commit_files over the real git protocol (fresh MemoryFS per call).
+    commitFiles: (a) => commitFilesToFork({ git, http, fs: new MemoryFS() }, a),
     ...adapters,
   });
 }
@@ -166,6 +173,8 @@ export async function handleForgeRequest(
   if (heartbeatMatch && method === "POST") return write(heartbeatOp, { intentId: heartbeatMatch[1] });
   const pushMatch = /^\/v1\/forge\/intents\/([^/]+)\/push$/.exec(url.pathname);
   if (pushMatch && method === "POST") return write(reportPushOp, { intentId: pushMatch[1] });
+  const commitMatch = /^\/v1\/forge\/intents\/([^/]+)\/commit$/.exec(url.pathname);
+  if (commitMatch && method === "POST") return write(commitFilesOp, { intentId: commitMatch[1] });
   const readyMatch = /^\/v1\/forge\/intents\/([^/]+)\/ready$/.exec(url.pathname);
   if (readyMatch && method === "POST") return write(markReadyOp, { intentId: readyMatch[1] });
   // `/approve`, `/notes`, `/fork` are dashboard aliases of approve-plan,

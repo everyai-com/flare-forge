@@ -440,7 +440,10 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
       mcpUrl: new URL("/mcp", url).toString(),
     });
   }
-  if (!isSession || (ident.scope !== "admin" && ident.scope !== "member")) {
+  // Sessions only, except the owner's admin token may import (scripts,
+  // support): agent tokens never mint tokens or create repos.
+  const adminToken = ident.scope === "admin" && !isSession;
+  if (!(isSession && (ident.scope === "admin" || ident.scope === "member")) && !(adminToken && url.pathname === "/v1/me/import")) {
     return json(apiError("unauthorized", "sign in to the app to manage repos and tokens"), 401);
   }
   if (request.method === "POST" && url.pathname === "/v1/me/repos") {
@@ -494,7 +497,9 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
     const visible = ident.scope === "admin" ? all : login ? all.filter((r) => r.fullName.toLowerCase().startsWith(`${login}/`)) : [];
     const owners = await env.DB.prepare("SELECT repo, owner FROM repo_owners").all<{ repo: string; owner: string }>();
     const ownerOf = new Map(owners.results.map((r) => [r.repo, r.owner]));
-    const mirrors = new Set((await listMirrorRows(env.DB)).filter((m) => m.status === "ready").map((m) => m.mirror));
+    // Train-ready mirrors only: a plain mirror (no lane pool yet) still
+    // offers Bring into Forge, which adopts it and adds the lanes.
+    const mirrors = new Set((await listMirrorRows(env.DB)).filter((m) => m.status === "ready" && m.detail === FORGE_READY_DETAIL).map((m) => m.mirror));
     return json({
       githubLogin: login,
       installUrl: slug ? installUrl(slug) : null,

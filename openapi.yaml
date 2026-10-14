@@ -5367,6 +5367,57 @@ paths:
           $ref: '#/components/responses/ForgeConflict'
         '502':
           $ref: '#/components/responses/ForgeUpstream'
+  /v1/forge/intents/{intentId}/commit:
+    post:
+      tags: [forge]
+      operationId: forgeCommitFiles
+      summary: Commit files to your fork without git (then report_push runs on the new sha)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: intentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, files]
+              properties:
+                message: { type: string, maxLength: 4000 }
+                agent: { type: string }
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [path]
+                    properties:
+                      path: { type: string }
+                      content: { type: string }
+                      encoding: { type: string, enum: [utf8, base64] }
+                      delete: { type: boolean }
+      responses:
+        '200':
+          description: Committed and verified (report_push result plus committed {sha, parent, files})
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid files or message (invalid_request)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Not claimed (not_pushable), not your intent (not_owner), or the fork moved (stale_state)
+        '501':
+          description: Commit engine not wired here (not_implemented)
   /v1/forge/intents/{intentId}/push:
     post:
       tags:
