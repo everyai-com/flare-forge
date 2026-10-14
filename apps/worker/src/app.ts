@@ -798,7 +798,7 @@ body.explain .ex { display:block; }
   }
   function githubImport(parent) {
     var gh = add(parent, card("Your GitHub repos", "bring any of them into Forge")); gh.id = "ghCard";
-    ex(gh, "Import copies the repo into Cloudflare Artifacts and prepares it for trains. GitHub stays the source of truth: its CI keeps running on Flare Actions and the Forge trunk follows your default branch.");
+    ex(gh, "Import copies a public repo into Cloudflare Artifacts and prepares it for trains (Artifacts imports public repos only, so private ones cannot come in yet). GitHub stays the source of truth: its CI keeps running on Flare Actions and the Forge trunk follows your default branch.");
     var tb = add(gh, el("div", "toolbar")); var inp = add(tb, el("input")); inp.placeholder = "owner/name or a github.com URL"; inp.style.minWidth = "240px"; var go = add(tb, el("button", "primary sm", "Import")); go.addEventListener("click", function () { importRepo(inp.value.trim(), go); }); inp.addEventListener("keydown", function (e) { if (e.key === "Enter") importRepo(inp.value.trim(), go); });
     var holder = add(gh, el("div")); holder.style.marginTop = "8px"; add(holder, el("div", "skel"));
     Promise.all([api("/v1/me/github-repos"), S.admin ? api("/v1/usage") : Promise.resolve({ status: 0 })]).then(function (rs) {
@@ -809,7 +809,7 @@ body.explain .ex { display:block; }
         var draw = function () { clear(rowsBox); var ql = q.value.trim().toLowerCase(); var rows = list.filter(function (r) { return !ql || r.fullName.toLowerCase().indexOf(ql) !== -1; }); rows.sort(function (a, b) { return (b.inForge ? 1 : 0) - (a.inForge ? 1 : 0) || ((jobs[b.fullName] || {}).jobs || 0) - ((jobs[a.fullName] || {}).jobs || 0) || a.fullName.localeCompare(b.fullName); });
           add(rowsBox, table([
             { h: "Repo", cell: function (r) { var w = el("div"); add(w, el("div", "t mono", r.fullName)); add(w, el("div", "s", (r.private ? "private" : "public") + " · " + (r.defaultBranch || "main") + (jobs[r.fullName] ? " · " + jobs[r.fullName].jobs + " CI jobs on Flare (30 d)" : ""))); return w; } },
-            { h: "", fit: true, cell: function (r) { if (r.inForge) { var o = el("button", "sm", "Open in Forge"); o.addEventListener("click", function (e) { e.stopPropagation(); openRepo(r.forgeRepo); }); return o; } if (r.takenByOther) return el("span", "s", "in Forge (another account)"); var b = el("button", "sm primary", "Bring into Forge"); b.addEventListener("click", function (e) { e.stopPropagation(); importRepo(r.fullName, b); }); return b; } }
+            { h: "", fit: true, cell: function (r) { if (r.inForge) { var o = el("button", "sm", "Open in Forge"); o.addEventListener("click", function (e) { e.stopPropagation(); openRepo(r.forgeRepo); }); return o; } if (r.takenByOther) return el("span", "s", "in Forge (another account)"); if (r.private) return el("span", "s", "private: not importable yet"); var b = el("button", "sm primary", "Bring into Forge"); b.addEventListener("click", function (e) { e.stopPropagation(); importRepo(r.fullName, b); }); return b; } }
           ], rows.slice(0, 50), S.admin ? function (r) { openRepoRuns(r.fullName); } : null)); if (rows.length > 50) add(rowsBox, el("div", "small muted", "+ " + (rows.length - 50) + " more; filter to find one")); };
         q.addEventListener("input", draw); draw();
       }

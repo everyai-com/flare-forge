@@ -521,8 +521,9 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
     if (access && mayUsePrivate) {
       isPrivate = access.isPrivate;
       token = access.isPrivate ? access.token : null;
+      if (isPrivate) return json(apiError("repo_not_allowed", "private repos cannot be imported yet: Cloudflare Artifacts imports public repos only. Make it public, or create a new Forge repo and push the code to it"), 403);
     } else if (!(await publicGithubRepo(source))) {
-      return json(apiError("repo_not_allowed", "that repo is private or does not exist: install the Flare GitHub App on it and sign in with that GitHub account"), 403);
+      return json(apiError("repo_not_allowed", "that repo is private or does not exist: Forge can import public GitHub repos only for now"), 403);
     }
     const out = await importGithubRepo(
       { db: env.DB, artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS(), namespace: env.ARTIFACTS_NAMESPACE ?? "" },
