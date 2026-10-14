@@ -2565,6 +2565,24 @@ export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try {
+      // The dashboard shell and the bare-URL redirect are static: no D1,
+      // no session. Serve them before the schema self-migration, which on
+      // a cold isolate is 100+ serial D1 statements (6-8 s to first byte
+      // measured on the hosted demo, 2026-10-14). The data the page then
+      // fetches still waits for the migration like every API call.
+      if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/") {
+        // Keep the query (?demo=1, ?stage=1, ?tour=1): judges land on
+        // /?demo=1#/live. Browsers carry the #fragment across a 302.
+        // A bare visit with no session lands on the guided demo, not a
+        // login form; signed-in users still go straight to the dashboard.
+        if (url.search === "" && parseSessionCookie(request) === null) {
+          return Response.redirect(new URL("/dashboard?demo=1&tour=1#/live", url).toString(), 302);
+        }
+        return Response.redirect(dashboardRedirectUrl(url), 302);
+      }
+      if (request.method === "GET" && url.pathname === "/dashboard") {
+        return dashboardResponse();
+      }
       await ensureSchema(env.DB);
       // CSRF defense-in-depth for cookie-authenticated mutations:
       // browsers send Origin on cross-site and same-origin fetch/form
@@ -2578,19 +2596,6 @@ export default {
             return json({ error: "cross-origin request rejected" }, 403);
           }
         }
-      }
-      if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/") {
-        // Keep the query (?demo=1, ?stage=1, ?tour=1): judges land on
-        // /?demo=1#/live. Browsers carry the #fragment across a 302.
-        // A bare visit with no session lands on the guided demo, not a
-        // login form; signed-in users still go straight to the dashboard.
-        if (url.search === "" && parseSessionCookie(request) === null) {
-          return Response.redirect(new URL("/dashboard?demo=1&tour=1#/live", url).toString(), 302);
-        }
-        return Response.redirect(dashboardRedirectUrl(url), 302);
-      }
-      if (request.method === "GET" && url.pathname === "/dashboard") {
-        return dashboardResponse();
       }
       // forge-spectator: /watch, /v1/public/forge/* (read-only, no auth), /v1/admin/forge/{public,judge-token}.
       const publicForge = await handleForgePublicRequest(request, url, {
