@@ -35,6 +35,14 @@ takes `--dry-run`, which prints the plan and touches nothing, and
 > placeholders until staging is live. Mechanics: docs/FORGE.md
 > "Spectator mode".
 
+**0. Read the story.** Open **`https://<WORKER_URL>/story?repo=bookshelf`**.
+Twelve chapters walk the loop end to end on the repo's live state (no
+fixtures): the trunk on Artifacts, the agents, goals and intents, declare
+and overlaps, forks, trains, conflicts, the inbox, `why`, the Artifacts
+ops bill, and how it is built. `?play=20` auto-advances a chapter every
+20 s for recording; `?stage=1` enlarges the type. Signed in, the same page
+lists every repo in the namespace and gives admins the approve buttons.
+
 **1. Watch the swarm.** Open **`https://<WORKER_URL>/watch`**. That is
 the real live map of the public `bookshelf` repo, read-only. A scripted
 crew of 6 agents works the 3 Bookshelf goals on a loop of about 30
