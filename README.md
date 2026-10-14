@@ -31,13 +31,13 @@ This repo is Flare Forge's entry for Cloudflare's
 competition (Workers + Artifacts, submissions close Oct 14, 2026).
 
 1. **Watch** the live map, no sign-in: [flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live](https://flare-actions.everyai-com.workers.dev/dashboard?demo=1&tour=1#/live) (demo data, rendered in your tab).
-2. **Watch a real swarm** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf), or ask your own Claude Code what the agents are doing:
+2. **Watch a real repo** (spectator mode, read-only): [/watch?repo=bookshelf](https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf) shows the Bookshelf repo's live state and the record of its last swarm (Oct 12: 11 intents landed, one conflict raced and landed, one protected intent still waiting for plan approval), plus the Artifacts ops ledger. Between swarms the map is quiet; the record and the ledger stay. Or ask your own Claude Code:
 
    ```bash
    claude mcp add --transport http flare-forge-watch https://flare-actions.everyai-com.workers.dev/v1/public/forge/mcp
    ```
 
-   Then: *"What are the agents doing in bookshelf right now, and what has it cost in Artifacts operations?"*
+   Then: *"What happened in bookshelf, what is still open, and what has it cost in Artifacts operations?"*
 3. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)). The run ends with a `report.json`: timings plus the ops ledger.
 4. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
 
@@ -97,6 +97,43 @@ in [docs/COMPETITION-PLAN.md](docs/COMPETITION-PLAN.md).
 Agents never hold a trunk write token: each gets a one-hour token for
 its own fork, and only trains move `main`
 ([safety invariants](docs/FORGE-AGENTS.md#5-safety-invariants-enforced-here)).
+
+### Isn't a merge queue the wrong primitive at agent scale?
+
+Anthropic's engineering post ["Redesigning source control"](https://www.anthropic.com/engineering/redesigning-source-control)
+(Oct 13, 2026) says that at 30,000 merges a day "a proper merge queue
+doesn't make much sense," that they could not keep a global lock on
+trunk, and that they moved to post-merge testing with agents fixing
+conflicts after the fact. Forge agrees about the lock and disagrees
+about the trade.
+
+- **No global lock.** Ready intents are cut into lanes of
+  non-overlapping footprints, and up to three train groups stack
+  speculatively on each other's heads, so a lane never waits for the
+  lane ahead to land. Each lane head gets its own CI run on that exact
+  SHA, in parallel, and the longest green prefix lands the moment it is
+  green. A red lane bisects off the chain while the lanes behind it
+  rebuild without it ([docs/FORGE.md](docs/FORGE.md#trains-and-conflicts)).
+- **Trunk is never red by construction.** `main` only ever moves to a
+  SHA whose own CI run passed, so "fix the conflict after it merged"
+  never has to happen on the branch everyone forks from.
+- **The ceiling is honest.** Throughput is bounded by lanes in flight
+  (24 on the chain, with up to 50 intents packed per train) divided by
+  CI wall time. The Bookshelf swarm on the hosted deployment landed 11
+  intents in about six minutes with container seats
+  (MEASURED, 2026-10-12). Anthropic's rate needs post-merge testing or
+  far shorter CI; a repo that wants their trade can lower the risk bar
+  in `.flare/policy.yml` and audit after landing, which is the same
+  `routeLanding` call with a different threshold.
+- **Server-side answers, not clones.** The post's lasting point is that
+  agents are always online, so blame, history and diffs should come
+  from the server. Forge's `why`, `whats_happening`, `read_file`, `diff`
+  and `history` do that over MCP, cached by content hash, so the git
+  ops per landed change in the table above are the budget, not the
+  floor.
+
+The post closes by asking for an "above git" layer with server-side
+calls that forges could standardize on. That is the layer Forge is.
 
 ## Try it
 
