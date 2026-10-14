@@ -227,6 +227,16 @@ export class FlareForge {
   reportPush(intentId: string, sha: string, opts: { agent?: string; files?: string[] } = {}): Promise<ForgePushResult> {
     return this.req("reportPush", "POST", `/v1/forge/intents/${this.id(intentId)}/push`, { sha, ...opts });
   }
+  // commit_files: the server commits these files to the intent's fork
+  // (no git needed) and returns the report_push result plus committed.
+  commitFiles(
+    intentId: string,
+    message: string,
+    files: Array<{ path: string; content?: string; encoding?: "utf8" | "base64"; delete?: boolean }>,
+    opts: { agent?: string } = {},
+  ): Promise<ForgePushResult & { committed: { sha: string; parent: string; files: number } }> {
+    return this.req("commitFiles", "POST", `/v1/forge/intents/${this.id(intentId)}/commit`, { message, files, ...opts });
+  }
   markReady(intentId: string, opts: { agent?: string } = {}): Promise<ForgeReadyResult> {
     return this.req("markReady", "POST", `/v1/forge/intents/${this.id(intentId)}/ready`, opts);
   }

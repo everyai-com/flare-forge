@@ -138,6 +138,9 @@ export interface TrainDeps {
   runStatus?: (runId: string) => Promise<{ status: string; sha: string } | null>;
   loadPipeline?: (repo: string, sha: string) => Promise<string | null>;
   loadPolicyText?: (repo: string) => Promise<string | null>;
+  // A reason to cut no train now (e.g. a member repo over its monthly CI
+  // minutes); intents stay ready and nothing is merged or dispatched.
+  holdReason?: (repo: string) => Promise<string | null>;
   notes?: NotesWriter | null;
   // Start a durable executor for the repo (Workflow create); absent =
   // the cron tick drives trains.
@@ -734,7 +737,8 @@ export type CutResult =
       slots: number[];
     }
   | { status: "busy"; trainIds: string[] }
-  | { status: "idle" | "unavailable" | "no-pipeline" | "invalid-repo" };
+  | { status: "idle" | "unavailable" | "no-pipeline" | "invalid-repo" }
+  | { status: "held"; reason: string };
 
 export async function trunkMainSha(deps: TrainDeps, repo: string): Promise<string | null> {
   if (!deps.artifacts) return null;
@@ -787,6 +791,8 @@ export async function cutTrain(deps: TrainDeps, repo: string): Promise<CutResult
   // CI is the gate: without a pipeline at trunk there is nothing to
   // verify, so nothing may land (invariant 2).
   if (!(await loadPipelineAt(deps, repo, baseSha))) return { status: "no-pipeline" };
+  const hold = deps.holdReason ? await deps.holdReason(repo).catch(() => null) : null;
+  if (hold) return { status: "held", reason: hold };
   const plan = planTrain(candidates, policy, { maxLanes: cap.slots.length });
   const groupSeq = await nextGroupSeq(deps.db, repo);
   const trainIds: string[] = [];

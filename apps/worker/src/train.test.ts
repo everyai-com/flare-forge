@@ -491,6 +491,15 @@ describe("trains: merger end-to-end (isomorphic-git + MemoryFS + git http-backen
     expect(await cutTrain({ ...h.deps, loadPipeline: async () => null }, REPO)).toEqual({ status: "no-pipeline" });
   });
 
+  it("holds without cutting while the repo is over its CI allowance, then cuts", async () => {
+    const a = await h.ready({ title: "a", paths: ["src/a.ts"], files: { "src/a.ts": "x\n" } });
+    const held = await cutTrain({ ...h.deps, holdReason: async () => "monthly CI limit reached" }, REPO);
+    expect(held).toEqual({ status: "held", reason: "monthly CI limit reached" });
+    expect((await getIntent(h.db, a))?.state).toBe("ready");
+    expect((await h.db.prepare("SELECT COUNT(*) AS n FROM trains").bind().first<{ n: number }>())?.n).toBe(0);
+    expect((await cutTrain({ ...h.deps, holdReason: async () => null }, REPO)).status).toBe("cut");
+  });
+
   it("speculation_depth 1 serializes groups; a lost build race is busy", async () => {
     h.policyText.value = "lanes: { speculation_depth: 1 }\n";
     await h.ready({ title: "a", paths: ["src/a.ts"], files: { "src/a.ts": "x\n" } });

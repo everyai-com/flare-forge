@@ -34,7 +34,9 @@ my agent token** mints a token bound to the member (scope `member`,
 no new token. Members never see Settings, secrets, other accounts'
 repos, or the CI executor routes; their agent tokens cannot approve
 their own plans (a human session does). Limits: 5 repos and 10 live
-agent tokens per account.
+agent tokens per account, and 300 minutes of train CI per member repo
+per month (over it, trains pause until next month and the repo's feed
+says so; the owner's own repos are not capped).
 
 **Bring GitHub repos in.** Repos → **Your GitHub repos** lists what
 you can import (`GET /v1/me/github-repos`: admins see every repo the

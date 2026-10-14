@@ -518,3 +518,13 @@ describe("forge routes: commit_files (no git on the agent side)", () => {
     expect(rec(r.body.intent).repo).toBe("demo");
   });
 });
+
+describe("forge routes: overview reports whether trunk has CI", () => {
+  it("pipeline.present follows flare.yml at trunk", async () => {
+    const h = harness();
+    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: false });
+    h.fake.repos.get("demo")?.files.set("flare.yml", "jobs:\n  t:\n    steps:\n      - run: npm test\n");
+    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: true });
+    expect((await harness({ artifacts: false }).call("GET", "/v1/forge/overview?repo=demo")).body.pipeline).toBeNull();
+  });
+});

@@ -235,3 +235,66 @@ export async function createMemberRepo(deps: CreateRepoDeps, owner: string, rawN
     return { ok: false, status: 502, code: "repo_create_failed", error: `repo created but seeding failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Add CI: trains land nothing without a flare.yml at trunk. Pick starter
+// steps from what the repo contains; the owner edits them later like any
+// other file. Pure, so tests cover every branch.
+// ---------------------------------------------------------------------------
+
+export interface RepoFacts {
+  packageJson: string | null;
+  lockfile: "npm" | "pnpm" | "yarn" | "bun" | null;
+  goMod: boolean;
+  cargoToml: boolean;
+  python: boolean;
+}
+
+export function starterPipeline(f: RepoFacts): { yaml: string; kind: string; steps: string[] } {
+  const steps: string[] = [];
+  let kind = "generic";
+  if (f.packageJson !== null) {
+    kind = "node";
+    let scripts: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(f.packageJson);
+      if (parsed && typeof parsed === "object" && "scripts" in parsed && parsed.scripts && typeof parsed.scripts === "object") scripts = parsed.scripts as Record<string, unknown>;
+    } catch {
+      scripts = {};
+    }
+    const has = (k: string) => typeof scripts[k] === "string" && !/no test specified/.test(String(scripts[k]));
+    const pm = f.lockfile === "pnpm" ? "pnpm" : f.lockfile === "yarn" ? "yarn" : f.lockfile === "bun" ? "bun" : "npm";
+    if (pm === "pnpm") steps.push("corepack enable", "pnpm install --frozen-lockfile");
+    else if (pm === "yarn") steps.push("corepack enable", "yarn install --immutable");
+    else if (pm === "bun") steps.push("npm install -g bun", "bun install --frozen-lockfile");
+    else steps.push(f.lockfile === "npm" ? "npm ci --no-audit --no-fund" : "npm install --no-audit --no-fund");
+    const run = (s: string) => (pm === "npm" ? `npm run ${s}` : `${pm} run ${s}`);
+    if (has("lint")) steps.push(run("lint"));
+    if (has("typecheck")) steps.push(run("typecheck"));
+    if (has("test")) steps.push(pm === "npm" ? "npm test" : `${pm} test`);
+    if (has("build")) steps.push(run("build"));
+    if (steps.length === (pm === "npm" ? 1 : 2)) steps.push("node --version");
+  } else if (f.goMod) {
+    kind = "go";
+    steps.push("go build ./...", "go test ./...");
+  } else if (f.cargoToml) {
+    kind = "rust";
+    steps.push("cargo build --locked", "cargo test --locked");
+  } else if (f.python) {
+    kind = "python";
+    steps.push("python3 -m pip install -r requirements.txt || python3 -m pip install .", "python3 -m pytest -q");
+  } else {
+    steps.push("echo 'Replace this step with the command that proves a change works (tests, build)'");
+  }
+  const yaml = [
+    "# Flare CI: every train runs these steps on the exact merged commit",
+    "# before main moves. Edit them like any other file (through an intent).",
+    "jobs:",
+    "  check:",
+    "    timeout-minutes: 15",
+    "    steps:",
+    ...steps.map((c) => `      - run: ${c.includes(": ") || c.startsWith("'") ? JSON.stringify(c) : c}`),
+    "",
+  ].join("\n");
+  return { yaml, kind, steps };
+}

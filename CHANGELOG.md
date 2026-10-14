@@ -6,6 +6,20 @@ tagged on `main` (`v0.1.0` is the first).
 
 ## [Unreleased]
 
+### Added (2026-10-15)
+
+- **Add CI in one click.** A repo with no `flare.yml` shows why its
+  intents wait in Ready, and **Add CI** commits a starter pipeline picked
+  from the repo (npm/pnpm/yarn/bun scripts, Go, Rust, Python), so trains
+  can verify and land.
+- **CI allowance for member repos:** 300 minutes of train CI a month per
+  repo a member owns. Over it, no train is cut (intents stay ready) and
+  the repo's feed says so once; the owner's repos are not capped.
+- **`forge commit`** in the CLI (0.2.0): the `commit_files` twin, so a
+  shell without git can land work. SDK: `FlareForge.commitFiles`.
+- Empty activity feeds offer Connect an agent and New goal instead of a
+  demo-only command.
+
 ### Added (2026-10-14, PRs #34-#42)
 
 - **Self-serve accounts.** Anyone who signs up is a member, not a

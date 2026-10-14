@@ -142,6 +142,8 @@ export interface ForgeServiceDeps {
   waitUntil: ((p: Promise<unknown>) => void) | null;
   loadPolicy(repo: string): Promise<{ policy: ForgePolicy; warning: string | null }>;
   trunkHead(repo: string): Promise<string>;
+  // Small text files at trunk head (null when absent or unreadable).
+  readTrunkFile(repo: string, path: string): Promise<string | null>;
   // commit_files: write a commit to a fork without git on the agent side
   // (forge-commit.ts on isomorphic-git); null = not wired here.
   commitFiles: CommitFilesPort | null;
@@ -191,7 +193,9 @@ export function forgeServiceDeps(input: {
     let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
     try {
       handle = await artifacts.get(repo);
-      const log = await handle.log({ limit: 1 });
+      // Trains land on main; a GitHub import's default branch may be
+      // master, so name the trunk ref instead of trusting the default.
+      const log = await handle.log({ ref: "main", limit: 1 });
       const hash = log[0]?.hash ?? "";
       return /^[0-9a-f]{40}$/.test(hash) ? hash : "";
     } catch {
@@ -242,6 +246,21 @@ export function forgeServiceDeps(input: {
       }
     },
     trunkHead,
+    async readTrunkFile(repo, path) {
+      if (!artifacts) return null;
+      let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
+      try {
+        const ref = (await trunkHead(repo)) || "main";
+        handle = await artifacts.get(repo);
+        const file = await handle.readFile({ ref, path });
+        if (!file || file.size > 256 * 1024) return null;
+        return await file.text();
+      } catch {
+        return null;
+      } finally {
+        disposeHandle(handle);
+      }
+    },
   };
 }
 
@@ -2361,7 +2380,7 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
   const r = repoArg(deps, p, args.repo);
   if (isOutcome(r)) return r;
   const base: ForgeArgs = { repo: r.repo };
-  const [snapshot, agents, goals, intents, recentTrains, failedTrains, conflicts, inbox, activity] = await Promise.all([
+  const [snapshot, agents, goals, intents, recentTrains, failedTrains, conflicts, inbox, activity, pipelineText] = await Promise.all([
     snapshotOp(deps, p, base),
     agentsOp(deps, p, base),
     listGoalsOp(deps, p, base),
@@ -2380,6 +2399,9 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
       .all<{ subject_kind: string; subject_id: string; kind: string; body: string; actor: string; created_at: string }>()
       .then((x) => x.results.map((l) => ({ subjectKind: l.subject_kind, subjectId: l.subject_id, kind: l.kind, body: l.body.slice(0, 400), actor: l.actor, at: l.created_at })))
       .catch(() => []),
+    // Trains land nothing without CI at trunk (invariant 2): the app
+    // says so instead of leaving intents silently in Ready.
+    deps.artifacts ? deps.readTrunkFile(r.repo, "flare.yml") : Promise.resolve(null),
   ]);
   if (!snapshot.ok) return snapshot;
   const trains = withFailedTrains(recentTrains, failedTrains);
@@ -2404,6 +2426,8 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
     conflicts: part("conflicts", conflicts),
     inbox: part("inbox", inbox),
     activity,
+    // null = unknown (no Artifacts binding); false = trains cannot land.
+    pipeline: deps.artifacts ? { present: !!(pipelineText && pipelineText.trim()) } : null,
     errors,
   });
 }

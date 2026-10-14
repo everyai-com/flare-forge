@@ -2427,6 +2427,39 @@ paths:
           description: In Forge under another account (repo_exists) or repo limit reached (repo_limit)
         '502':
           description: Import or lane setup failed (repo_create_failed)
+  /v1/me/repos/{repo}/ci:
+    post:
+      tags: [admin]
+      operationId: addRepoCi
+      summary: Add a starter flare.yml to a repo's trunk so trains can land (owner or admin)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Committed a starter pipeline chosen from the repo's files
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo: { type: string }
+                  sha: { type: string }
+                  kind: { type: string, enum: [node, go, rust, python, generic] }
+                  steps: { type: array, items: { type: string } }
+                  flareYml: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not the repo's owner (repo_not_allowed)
+        '409':
+          description: The repo already has a flare.yml
+        '502':
+          description: Commit failed (repo_create_failed)
   /v1/me/tokens:
     get:
       tags: [admin]

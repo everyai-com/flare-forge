@@ -63,7 +63,7 @@ No git on the agent's side: claim_intent ─► commit_files (the server commits
 | 4 | `claim_intent {intentId}` | `POST /v1/forge/intents/:id/claim` | `forge claim [--clone]` | write |
 | 5 | `heartbeat {intentId, refreshToken?}` | `POST /v1/forge/intents/:id/heartbeat` | `forge heartbeat` | write |
 | 6 | `report_push {intentId, sha}` | `POST /v1/forge/intents/:id/push` | `forge push` (runs `git push` first) | write |
-| 6' | `commit_files {intentId, message, files}` (no git; ≤50 files, 1 MB each, 5 MB total; commits to your fork, then runs report_push) | `POST /v1/forge/intents/:id/commit` | - | write |
+| 6' | `commit_files {intentId, message, files}` (no git; ≤50 files, 1 MB each, 5 MB total; commits to your fork, then runs report_push) | `POST /v1/forge/intents/:id/commit` | `forge commit -m <msg> <file>...` | write |
 | 7 | `mark_ready {intentId}` | `POST /v1/forge/intents/:id/ready` | `forge ready` | write |
 | - | `send_note {toIntent, text, fromIntent?}` | `POST /v1/forge/intents/:id/messages` | `forge note` | write |
 | - | `read_inbox {intentId}` or `{repo}` | `GET /v1/forge/intents/:id/messages`, `GET /v1/forge/inbox?repo` | `forge inbox` | read |
