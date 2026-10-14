@@ -38,7 +38,7 @@ export interface ForgeCliDeps {
   /** Writes a normal repo file (0644, parent dirs created): `forge init`. */
   writeFile: (path: string, text: string) => void;
   cwd: string;
-  /** How the user invoked the CLI (`npm run cli --`, `npx flare-forge`); default `cli`. */
+  /** How the user invoked the CLI (`npm run cli --`, `npx flare-forge-cli`); default `cli`. */
   cli?: string;
   /** Waits between push retries (tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;

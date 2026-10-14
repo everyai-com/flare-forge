@@ -1279,7 +1279,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
       return;
     }
     n.appendChild(h("strong", { text: "No repositories yet." }));
-    n.appendChild(h("span", { text: " Agent forge works on repos Flare hosts. Import one from the Repositories page (or try the guided demo with ?demo=1), then come back. To connect an agent now: npx flare-forge forge connect-agent --client claude" }));
+    n.appendChild(h("span", { text: " Agent forge works on repos Flare hosts. Import one from the Repositories page (or try the guided demo with ?demo=1), then come back. To connect an agent now: npx flare-forge-cli forge connect-agent --client claude" }));
     var go = h("button", { cls: "ghost", type: "button", text: "Open Repositories", on: { click: function () { location.hash = "#/repos"; } } });
     n.appendChild(go);
   }
@@ -3815,7 +3815,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
       ]), tabs, pre, h("div", { cls: "fx-actions" }, [copyB])])]);
       box.appendChild(card);
       pick(0);
-      if (!list.length) { box.appendChild(fxEmpty("no_agents", "No agents connected.", "Add the MCP server above, then ask the agent to declare an intent.", "npx flare-forge forge connect-agent --client claude")); return; }
+      if (!list.length) { box.appendChild(fxEmpty("no_agents", "No agents connected.", "Add the MCP server above, then ask the agent to declare an intent.", "npx flare-forge-cli forge connect-agent --client claude")); return; }
       var real = list.filter(function (a) { return a.client !== "sim"; });
       var rows = h("div", {});
       rows.appendChild(h("div", { cls: "fx-agent-row h", "aria-hidden": "true" }, [h("span"), h("span", { text: "Agent" }), h("span", { text: "Client" }), h("span", { text: "Current intent" }), h("span", { text: "Last tool call" }), h("span", { text: "Lease" }), h("span", { text: "Landed" })]));

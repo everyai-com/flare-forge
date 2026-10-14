@@ -1,5 +1,5 @@
 {
-  "name": "flare-forge",
+  "name": "flare-forge-cli",
   "version": "0.1.0",
   "description": "CLI for Flare Forge (intent-native git for many agents on one repo) and Flare Actions (its CI engine): declare intents, connect agents over MCP, verify runs, read digests.",
   "keywords": [
@@ -17,6 +17,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
+    "flare-forge-cli": "./bin/flare.mjs",
     "flare-forge": "./bin/flare.mjs",
     "flare": "./bin/flare.mjs"
   },

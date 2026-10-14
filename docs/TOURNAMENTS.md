@@ -106,7 +106,7 @@ npm run harness
 To watch it live, open
 `https://try-tournaments-flare-actions.<you>.workers.dev/dashboard` on
 the Races tab while the harness runs. To ask why, use the read-tier MCP
-tool `tournament_why` (`npx flare-forge mcp-config` prints the client
+tool `tournament_why` (`npx flare-forge-cli mcp-config` prints the client
 config).
 
 Clean up with `npx wrangler preview delete --name try-tournaments`. The

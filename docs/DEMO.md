@@ -299,7 +299,7 @@ slow, or the network drops):
 swarm:
 
 ```sh
-npx flare-forge forge connect-agent --client claude --agent judge   # no clone needed
+npx flare-forge-cli forge connect-agent --client claude --agent judge   # no clone needed
 # from a clone: npm run cli -- forge connect-agent --client claude --agent judge
 ```
 

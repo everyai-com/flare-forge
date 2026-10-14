@@ -14,7 +14,7 @@ workflow order, the response contract, and the safety rules.
 
 ```bash
 export FLARE_TOKEN=<runner token>          # RUNNER_TOKEN in .env, or mint one in the dashboard Access tab
-npx flare-forge forge connect-agent --client claude   # or codex | cursor; add --agent <name> --agents-md
+npx flare-forge-cli forge connect-agent --client claude   # or codex | cursor; add --agent <name> --agents-md
 ```
 
 This prints a one-line `claude mcp add ...`, a paste-ready config for
@@ -28,8 +28,8 @@ default agent identity on every verb.
 To wire the target repo for every agent at once, run this in it:
 
 ```bash
-npx flare-forge forge init --dry-run          # preview the diff
-npx flare-forge forge init [--client claude|codex|cursor] [--repo <forge repo>] [--skill]
+npx flare-forge-cli forge init --dry-run          # preview the diff
+npx flare-forge-cli forge init [--client claude|codex|cursor] [--repo <forge repo>] [--skill]
 ```
 
 It writes the §8 snippet (plus repo name and etiquette) into `AGENTS.md`
@@ -225,13 +225,13 @@ the MCP deps) pass through it.
 
 ## 8. AGENTS.md snippet for a target repo
 
-`npx flare-forge forge connect-agent --agents-md` prints the same block.
+`npx flare-forge-cli forge connect-agent --agents-md` prints the same block.
 
 ```markdown
 ## Flare Forge (how agents change this repo)
 
 This repo lands changes through Flare Forge intents, not branches or PRs.
-Use the `flare-forge` MCP server (or `npx flare-forge forge ...`). The loop:
+Use the `flare-forge` MCP server (or `npx flare-forge-cli forge ...`). The loop:
 
 1. `whats_happening {repo, paths}` - who is already touching these files?
 2. `declare_intent {repo, title, reasoning, footprint, accept}` - before editing; resolve `overlaps` with `send_note`.
