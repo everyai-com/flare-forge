@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import git from "isomorphic-git";
 import type { HttpClient } from "isomorphic-git";
-import { createToken } from "./db";
+import { createToken, getMirrorRow } from "./db";
 import { forgeSqliteDb } from "./forge.testkit";
 import { MemoryFS } from "./memory-fs";
 import { authIdentityFromToken, hashToken, MEMBER_TOKEN_SCOPE, memberRepos, NO_REPOS } from "./tokens";
-import { createMemberRepo, importGithubRepo, listOwnedRepos, MEMBER_REPO_LIMIT, parseGithubRepo, starterFiles, validateWorkspaceName, type WorkspaceGit } from "./workspace";
+import { createMemberRepo, FORGE_READY_DETAIL, importGithubRepo, prepareForgeTrunk, listOwnedRepos, MEMBER_REPO_LIMIT, parseGithubRepo, starterFiles, validateWorkspaceName, type WorkspaceGit } from "./workspace";
 
 // Real isomorphic-git on MemoryFS; only the network push is faked.
 function fakeGit(pushed: string[], failOn?: string): WorkspaceGit {
@@ -154,6 +154,16 @@ describe("importGithubRepo", () => {
       { remoteRef: "refs/notes/why", ref: "refs/notes/why" },
     ]);
     expect(await memberRepos(d.db, "github:sam")).toEqual(["ns/sam-app"]);
+    // Marked train-ready, so the first-push hook will not redo the work.
+    expect((await getMirrorRow(d.db, "sam/app"))?.detail).toBe(FORGE_READY_DETAIL);
+  });
+
+  it("prepareForgeTrunk is idempotent: a ready trunk pushes nothing", async () => {
+    const tip = "c".repeat(40);
+    const refs = [{ ref: "refs/heads/main", oid: tip }, { ref: "refs/notes/why", oid: tip }, ...Array.from({ length: 2 }, (_, i) => ({ ref: `refs/heads/forge/lane-${i}`, oid: tip }))];
+    const { d, pushed } = importDeps({ refs });
+    expect(await prepareForgeTrunk(d, "sam-app")).toEqual({ tip, lanesCreated: 0 });
+    expect(pushed).toEqual([]);
   });
 
   it("is idempotent for the owner and refuses other accounts", async () => {
