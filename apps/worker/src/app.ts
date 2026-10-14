@@ -496,7 +496,7 @@ body.explain .ex { display:block; }
     var p = (S.pub ? "/v1/public/forge/overview" : "/v1/forge/overview") + "?repo=" + encodeURIComponent(S.repo);
     api(p).then(function (r) {
       S.polls++;
-      if (r.status === 200 && r.body && r.body.snapshot) { S.data = r.body; S.lastAt = Date.now(); setLive(S.pub ? "on pub" : "on", S.pub ? "read-only · just now" : "live · just now"); banner(S.pub ? { text: "You are watching " + S.repo + " read-only. Sign in to review, approve and launch goals.", link: "Sign in", href: "/app?login=1" } : null); diffEvents(); updateNav(); renderPage(); return; }
+      if (r.status === 200 && r.body && r.body.snapshot) { S.data = r.body; S.lastAt = Date.now(); setLive(S.pub ? "on pub" : "on", S.pub ? "read-only · just now" : "live · just now"); banner(S.pub ? { text: "You are watching " + S.repo + " read-only. Sign in to review, approve and launch goals.", link: "Sign in", href: "/app?login=1" } : null); diffEvents(); updateNav(); if (shouldRerender()) renderPage(); return; }
       if (r.status === 401) { location.href = "/app?login=1"; return; }
       if (r.status === 429) { setLive("err", "rate limited"); return; }
       setLive("err", "error " + (r.body && r.body.code ? r.body.code : r.status));
@@ -504,6 +504,11 @@ body.explain .ex { display:block; }
       if (!S.data) renderPage();
     }).catch(function () { setLive("err", "offline, retrying"); });
   }
+  // Live pages redraw on every poll; pages with forms, fetched panels or
+  // a reader's place (settings, mcp, demo, how, code) redraw only on
+  // navigation or after an action. Never redraw under a typing user.
+  var LIVE_PAGES = { overview: 1, intents: 1, trains: 1, conflicts: 1, review: 1, agents: 1, repos: 1 };
+  function shouldRerender() { if (!LIVE_PAGES[S.page]) return !S.data || S.polls <= 1; var ae = document.activeElement; if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT") && byId("page").contains(ae)) return false; return true; }
   function banner(b) { var w = clear(byId("bannerWrap")); if (!b) return; var e = add(w, el("div")); e.id = "banner"; add(e, el("span", null, b.text)); add(e, el("span", "sp")); if (b.link) { var a = add(e, el("a", null, b.link)); a.href = b.href; } }
   function diffEvents() {
     var cur = {}; intents().forEach(function (i) { cur[i.id] = { state: i.state, title: i.title, agent: i.agent }; });
