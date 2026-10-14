@@ -535,7 +535,40 @@ export const ALTER_STATEMENTS = [
 
 let schemaPromise: Promise<void> | null = null;
 
+// A fingerprint of every DDL statement above. applySchema stores it in
+// app_settings after a full pass, and skips the pass when the stored
+// value matches: on a cold isolate the full pass is 100+ serial D1
+// round trips (6-8 s to first byte measured on the hosted demo,
+// 2026-10-14), while the check is one SELECT. Any edit to
+// SCHEMA_STATEMENTS or ALTER_STATEMENTS changes the fingerprint, so a
+// deploy that carries new DDL still runs the full pass once per
+// database and then stamps the new value.
+export const SCHEMA_FINGERPRINT_KEY = "schema_fingerprint";
+export const SCHEMA_FINGERPRINT = fingerprint([...SCHEMA_STATEMENTS, ...ALTER_STATEMENTS].join("\n"));
+
+// FNV-1a over UTF-16 code units: cheap, dependency-free, runs at module
+// init. Not a security hash; it only has to change when the DDL does.
+function fingerprint(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `v1-${h.toString(16).padStart(8, "0")}-${text.length}`;
+}
+
+async function schemaIsCurrent(db: Db): Promise<boolean> {
+  try {
+    const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?").bind(SCHEMA_FINGERPRINT_KEY).first<{ value: string }>();
+    return row?.value === SCHEMA_FINGERPRINT;
+  } catch {
+    // Fresh database: app_settings does not exist yet.
+    return false;
+  }
+}
+
 async function applySchema(db: Db): Promise<void> {
+  if (await schemaIsCurrent(db)) return;
   // Tables first, then additive columns, then indexes: an index may
   // cover a backfilled column (idx_runs_agent on ALTER-added
   // runs.agent), and creating it before the ALTER throws "no such
@@ -557,6 +590,10 @@ async function applySchema(db: Db): Promise<void> {
     if (!/^CREATE (UNIQUE )?INDEX/.test(sql)) continue;
     await db.prepare(sql).bind().run();
   }
+  await db
+    .prepare("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+    .bind(SCHEMA_FINGERPRINT_KEY, SCHEMA_FINGERPRINT, new Date().toISOString())
+    .run();
 }
 
 export function ensureSchema(db: Db): Promise<void> {

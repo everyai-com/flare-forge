@@ -10,6 +10,7 @@ class OldDb implements Db {
   runsColumns = new Set(["id", "repo", "sha", "event", "status", "created_at", "updated_at"]);
   createdTables = new Set<string>();
   createdIndexes = new Set<string>();
+  fingerprintStamped = false;
 
   prepare(sql: string) {
     const norm = sql.replace(/\s+/g, " ").trim();
@@ -41,6 +42,10 @@ class OldDb implements Db {
             return {};
           }
           if (alter) return {};
+          if (/^INSERT INTO app_settings \(key, value, updated_at\)/.test(norm)) {
+            this.fingerprintStamped = true;
+            return {};
+          }
           throw new Error(`unrouted run: ${norm.slice(0, 80)}`);
         },
       }),
@@ -60,5 +65,7 @@ describe("ensureSchema", () => {
       expect(db.createdTables.has(table)).toBe(true);
     }
     expect(db.createdIndexes.has("idx_credit_ledger_ref")).toBe(true);
+    // The full pass ends by stamping the DDL fingerprint (schema-fastpath.test.ts covers the skip).
+    expect(db.fingerprintStamped).toBe(true);
   });
 });
