@@ -285,6 +285,7 @@ describe("forge routes: the agent workflow (declare -> claim -> push -> ready)",
     expect(rec(story.body.agents).agents).toBeDefined();
     expect(rec(story.body.goals).goals).toBeDefined();
     expect(story.body.errors).toEqual({});
+    expect((story.body.activity as Array<{ kind: string }>).map((l) => l.kind)).toContain("declared");
     expect((await h.call("GET", "/v1/forge/overview")).status).toBe(400);
     const why = await h.call("GET", "/v1/forge/why?repo=demo&path=src/api/cache.ts&line=3");
     expect(why.body.exact).toBe(false);

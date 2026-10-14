@@ -217,6 +217,36 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
 .tabs button.on { color:var(--ink); border-bottom-color:var(--ink); }
 .tabs button:hover { background:none; color:var(--ink); }
 
+/* explain mode, lifecycle board, feed */
+.ex { display:none; color:var(--soft); font-size:12.5px; line-height:1.45; margin:-4px 0 10px; }
+body.explain .ex { display:block; }
+.page > .ex { margin:0 0 14px; padding:10px 12px; border:1px solid var(--line); border-left:3px solid var(--working); border-radius:8px; background:var(--card); color:var(--ink); }
+#explainBtn.on { background:var(--sel); color:var(--ink); border-color:var(--line2); }
+.board { display:grid; grid-template-columns:minmax(0,5fr) minmax(0,2fr); gap:12px; }
+.lanes { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+.sidelanes { display:grid; grid-template-rows:1fr 1fr; gap:8px; }
+.col { position:relative; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 10px 8px; min-width:0; min-height:150px; }
+.col.arrow::after { content:"→"; position:absolute; right:-10px; top:12px; color:var(--faint); font-size:14px; z-index:1; }
+.col .ch { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.col .ch .t { font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+.col .ch .n { margin-left:auto; font-weight:600; font-size:13px; }
+.col.human { border-color:var(--human); } .col.human .ch .t { color:var(--human); }
+.col.conflict { border-color:var(--conflict); } .col.conflict .ch .t { color:var(--conflict); }
+.col .cards { display:flex; flex-direction:column; gap:6px; }
+.col .none { color:var(--faint); font-size:12px; padding:6px 2px; }
+.icard { border:1px solid var(--line); border-radius:8px; padding:7px 8px; background:var(--bg); cursor:pointer; min-width:0; border-left-width:3px; }
+.icard:hover { border-color:var(--line2); background:var(--hover); }
+.icard.declared { border-left-color:var(--idle); } .icard.fork { border-left-color:var(--working); } .icard.ready, .icard.train { border-left-color:var(--train); } .icard.landed { border-left-color:var(--landed); } .icard.human { border-left-color:var(--human); } .icard.conflict { border-left-color:var(--conflict); }
+.icard .r1 { display:flex; align-items:center; gap:7px; min-width:0; } .icard .r1 .ava { width:20px; height:20px; font-size:9.5px; border-radius:6px; } .icard .r1 .t { font-size:12.5px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.icard .r2 { font-size:11px; color:var(--muted); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+.feed .fi { display:flex; align-items:flex-start; gap:9px; padding:6px 0; border-top:1px solid var(--line); font-size:12.5px; }
+.feed .fi:first-child { border-top:0; }
+.feed .fi.link { cursor:pointer; } .feed .fi.link:hover .t { color:var(--ink); text-decoration:underline; text-decoration-color:var(--line2); }
+.feed .fi .d { width:7px; height:7px; border-radius:50%; background:var(--working); flex:none; margin-top:6px; }
+.feed .fi .d.landed { background:var(--landed); } .feed .fi .d.conflict { background:var(--conflict); } .feed .fi .d.human { background:var(--human); } .feed .fi .d.train { background:var(--train); } .feed .fi .d.overlap { background:var(--overlap); }
+.feed .fi .t { flex:1; min-width:0; color:var(--soft); overflow-wrap:anywhere; }
+.feed .fi .w { color:var(--muted); font-size:11.5px; flex:none; }
+@media (max-width:1100px) { .board { grid-template-columns:1fr; } .lanes { grid-template-columns:repeat(2,minmax(0,1fr)); } .col.arrow::after { display:none; } .sidelanes { grid-template-rows:none; grid-template-columns:repeat(2,minmax(0,1fr)); } }
 /* drawer, modal, palette, toasts */
 #drawer { position:fixed; top:0; right:0; bottom:0; width:min(620px, 92vw); background:var(--panel); border-left:1px solid var(--line); box-shadow:var(--shadow); transform:translateX(100%); transition:transform .18s ease; z-index:30; display:flex; flex-direction:column; }
 #drawer.open { transform:none; }
@@ -293,6 +323,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   </aside>
   <div id="mainWrap">
     <div id="top"><div><h1 id="pageTitle">Overview</h1></div><span class="sub" id="pageSub"></span><span class="sp"></span>
+      <button class="ghost sm" id="explainBtn" title="Show what each part means">Explain</button>
       <button class="ghost sm" id="palBtn" title="Command palette">Search <kbd>⌘K</kbd></button>
       <span class="live" id="live"><span class="d"></span><span id="liveText">connecting…</span></span>
       <button class="sm" id="connectBtn">Connect agent</button>
@@ -311,7 +342,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
 (function () {
   "use strict";
   var qs = new URLSearchParams(location.search);
-  var S = { repo: qs.get("repo") || "", authed: null, admin: false, actor: "", openReg: false, pub: false, data: null, repos: null, prev: null, prevTrains: null, polls: 0, page: "overview", sel: null, filter: { state: "", q: "" }, code: { path: "", line: 0, text: null, history: null }, lastAt: 0, status: null, pubRepos: null, timer: null };
+  var S = { explain: true, repo: qs.get("repo") || "", authed: null, admin: false, actor: "", openReg: false, pub: false, data: null, repos: null, prev: null, prevTrains: null, polls: 0, page: "overview", sel: null, filter: { state: "", q: "" }, code: { path: "", line: 0, text: null, history: null }, lastAt: 0, status: null, pubRepos: null, timer: null };
   var PAGES = [["overview", "Overview", "◫"], ["intents", "Intents", "◇"], ["trains", "Trains", "▶"], ["conflicts", "Conflicts", "✕"], ["review", "Review", "!"], ["agents", "Agents", "◎"], ["repos", "Repos", "⌂"], ["code", "Code", "</>"], ["usage", "Usage", "$"], ["settings", "Settings", "⚙"]];
   var SUBS = { overview: "Who is doing what, right now", intents: "Every declared unit of work and where it is", trains: "Lanes verified as the exact merged SHA", conflicts: "Real merge conflicts, replayed and raced", review: "What policy routed to a human", agents: "Sessions that have touched this repo", repos: "Trunks on Artifacts in this namespace", code: "Read a file and ask why a line exists", usage: "Artifacts operations and CI minutes", settings: "Tokens, runners, spectators, agents" };
 
@@ -325,7 +356,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   function money(n) { if (typeof n !== "number") return "–"; return "$" + (n < 0.1 ? n.toFixed(4) : n < 10 ? n.toFixed(2) : n.toFixed(0)); }
   function num(n, d) { if (typeof n !== "number") return "–"; return d ? n.toFixed(d) : String(n); }
   function label(id) { var parts = String(id || "").split(/[^A-Za-z0-9]+/).filter(Boolean); if (!parts.length) return "?"; if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase(); return (parts[0][0] + parts[parts.length - 1].slice(-1)).toUpperCase(); }
-  function pill(state, text) { var p = el("span", "pill " + (state || "")); add(p, el("span", "d")); add(p, el("span", null, text || String(state || "").replace(/_/g, " "))); return p; }
+  function pill(state, text) { var p = el("span", "pill " + (state || "")); add(p, el("span", "d")); add(p, el("span", null, text || String(state || "").replace(/_/g, " "))); if (STATE_EX[state]) p.title = STATE_EX[state]; return p; }
   function chip(text, cls) { var c = el("span", "chip" + (cls ? " " + cls : ""), text); c.title = text; return c; }
   function ava(agent, on) { var a = el("span", "ava" + (on ? " on" : ""), label(agent)); a.title = agent || ""; return a; }
   function riskCls(r) { return r <= 30 ? "low" : r <= 60 ? "med" : "high"; }
@@ -380,6 +411,10 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
     setInterval(function () { if (S.lastAt && byId("live").classList.contains("on")) { var s = Math.round((Date.now() - S.lastAt) / 1000); byId("liveText").textContent = (S.pub ? "read-only · " : "live · ") + (s < 2 ? "just now" : s + "s ago"); } }, 1000);
   }
   byId("logoutBtn").addEventListener("click", function () { fetch("/v1/admin/logout", { method: "POST", credentials: "include" }).then(function () { location.href = "/app?login=1"; }, function () { location.href = "/app?login=1"; }); });
+  try { var exs = localStorage.getItem("ff-explain"); if (exs === "0") S.explain = false; } catch (e) {}
+  function applyExplain() { document.body.classList.toggle("explain", explainOn()); byId("explainBtn").classList.toggle("on", explainOn()); }
+  byId("explainBtn").addEventListener("click", function () { S.explain = !S.explain; try { localStorage.setItem("ff-explain", S.explain ? "1" : "0"); } catch (e) {} applyExplain(); renderPage(); });
+  applyExplain();
   byId("themeBtn").addEventListener("click", function () { var cur = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light"; document.documentElement.setAttribute("data-theme", cur); try { localStorage.setItem("ff-theme", cur); } catch (e) {} });
 
   // ---- repos + nav ----
@@ -468,8 +503,27 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
     var fn = { overview: pOverview, intents: pIntents, trains: pTrains, conflicts: pConflicts, review: pReview, agents: pAgents, repos: pRepos, code: pCode, usage: pUsage, settings: pSettings }[S.page];
     fn(root);
   }
+  // ---- explain mode + lifecycle vocabulary ----
+  var STAGES = [
+    { id: "declared", title: "Declared", states: ["draft"], ex: "An agent said what it will change, which paths and why. Overlaps with other live intents came back instantly, before any code." },
+    { id: "fork", title: "In a fork", states: ["claimed", "working"], ex: "Claimed: the agent got its own Artifacts fork and a 1-hour token for it. It edits and pushes there, never to main." },
+    { id: "ready", title: "Ready", states: ["ready"], ex: "Pushed and verified on the fork. Risk is scored from named terms and policy picks a route: auto-land, audit sample, or a human." },
+    { id: "train", title: "In a train", states: ["in_train"], ex: "Merged into a lane with other non-overlapping intents. CI runs on that exact combined commit." },
+    { id: "landed", title: "Landed", states: ["landed"], ex: "On main. The train's CI passed on this SHA, and a why record now answers for every line." },
+  ];
+  var SIDE = [
+    { id: "human", title: "Needs a human", states: ["awaiting_plan"], ex: "Protected paths need a plan approved before work starts; intents over the risk bar wait here after verification.", cls: "human" },
+    { id: "conflict", title: "Conflict", states: ["conflicted", "replaying"], ex: "A real merge conflict: the dropped side is replayed on the new trunk (by its agent, the resolver, or a race) and must pass CI again.", cls: "conflict" },
+  ];
+  var STATE_EX = { draft: "declared, not claimed yet", awaiting_plan: "waits for a human to approve the plan (protected path)", claimed: "has its own fork and token", working: "editing and pushing in its fork", ready: "verified on the fork, queued for a train", in_train: "merged into a lane, CI running on the exact SHA", landed: "on main, CI-verified", conflicted: "real merge conflict, waiting for replay", replaying: "being re-derived on the new trunk", abandoned: "closed without landing" };
+  var PAGE_EX = { overview: "Intents move left to right: declare → fork → ready → train → landed. Side lanes hold what needs a person or a replay. The feed below says what just happened in plain words.", intents: "One row per intent. The state says where it is in the loop; risk is a sum of named terms; footprint is declared versus actually touched (drift is highlighted).", trains: "A train takes ready intents, cuts them into lanes of non-overlapping files, merges each lane and runs CI on that exact commit. Green lands; a red lane is bisected out while the others rebuild.", conflicts: "Two intents changed the same lines. The train dropped one side; it is replayed on the new trunk and must pass CI again before it lands.", review: "Policy routes every verified intent: under the risk bar it lands itself, a sample is audited after, protected paths and anything over the bar wait for you here.", agents: "Every agent that touched this repo, what it is working on, and how to connect your own with one line.", repos: "Trunks live in Cloudflare Artifacts. Agents never push to them; only CI-verified trains move main.", code: "Read any file on main and click a line: Forge walks it back to the commit, the intent, the goal, the reasoning and the CI run that verified it.", usage: "Every Artifacts operation, counted from Cloudflare's own events and priced per landed change, plus CI minutes.", settings: "Tokens for agents, a pairing code for a runner that executes train CI, which repos spectators may watch, and your account." };
+  function explainOn() { return !!S.explain; }
+  function ex(parent, text) { if (!text) return null; var e = add(parent, el("div", "ex", text)); return e; }
+  function pageExplain(root) { ex(root, PAGE_EX[S.page]); }
+  function stateOf(i) { return i.state === "awaiting_plan" ? "awaiting_plan" : i.state; }
   function pOverview(root) {
-    var c = counters(), d = S.data, need = d.inbox && d.inbox.metrics ? d.inbox.metrics.needs_you || 0 : 0;
+    var c = counters(), d = S.data, need = d.inbox && d.inbox.metrics ? d.inbox.metrics.needs_you || 0 : 0; var m = byIdMap();
+    pageExplain(root);
     var g = add(root, el("div", "grid g6"));
     add(g, stat("Agents active", num(c.agents), agents().length + " seen"));
     add(g, stat("Intents live", num(c.intents), (c.overlaps_caught || 0) + " overlaps caught"));
@@ -477,23 +531,83 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
     add(g, stat("Needs you", String(need), "plan + landing approvals", need ? "warn" : ""));
     add(g, stat("Landed today", num(c.landed_today), "via CI-verified trains", "good"));
     add(g, stat("Main red", num(c.main_red_minutes), "never, by construction", "", "min"));
+    // Lifecycle board: where every intent is, left to right.
+    var all = intents(); var escalated = {}; inboxItems().forEach(function (x) { if (x.it.bucket === "needs_you" && x.it.reason !== "plan") escalated[x.it.intent.id] = true; });
+    var board = add(root, el("div", "board")); board.style.marginTop = "12px";
+    var main = add(board, el("div", "lanes"));
+    STAGES.forEach(function (st, ix) { var col = add(main, el("div", "col" + (ix < STAGES.length - 1 ? " arrow" : ""))); var list = all.filter(function (i) { return st.states.indexOf(stateOf(i)) !== -1 && !escalated[i.id]; }); var h = add(col, el("div", "ch")); add(h, el("span", "t", st.title)); add(h, el("span", "n num", String(list.length))); ex(col, st.ex); var body = add(col, el("div", "cards")); if (!list.length) add(body, el("div", "none", st.id === "landed" ? "nothing yet" : "empty")); list.slice(0, 6).forEach(function (i) { body.appendChild(intentCard(i, st.id)); }); if (list.length > 6) { var more = add(body, el("button", "ghost sm", "+ " + (list.length - 6) + " more")); more.addEventListener("click", function () { S.filter.state = stateOf(list[6]); nav("#/intents"); }); } });
+    var side = add(board, el("div", "sidelanes"));
+    SIDE.forEach(function (st) { var col = add(side, el("div", "col " + st.cls)); var list = all.filter(function (i) { return st.states.indexOf(stateOf(i)) !== -1 || (st.id === "human" && escalated[i.id]); }); var h = add(col, el("div", "ch")); add(h, el("span", "t", st.title)); add(h, el("span", "n num", String(list.length))); ex(col, st.ex); var body = add(col, el("div", "cards")); if (!list.length) add(body, el("div", "none", "none")); list.slice(0, 4).forEach(function (i) { body.appendChild(intentCard(i, st.id)); }); });
     var sp = add(root, el("div", "split")); sp.style.marginTop = "12px";
     var left = add(sp, el("div")); var right = add(sp, el("div"));
-    var mapC = add(left, card("Repository map", "one cell per directory · head " + short(d.snapshot.headSha))); var map = add(mapC, el("div", "map")); var cells = d.snapshot.cells || [];
+    var feed = add(left, card("Activity", "newest first · live")); ex(feed, "Every step is written to a ledger as it happens. This is that ledger in plain words: who did what, and what Forge did in response."); renderActivity(feed);
+    var trC = add(right, card("Train track", d.snapshot.track && d.snapshot.track.current ? "one running" : "idle")); ex(trC, "Each row is one lane of a train: the merged commit it tested and whether it landed."); var trs = trains().slice(0, 4);
+    if (!trs.length) empty(trC, "No train yet", "A train is cut as soon as an intent is marked ready."); else { var rws = add(trC, el("div", "rows")); trs.forEach(function (t) { var r = add(rws, el("div", "row")); add(r, chip("lane " + t.lane)); var tt = add(r, el("div", "t")); add(tt, el("div", null, (t.intentIds || []).map(function (id) { return m[id] ? m[id].title : short(id); }).join(" + ") || "(empty)")); add(tt, el("div", "s", "base " + short(t.baseSha) + " → " + (t.headSha ? short(t.headSha) : "…") + " · " + ago(t.updatedAt))); add(r, pill(t.state)); r.addEventListener("click", function () { nav("#/trains/" + t.id); }); }); }
+    var nd = add(right, card("Needs a human", need ? need + " waiting" : "nothing")); nd.style.marginTop = "12px"; ex(nd, "What policy could not land on its own. One click approves; the decision is recorded and timed."); var items = inboxItems().filter(function (x) { return x.it.bucket === "needs_you"; });
+    if (!items.length) empty(nd, "Inbox clear", "Verified work under the risk bar lands itself."); else { var rows3 = add(nd, el("div", "rows")); items.slice(0, 5).forEach(function (x) { var r = add(rows3, el("div", "row")); add(r, ava(x.it.intent.agent, false)); var t = add(r, el("div", "t")); add(t, el("div", null, x.it.intent.title)); add(t, el("div", "s", x.it.why || x.it.reason || "")); add(r, riskEl(x.it.risk)); r.addEventListener("click", function () { nav("#/review/" + x.it.intent.id); }); }); }
+    var ops = d.snapshot.ops || {}; var oc = add(right, card("Artifacts bill", ops.status === "measured" ? "measured" : (ops.status || ""))); oc.style.marginTop = "12px"; ex(oc, "Git operations on Artifacts, counted from Cloudflare's events and priced per landed change.");
+    kv(oc, [["Ops / landed", num(ops.perLandedChange, 1)], ["Billable ops", num(ops.billable)], ["Cost so far", money(ops.usd)], ["Per change", money(ops.usdPerLandedChange)]]);
+    var ob = add(oc, el("button", "ghost sm", "Open usage →")); ob.style.marginTop = "8px"; ob.addEventListener("click", function () { nav("#/usage"); });
+    var mapC = add(root, card("Repository map", "one cell per directory · head " + short(d.snapshot.headSha))); mapC.style.marginTop = "12px"; ex(mapC, "Which directories live intents touch right now. Hatched means two intents overlap there; red is a real conflict; orange waits for a person."); var map = add(mapC, el("div", "map")); var cells = d.snapshot.cells || [];
     if (!cells.length) empty(map, "Nothing declared yet", "The map fills as intents declare footprints.");
     cells.slice(0, 40).forEach(function (x) { var cell = add(map, el("div", "cell " + (x.state || "idle"))); add(cell, el("div", "p", x.path)); add(cell, el("div", "s", (x.intents ? x.intents.length : 0) + " intent" + ((x.intents || []).length === 1 ? "" : "s") + (x.protected ? " · protected" : "") + (x.overlap_with && x.overlap_with.length ? " · overlaps " + x.overlap_with.length : ""))); cell.addEventListener("click", function () { if (x.intents && x.intents.length) nav("#/intents/" + x.intents[0]); }); });
     var lg = add(mapC, el("div", "legend")); [["working", "working"], ["overlap", "overlap"], ["conflict", "conflict"], ["human", "needs a human"], ["landed", "landed"]].forEach(function (p) { var s = add(lg, el("span")); var i = add(s, el("i")); i.style.background = "var(--" + p[0] + ")"; add(s, el("span", null, p[1])); });
-    var trC = add(left, card("Train track", d.snapshot.track && d.snapshot.track.current ? "one running" : "idle")); trC.style.marginTop = "12px"; var trs = trains().slice(0, 4); var m = byIdMap();
-    if (!trs.length) empty(trC, "No train yet", "A train is cut as soon as an intent is marked ready."); else { var rws = add(trC, el("div", "rows")); trs.forEach(function (t) { var r = add(rws, el("div", "row")); add(r, chip("lane " + t.lane)); var tt = add(r, el("div", "t")); add(tt, el("div", null, (t.intentIds || []).map(function (id) { return m[id] ? m[id].title : short(id); }).join(" + ") || "(empty)")); add(tt, el("div", "s", "base " + short(t.baseSha) + " → " + (t.headSha ? short(t.headSha) : "…") + " · " + ago(t.updatedAt))); add(r, pill(t.state)); r.addEventListener("click", function () { nav("#/trains/" + t.id); }); }); }
-    var now = add(right, card("Live intents", (d.snapshot.dots || []).length + " on the map")); var dots = d.snapshot.dots || [];
-    if (!dots.length) empty(now, "Quiet", "No intent is live. Start a swarm or connect an agent.", S.pub ? "" : "npm run forge:agents -- --mode scripted --count 6"); else { var rows2 = add(now, el("div", "rows")); dots.slice(0, 10).forEach(function (x) { var i = m[x.intent] || {}; var r = add(rows2, el("div", "row")); add(r, ava(x.agent, x.state === "working" || x.state === "claimed")); var t = add(r, el("div", "t")); add(t, el("div", null, i.title || x.intent)); add(t, el("div", "s mono", x.path)); add(r, pill(x.state)); r.addEventListener("click", function () { nav("#/intents/" + x.intent); }); }); }
-    var nd = add(right, card("Needs a human", need ? need + " waiting" : "nothing")); nd.style.marginTop = "12px"; var items = inboxItems().filter(function (x) { return x.it.bucket === "needs_you"; });
-    if (!items.length) empty(nd, "Inbox clear", "Verified work under the risk bar lands itself."); else { var rows3 = add(nd, el("div", "rows")); items.slice(0, 5).forEach(function (x) { var r = add(rows3, el("div", "row")); add(r, ava(x.it.intent.agent, false)); var t = add(r, el("div", "t")); add(t, el("div", null, x.it.intent.title)); add(t, el("div", "s", x.it.why || x.it.reason || "")); add(r, riskEl(x.it.risk)); r.addEventListener("click", function () { nav("#/review/" + x.it.intent.id); }); }); }
-    var ops = d.snapshot.ops || {}; var oc = add(right, card("Artifacts bill", ops.status === "measured" ? "measured" : (ops.status || ""))); oc.style.marginTop = "12px";
-    kv(oc, [["Ops / landed", num(ops.perLandedChange, 1)], ["Billable ops", num(ops.billable)], ["Cost so far", money(ops.usd)], ["Per change", money(ops.usdPerLandedChange)]]);
-    var ob = add(oc, el("button", "ghost sm", "Open usage →")); ob.style.marginTop = "8px"; ob.addEventListener("click", function () { nav("#/usage"); });
+  }
+  function intentCard(i, stage) { var cd = el("div", "icard " + (stage || "")); var top = add(cd, el("div", "r1")); add(top, ava(i.agent, i.state === "working")); add(top, el("span", "t", i.title)); var sub = add(cd, el("div", "r2")); add(sub, el("span", null, (i.agent || "") + " · risk " + num(i.risk) + (i.forkRepo ? " · " + i.forkRepo : "") + (i.state === "landed" && i.landedSha ? " · " + short(i.landedSha) : ""))); cd.title = i.title + " — " + (STATE_EX[i.state] || i.state); cd.addEventListener("click", function () { nav("#/intents/" + i.id); }); return cd; }
+  function sentence(l, m) {
+    var who = l.actor && /^[a-z0-9][\\w.-]{0,40}$/i.test(l.actor) && l.actor.indexOf("token:") !== 0 ? l.actor : (l.actor ? "operator" : "forge");
+    var it = l.subjectKind === "intent" ? m[l.subjectId] : null; var title = it ? it.title : (l.subjectKind === "intent" ? "an intent" : l.subjectKind + " " + short(l.subjectId));
+    var k = l.kind, b = l.body || "";
+    var tr = /^([a-z_]+) -> ([a-z_]+)$/.exec(b);
+    if (tr && (k === tr[2] || k === tr[2].replace(/_/g, " "))) {
+      if (l.subjectKind === "train") return ["train " + short(l.subjectId) + " " + (tr[2] === "landed" ? "landed its lane on main" : tr[2] === "verifying" ? "is verifying: CI runs on the merged commit" : tr[2] === "merging" ? "is merging its lane" : tr[2] === "aborted" ? "was aborted (a lane ahead went red; it rebuilds)" : tr[2] === "failed" ? "went red: CI failed on the merged commit" : "is now " + tr[2]), tr[2] === "landed" ? "landed" : (tr[2] === "failed" || tr[2] === "aborted") ? "conflict" : "train"];
+      return ["\u201c" + title + "\u201d " + (tr[2] === "landed" ? "landed on main" : tr[2] === "in_train" ? "joined a train" : tr[2] === "ready" ? "is ready for a train" : tr[2] === "working" ? "is being worked on in its fork" : tr[2] === "claimed" ? "was claimed" : tr[2] === "conflicted" ? "hit a merge conflict" : tr[2] === "replaying" ? "is being replayed on the new trunk" : tr[2] === "awaiting_plan" ? "waits for plan approval" : tr[2] === "draft" ? "is back to draft" : "moved to " + tr[2].replace(/_/g, " ")), tr[2] === "landed" ? "landed" : (tr[2] === "conflicted" || tr[2] === "replaying") ? "conflict" : tr[2] === "awaiting_plan" ? "human" : (tr[2] === "in_train" || tr[2] === "ready") ? "train" : "working"];
+    }
+    if (k === "routed") b = b.replace(/ *\\(run [^)]*\\) *$/, "");
+    switch (k) {
+      case "plan_approved": return [who + " approved the plan for \u201c" + title + "\u201d", "human"];
+      case "landing_approved": return [who + " approved landing \u201c" + title + "\u201d", "human"];
+      case "declared": return [who + " declared “" + b + "”", "working"];
+      case "claimed": return [who + " claimed " + (it ? "“" + it.title + "”" : "it") + " and got a fork" + (b.indexOf("->") !== -1 ? " (" + b.split("->")[1].trim() + ")" : ""), "working"];
+      case "pushed": return [who + " pushed " + short(b) + " to the fork of “" + title + "”", "working"];
+      case "ready": return [who + " marked “" + title + "” ready" + (b ? " · " + b : ""), "train"];
+      case "routed": return ["policy routed “" + title + "”: " + b, "train"];
+      case "overlap_caught": return ["overlap caught on “" + title + "”: " + b, "overlap"];
+      case "noted": return [who + " left a note on “" + title + "”", "overlap"];
+      case "plan": return [who + " approved the plan for “" + title + "”", "human"];
+      case "land_approved": return [who + " approved landing “" + title + "”", "human"];
+      case "review.sampled_ok": return [who + " audited “" + title + "”: agreed", "human"];
+      case "review.disagreed": return [who + " audited “" + title + "”: disagreed · " + b, "human"];
+      case "review.sent_back": return [who + " sent back “" + title + "” · " + b, "human"];
+      case "landing": case "landed": return ["“" + title + "” landed on main" + (b ? " · " + b : ""), "landed"];
+      case "train_commit": { var tc = b.split(/ +/); return [(l.subjectKind === "intent" ? "\u201c" + title + "\u201d was merged into train " + short(tc[0]) + " at " + short(tc[1] || "") : "train " + short(l.subjectId) + " merged its lane at " + short(tc[1] || tc[0])), "train"]; }
+      case "queued": return ["\u201c" + title + "\u201d queued for the next train" + (b ? " (" + b.replace(/=/g, " ").replace(/ +/g, " ") + ")" : ""), "train"];
+      case "probe_green": return ["train " + short(l.subjectId) + ": CI green on " + b, "landed"];
+      case "culprit": return ["train " + short(l.subjectId) + " bisected the culprit: " + b, "conflict"];
+      case "bisect": return ["train " + short(l.subjectId) + " bisecting: " + b, "conflict"];
+      case "rebuild": return ["train " + short(l.subjectId) + " rebuilt without the red lane: " + b, "train"];
+      case "requeued": return ["train " + short(l.subjectId) + " requeued: " + b, "train"];
+      case "abort_reason": case "auto_failed": return ["train " + short(l.subjectId) + " stopped: " + b, "conflict"];
+      case "opened": return ["conflict opened between two intents", "conflict"];
+      case "detected": return ["conflict: " + b, "conflict"];
+      case "resolved": return ["conflict resolved: " + b, "landed"];
+      case "llm_replay": return ["resolver replayed the dropped intent with AI: " + b, "overlap"];
+      case "race": case "decision": return ["resolution race: " + b, "train"];
+      case "session_forked": case "forked_from": return [who + " forked the session: " + b, "working"];
+      case "sha_mismatch": return ["push rejected on “" + title + "”: " + b, "conflict"];
+      case "tokens_revoked": return ["fork tokens revoked for “" + title + "”", "working"];
+      default: return [k.replace(/[_.]/g, " ") + (b ? ": " + b : ""), "working"];
+    }
+  }
+  function renderActivity(parent) {
+    var NOISE = { "notes.tip": 1, tokens_revoked: 1, forming: 1, "notes": 1 };
+    var list = ((S.data && Array.isArray(S.data.activity)) ? S.data.activity : []).filter(function (l) { return !NOISE[l.kind]; }); var m = byIdMap();
+    if (!list.length) { empty(parent, "Nothing has happened yet", "The first declared intent starts the ledger.", S.pub ? "" : "npm run forge:agents -- --mode scripted --count 6"); return; }
+    var box = add(parent, el("div", "feed"));
+    list.slice(0, 40).forEach(function (l) { var sx = sentence(l, m); var row = add(box, el("div", "fi")); add(row, el("span", "d " + sx[1])); var t = add(row, el("span", "t", sx[0])); add(row, el("span", "w", ago(l.at))); var href = l.subjectKind === "intent" ? "#/intents/" + l.subjectId : l.subjectKind === "train" ? "#/trains/" + l.subjectId : l.subjectKind === "conflict" ? "#/conflicts/" + l.subjectId : ""; if (href) { row.classList.add("link"); row.addEventListener("click", function () { nav(href); }); } });
   }
   function pIntents(root) {
+    pageExplain(root);
     var tb = add(root, el("div", "toolbar")); var q = add(tb, el("input")); q.type = "search"; q.placeholder = "Filter by title, agent, path…"; q.value = S.filter.q; q.addEventListener("input", function () { S.filter.q = q.value; renderPage(); var el2 = byId("page").querySelector("input[type=search]"); if (el2) { el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); } });
     var chips = add(tb, el("div", "chips")); var states = ["", "working", "ready", "in_train", "landed", "awaiting_plan", "conflicted", "replaying", "draft"]; var cnt = {}; intents().forEach(function (i) { cnt[i.state] = (cnt[i.state] || 0) + 1; });
     states.forEach(function (s) { if (s && !cnt[s]) return; var b = add(chips, el("button", S.filter.state === s ? "on" : "", (s || "all") + (s ? " " + cnt[s] : " " + intents().length))); b.addEventListener("click", function () { S.filter.state = s; renderPage(); }); });
@@ -510,6 +624,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
     ], list, function (i) { nav("#/intents/" + i.id); }, S.sel));
   }
   function pTrains(root) {
+    pageExplain(root);
     var c = counters(); var trs = trains(); var g = add(root, el("div", "grid g4"));
     add(g, stat("Landed today", num(c.landed_today), "intents on main"), "good"); add(g, stat("Trains", String(trs.length), trs.filter(function (t) { return t.state === "landed"; }).length + " landed"));
     add(g, stat("Red lanes", String(trs.filter(function (t) { return t.state === "failed"; }).length), "bisected out", trs.some(function (t) { return t.state === "failed"; }) ? "bad" : "")); add(g, stat("Main red", num(c.main_red_minutes), "trunk only moves to green", "", "min"));
@@ -525,6 +640,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
     ], trs, function (t) { nav("#/trains/" + t.id); }, S.sel));
   }
   function pConflicts(root) {
+    pageExplain(root);
     var list = conflicts(); var m = byIdMap();
     if (!list.length) { empty(root, "No merge conflict so far", "Two intents editing the same lines open one here; the dropped side is replayed on the new trunk and must pass CI again."); return; }
     add(root, table([
@@ -539,6 +655,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   }
   function inboxItems() { var inbox = S.data && S.data.inbox; var items = []; if (!inbox) return items; (inbox.groups || []).forEach(function (grp) { (grp.items || []).forEach(function (it) { items.push({ it: it, goal: grp.goal }); }); }); return items; }
   function pReview(root) {
+    pageExplain(root);
     var inbox = S.data.inbox; if (!inbox) { empty(root, "Inbox unavailable", S.data.errors && S.data.errors.inbox ? S.data.errors.inbox : ""); return; }
     var m = inbox.metrics || {}; var g = add(root, el("div", "grid g4"));
     add(g, stat("Needs you", num(m.needs_you), "plan approvals + escalations", m.needs_you ? "warn" : ""));
@@ -560,6 +677,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   }
   function approve(it, btn) { btn.disabled = true; btn.textContent = "approving…"; api(it.approve.endpoint, { method: "POST", body: {} }).then(function (r) { if (r.status < 300) { toast("human", "Approved: " + it.intent.title); poll(); } else { btn.disabled = false; btn.textContent = "retry"; toast("conflict", fail(r)); } }); }
   function pAgents(root) {
+    pageExplain(root);
     var list = agents(); var sp = add(root, el("div", "split")); var left = add(sp, el("div")); var right = add(sp, el("div"));
     var c = add(left, card("Agents on " + S.repo, list.length + " seen"));
     if (!list.length) empty(c, "No agent has touched this repo", "Connect one with the panel on the right, or run the scripted swarm.", S.pub ? "" : "npm run forge:agents -- --mode scripted --count 6");
@@ -587,6 +705,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
     render();
   }
   function pRepos(root) {
+    pageExplain(root);
     if (S.pub) { var c0 = add(root, card("Repo", "read-only")); kv(c0, [["Name", S.repo], ["Head", short(S.data.snapshot.headSha)]]); return; }
     var sp = add(root, el("div", "split")); var left = add(sp, el("div")); var right = add(sp, el("div"));
     var c = add(left, card("Artifacts repos", S.repos ? S.repos.length + " in " + (S.data.namespace || "namespace") : "loading…"));
@@ -605,6 +724,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   }
   // ---- code / why ----
   function pCode(root) {
+    pageExplain(root);
     var sp = add(root, el("div", "split")); var left = add(sp, el("div")); var right = add(sp, el("div"));
     var c = add(left, card("File", S.code.path || "pick a file")); var tb = add(c, el("div", "toolbar")); var inp = add(tb, el("input")); inp.type = "text"; inp.placeholder = "path:line"; inp.value = S.code.path ? S.code.path + (S.code.line ? ":" + S.code.line : "") : ""; var go = add(tb, el("button", "sm", "Ask why"));
     function ask() { var m = /^(.+?)(?::(\\d+))?$/.exec(inp.value.trim()); if (!m) return; var p = m[1], ln = Number(m[2] || 0); if (p !== S.code.path) { S.code.text = null; S.code.history = null; } S.code.path = p; S.code.line = ln || S.code.line || 1; loadCode(); }
@@ -639,6 +759,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   function renderHistory() { var h = byId("histRows"); if (!h) return; clear(h); var hc = byId("histCard"); if (S.pub) { hc.classList.add("hidden"); return; } if (!S.code.history) { add(h, el("div", "skel")); return; } if (!S.code.history.length) { add(h, el("div", "empty", "No commits.")); return; } S.code.history.forEach(function (c) { var r = add(h, el("div", "row")); var t = add(r, el("div", "t")); add(t, el("div", null, c.message || short(c.hash))); add(t, el("div", "s", (c.author || "") + " · " + short(c.hash) + (c.at ? " · " + ago(new Date(c.at * 1000).toISOString()) : ""))); if (c.intents && c.intents.length) { add(r, pill("landed", "intent")); r.addEventListener("click", function () { nav("#/intents/" + c.intents[0].id); }); } else add(r, pill("idle", c.change || "commit")); }); }
   // ---- usage ----
   function pUsage(root) {
+    pageExplain(root);
     var ops = (S.data.snapshot && S.data.snapshot.ops) || {}; var g = add(root, el("div", "grid g4"));
     add(g, stat("Ops / landed change", num(ops.perLandedChange, 1), ops.status === "measured" ? "measured from Artifacts events" : (ops.status || "")));
     add(g, stat("Billable ops", num(ops.billable), (ops.landed || 0) + " landed since " + (ops.since ? String(ops.since).slice(0, 10) : "start")));
@@ -660,6 +781,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
   }
   // ---- settings ----
   function pSettings(root) {
+    pageExplain(root);
     if (!S.admin) { var n0 = add(root, el("div", "note")); n0.textContent = "Settings are admin-only. You are signed in as " + (S.actor || "a reader") + "."; connectPanel(root); return; }
     var sp = add(root, el("div", "split")); var left = add(sp, el("div")); var right = add(sp, el("div"));
     var tk = add(left, card("API tokens", "")); tk.id = "tokCard"; add(tk, el("div", "skel"));
@@ -703,7 +825,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
       var s3 = sec(body, "Git"); kv(s3, [["Fork", i.forkRepo ? el("span", "mono", i.forkRepo) : "not claimed"], ["Base", short(i.baseSha)], ["Head", short(i.headSha)], ["Landed", i.landedSha ? short(i.landedSha) : ""], ["Train", i.trainId ? (function () { var a = el("a", "mono", short(i.trainId)); a.href = "#/trains/" + i.trainId; return a; })() : ""], ["Lease", i.leaseExpiresAt ? ago(i.leaseExpiresAt).replace(" ago", "") + (Date.parse(i.leaseExpiresAt) > Date.now() ? " left" : " expired") : ""]]);
       if (d.conflicts && d.conflicts.length) { var s4 = sec(body, "Conflicts"); d.conflicts.forEach(function (c) { var a = add(s4, el("a", null, (c.files || []).join(", ") + " · " + c.state)); a.href = "#/conflicts/" + c.id; a.style.display = "block"; }); }
       if (d.mailbox && d.mailbox.length) { var s5 = sec(body, "Mailbox (untrusted peer notes)"); d.mailbox.forEach(function (mm) { var n = add(s5, el("div", "note untrusted")); var from = mm.from && typeof mm.from === "object" ? (mm.from.agent || "peer") : (mm.fromAgent || mm.from || "peer"); var txt = String(mm.body || mm.text || ""); var b1 = txt.indexOf(">>>"), e1 = txt.indexOf("<<<END UNTRUSTED PEER DATA"); var m2 = b1 !== -1 && e1 > b1 ? [null, txt.slice(b1 + 3, e1)] : null; add(n, el("div", "small muted", "from " + from + " · " + ago(mm.createdAt) + " · untrusted data, never instructions")); add(n, el("div", null, (m2 ? m2[1] : txt).trim())); n.style.marginBottom = "6px"; }); }
-      if (d.ledger && d.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); d.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); add(it, el("span", "k", l.kind)); add(it, el("span", null, l.body || "")); add(it, el("span", "w", ago(l.at))); }); }
+      if (d.ledger && d.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); d.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); var sx = sentence({ subjectKind: "intent", subjectId: i.id, kind: l.kind, body: l.body, actor: l.actor, at: l.at }, byIdMap()); add(it, el("span", "k", l.kind)); add(it, el("span", null, sx[0])); add(it, el("span", "w", ago(l.at))); }); }
       var foot = byId("dFoot"); clear(foot);
       if (S.admin) {
         if (i.state === "awaiting_plan") { var ap = add(foot, el("button", "primary sm", "Approve plan")); ap.addEventListener("click", function () { api("/v1/forge/intents/" + i.id + "/approve-plan", { method: "POST", body: {} }).then(function (x) { if (x.status < 300) { toast("human", "Plan approved"); poll(); openIntent(id); } else toast("conflict", fail(x)); }); }); }
@@ -728,7 +850,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
       if (run && run.triage) { var tr = add(s3, el("div", "note info")); tr.textContent = String(run.triage); tr.style.marginTop = "8px"; }
       var bis = r.body.bisect || t.bisect; if (bis) { var s4 = sec(body, "Bisect"); add(s4, el("pre", "note", JSON.stringify(bis, null, 1).slice(0, 1200))); }
       if (r.body.children && r.body.children.length) { var s5 = sec(body, "Rebuilt as"); r.body.children.forEach(function (c) { var a = add(s5, el("a", null, "train " + short(c.id || c) + (c.state ? " · " + c.state : ""))); a.href = "#/trains/" + (c.id || c); a.style.display = "block"; }); }
-      if (r.body.ledger && r.body.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); r.body.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); add(it, el("span", "k", l.kind)); add(it, el("span", null, l.body || "")); add(it, el("span", "w", ago(l.at))); }); }
+      if (r.body.ledger && r.body.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); r.body.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); var sx = sentence({ subjectKind: "train", subjectId: id, kind: l.kind, body: l.body, actor: l.actor, at: l.at }, m); add(it, el("span", "k", l.kind)); add(it, el("span", null, sx[0])); add(it, el("span", "w", ago(l.at))); }); }
     });
   }
   function openConflict(id) {
@@ -739,7 +861,7 @@ kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:5px;
       var v = add(body, el("div", "vs")); [c.a || {}, c.b || {}].forEach(function (sd, ix) { if (ix === 1) add(v, el("div", "x", "✕")); var s = add(v, el("div", "side")); add(s, el("div", "t", sd.title || short(sd.intent))); add(s, el("div", "s small muted", (sd.agent || "") + (sd.state ? " · " + sd.state : "") + (sd.landed ? " · landed" : ""))); if (sd.why) add(s, el("div", "small soft", sd.why)).style.marginTop = "4px"; if (sd.intent) { var a = add(s, el("a", "small", "open →")); a.href = "#/intents/" + sd.intent; } });
       var s1 = sec(body, "Resolution"); kv(s1, [["State", c.state], ["Resolver", c.resolverAgent || "unclaimed"], ["Attempts", c.attempts !== undefined ? String(c.attempts) : ""], ["Resolution SHA", c.resolutionSha ? short(c.resolutionSha) : ""], ["Opened", ago(c.createdAt)]]);
       add(s1, el("div", "small muted", "A resolution replays the dropped intent on the new trunk and must pass CI as its own exact SHA before it lands. Races run several attempts and keep the verified winner.")).style.marginTop = "8px";
-      if (r.body.ledger && r.body.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); r.body.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); add(it, el("span", "k", l.kind)); add(it, el("span", null, l.body || "")); add(it, el("span", "w", ago(l.at))); }); }
+      if (r.body.ledger && r.body.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); r.body.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); var sx = sentence({ subjectKind: "conflict", subjectId: id, kind: l.kind, body: l.body, actor: l.actor, at: l.at }, byIdMap()); add(it, el("span", "k", l.kind)); add(it, el("span", null, sx[0])); add(it, el("span", "w", ago(l.at))); }); }
       var foot = byId("dFoot"); clear(foot); if (!S.pub && (c.state === "open")) { var cl = add(foot, el("button", "sm", "Claim for replay")); cl.addEventListener("click", function () { api("/v1/forge/conflicts/" + c.id + "/claim", { method: "POST", body: {} }).then(function (x) { if (x.status < 300) { toast("conflict", "Claimed; replay instructions in nextSteps"); openConflict(id); } else toast("conflict", fail(x)); }); }); }
     });
   }

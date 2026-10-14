@@ -2275,7 +2275,7 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
   const r = repoArg(deps, p, args.repo);
   if (isOutcome(r)) return r;
   const base: ForgeArgs = { repo: r.repo };
-  const [snapshot, agents, goals, intents, trains, conflicts, inbox] = await Promise.all([
+  const [snapshot, agents, goals, intents, trains, conflicts, inbox, activity] = await Promise.all([
     snapshotOp(deps, p, base),
     agentsOp(deps, p, base),
     listGoalsOp(deps, p, base),
@@ -2283,6 +2283,14 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
     listTrainsOp(deps, p, { ...base, limit: 12 }),
     listConflictsOp(deps, p, { ...base, limit: 20 }),
     storyInboxOp(deps, p, base),
+    // The repo-wide ledger, newest first: the app's activity feed reads
+    // it as plain sentences ("agent-4 declared …", "train cut …").
+    deps.db
+      .prepare("SELECT subject_kind, subject_id, kind, body, actor, created_at FROM forge_ledger WHERE repo = ? ORDER BY created_at DESC LIMIT 80")
+      .bind(r.repo)
+      .all<{ subject_kind: string; subject_id: string; kind: string; body: string; actor: string; created_at: string }>()
+      .then((x) => x.results.map((l) => ({ subjectKind: l.subject_kind, subjectId: l.subject_id, kind: l.kind, body: l.body.slice(0, 400), actor: l.actor, at: l.created_at })))
+      .catch(() => []),
   ]);
   if (!snapshot.ok) return snapshot;
   const errors: Record<string, string> = {};
@@ -2305,6 +2313,7 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
     trains: part("trains", trains),
     conflicts: part("conflicts", conflicts),
     inbox: part("inbox", inbox),
+    activity,
     errors,
   });
 }
