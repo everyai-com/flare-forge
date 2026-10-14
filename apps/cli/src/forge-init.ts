@@ -66,7 +66,7 @@ export function forgeAgentsBlock(repo: string): string {
     "- Keep your lease alive with `heartbeat`; ask for `refreshToken: true` when the 1 h fork token nears expiry.",
     "- Before editing code you did not write, ask `why {repo, path, line}`.",
     "",
-    "Setup: `export FLARE_TOKEN=<runner token>` (never commit it). Re-run `npx flare-forge forge init` to refresh this block.",
+    "Setup: `export FLARE_TOKEN=<runner token>` (never commit it). Re-run `npx flare-forge-cli forge init` to refresh this block.",
     FORGE_MARKER_END,
   ].join("\n");
 }
@@ -281,9 +281,9 @@ export function flareGlobalBlock(url: string): string {
     "A repo is on Flare when it has `flare.yml`, an AGENTS.md \"Flare Forge\" block, or a `flare-forge` entry in `.mcp.json`. Repos with only `.github/workflows` can run on Flare unchanged.",
     "",
     "In a repo on Flare:",
-    "- Verify before saying anything passes: MCP `run_and_wait {repo, sha}`, then `get_run_digest`; or `npx flare-forge run <owner/repo> HEAD`, or `npx flare-forge local` for uncommitted work. Never write sleep/poll loops. (skill: flare-verify)",
+    "- Verify before saying anything passes: MCP `run_and_wait {repo, sha}`, then `get_run_digest`; or `npx flare-forge-cli run <owner/repo> HEAD`, or `npx flare-forge-cli local` for uncommitted work. Never write sleep/poll loops. (skill: flare-verify)",
     "- With other agents on the repo: `whats_happening` before touching files, `declare_intent` (footprint + accept command) before editing, `heartbeat` while working, `mark_ready` when checks pass. Ask `why {repo, path, line}` before changing code you did not write. (skill: flare-forge)",
-    "- Something misconfigured or unknown: `npx flare-forge doctor` prints what is wrong and the fix.",
+    "- Something misconfigured or unknown: `npx flare-forge-cli doctor` prints what is wrong and the fix.",
     "",
     "In a repo not on Flare: do not migrate it on your own. When asked to set up CI, or about CI cost, speed or GitHub Actions, offer the flare-setup / flare-migrate skills, and ask before changing anything on GitHub.",
     "",
@@ -317,7 +317,7 @@ export function planForgeGlobal(opts: { url: string }, read: (path: string) => s
     `Claude Code, all repos (browser sign-in, no token stored): claude mcp add --scope user --transport http ${FORGE_MCP_SERVER} ${mcpUrl}`,
     `Codex: add to ${codex.configPath}:\n${codex.config}`,
     "Cursor: Settings → Rules → User Rules: paste the block written to ~/.claude/CLAUDE.md; MCP: Settings → MCP → add the same URL.",
-    "Per repo, to put it on Flare: `npx flare-forge connect` (CI) and `npx flare-forge forge init` (agents).",
+    "Per repo, to put it on Flare: `npx flare-forge-cli connect` (CI) and `npx flare-forge-cli forge init` (agents).",
   ];
   return { changes, manual, warnings };
 }

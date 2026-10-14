@@ -21,15 +21,15 @@ Cheapest path first; the full playbook is
 
 ```bash
 # 1. No account, no server: run the repo's existing .github/workflows here
-npx flare-forge local
-npx flare-forge import .github/workflows/ci.yml   # compatibility report
+npx flare-forge-cli local
+npx flare-forge-cli import .github/workflows/ci.yml   # compatibility report
 
 # 2. With a Flare deployment (the human deploys once, see below)
 #    The human mints a one-time code in dashboard Settings → Pair a runner
-npx flare-forge login --url https://<their-worker>.workers.dev --code XXXX-XXXX
+npx flare-forge-cli login --url https://<their-worker>.workers.dev --code XXXX-XXXX
 #    (saves FLARE_ACTIONS_URL + RUNNER_TOKEN to ./.env; keep it gitignored)
-npx flare-forge connect --dry-run   # plan, change nothing
-npx flare-forge connect             # dispatch HEAD, report the verdict
+npx flare-forge-cli connect --dry-run   # plan, change nothing
+npx flare-forge-cli connect             # dispatch HEAD, report the verdict
 
 # 3. Wire the verify loop into your MCP client (OAuth, or a Bearer token)
 claude mcp add --transport http flare https://<their-worker>.workers.dev/mcp
@@ -126,15 +126,15 @@ password. Env wins, and Connect refuses while any of them is set.
 
 </details>
 
-## One command: `npx flare-forge connect`
+## One command: `npx flare-forge-cli connect`
 
 From any repo, with `FLARE_ACTIONS_URL` pointed at your deployment:
 
 ```bash
-npx flare-forge connect              # probe, explain the wiring, dispatch HEAD, report the verdict
-npx flare-forge connect --dry-run    # print the plan, change nothing
-npx flare-forge connect owner/repo --wire          # also create the repo webhook (needs GITHUB_TOKEN + FLARE_ADMIN_TOKEN)
-npx flare-forge connect owner/repo --init --wire   # also scaffold flare.yml from the detected stack
+npx flare-forge-cli connect              # probe, explain the wiring, dispatch HEAD, report the verdict
+npx flare-forge-cli connect --dry-run    # print the plan, change nothing
+npx flare-forge-cli connect owner/repo --wire          # also create the repo webhook (needs GITHUB_TOKEN + FLARE_ADMIN_TOKEN)
+npx flare-forge-cli connect owner/repo --init --wire   # also scaffold flare.yml from the detected stack
 ```
 
 `connect` detects your stack and pipeline, probes the deployment,
@@ -206,19 +206,19 @@ command ends the same way (a failed run points at `explain`, an empty
 list at `connect`, an error at the fix), in the form you typed.
 
 ```bash
-npx flare-forge doctor                     # start here: what is set up, and the one next step
-npx flare-forge forge <verb>               # Forge: goal|declare|claim|push|ready|status|why|inbox|conflicts|trains|connect-agent|init
-npx flare-forge runs                       # list runs
-npx flare-forge local [job]                # run flare.yml here (no server, warm cache)
-npx flare-forge run <repo> <sha|--source>  # dispatch, wait, print the digest (exit 1 on failure)
-npx flare-forge logs|explain|watch <runId> # inspect a run
-npx flare-forge flaky|bottlenecks <repo>   # failure rates; slowest checks
-npx flare-forge races|claim|verdict        # resolution races
-npx flare-forge import <workflow.yml>      # Actions -> flare.yml
-npx flare-forge login                      # pair this machine (writes .env)
+npx flare-forge-cli doctor                     # start here: what is set up, and the one next step
+npx flare-forge-cli forge <verb>               # Forge: goal|declare|claim|push|ready|status|why|inbox|conflicts|trains|connect-agent|init
+npx flare-forge-cli runs                       # list runs
+npx flare-forge-cli local [job]                # run flare.yml here (no server, warm cache)
+npx flare-forge-cli run <repo> <sha|--source>  # dispatch, wait, print the digest (exit 1 on failure)
+npx flare-forge-cli logs|explain|watch <runId> # inspect a run
+npx flare-forge-cli flaky|bottlenecks <repo>   # failure rates; slowest checks
+npx flare-forge-cli races|claim|verdict        # resolution races
+npx flare-forge-cli import <workflow.yml>      # Actions -> flare.yml
+npx flare-forge-cli login                      # pair this machine (writes .env)
 ```
 
-`npx flare-forge --help` lists every command. Every command accepts
+`npx flare-forge-cli --help` lists every command. Every command accepts
 `--json` (one versioned envelope on stdout; `next:` lines are for
 people and never appear in it).
 

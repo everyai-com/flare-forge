@@ -164,13 +164,13 @@ calls that forges could standardize on. That is the layer Forge is.
 ```bash
 export FLARE_ACTIONS_URL=https://<your-flare>.workers.dev
 export FLARE_TOKEN=<runner token>                     # never commit it
-npx flare-forge doctor                                # checks setup; ends with one next: command
-npx flare-forge forge connect-agent --client claude   # or codex | cursor
-npx flare-forge forge init                            # AGENTS.md block + .mcp.json for this repo
+npx flare-forge-cli doctor                                # checks setup; ends with one next: command
+npx flare-forge-cli forge connect-agent --client claude   # or codex | cursor
+npx flare-forge-cli forge init                            # AGENTS.md block + .mcp.json for this repo
 ```
 
 To make every repo and agent on a machine know Flare at once, run
-`npx flare-forge forge init --global`. For other GitHub orgs and
+`npx flare-forge-cli forge init --global`. For other GitHub orgs and
 Cloudflare accounts, see [docs/EVERYWHERE.md](docs/EVERYWHERE.md).
 
 `connect-agent` prints a one-line `claude mcp add ...` and the workflow
@@ -273,8 +273,8 @@ in [docs/ACTIONS.md](docs/ACTIONS.md).
 
 Clone the repo and point any coding agent at it:
 [AGENTS.md](AGENTS.md) teaches it the stack, commands, architecture
-and conventions. For your own repos, `npx flare-forge forge init` wires
-Forge, `npx flare-forge init` scaffolds a `flare.yml` plus an AGENTS.md
+and conventions. For your own repos, `npx flare-forge-cli forge init` wires
+Forge, `npx flare-forge-cli init` scaffolds a `flare.yml` plus an AGENTS.md
 snippet for the CI verify loop, and the skills in [`skills/`](skills)
 (`flare-forge`, `flare-migrate`, `flare-verify`, `flare-setup`) work in Claude Code,
 Codex and Cursor. [`llms.txt`](llms.txt) is the model-readable index.

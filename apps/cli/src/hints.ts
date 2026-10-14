@@ -58,7 +58,7 @@ export function missingConfigMessage(missing: string[], loc: EnvLocation | undef
 }
 
 // How the user ran the CLI, so every "next:" line is copy-pasteable:
-// `npm run cli --` from a clone, `npx flare-forge` via npx, or the
+// `npm run cli --` from a clone, `npx flare-forge-cli` via npx, or the
 // installed bin name (`flare`, `flare-forge`). Falls back to the
 // in-repo form.
 export function cliInvocation(argv: readonly string[], env: Env): string {
@@ -66,9 +66,9 @@ export function cliInvocation(argv: readonly string[], env: Env): string {
   if (env["npm_lifecycle_event"] === "start" && env["npm_package_name"] === "flare-forge") return "npm start --";
   const script = (argv[1] ?? "").split(/[\\/]/).pop() ?? "";
   const bin = script.replace(/\.m?js$/, "");
-  if (env["npm_command"] === "exec") return "npx flare-forge";
+  if (env["npm_command"] === "exec") return "npx flare-forge-cli";
   if (bin === "flare" || bin === "flare-forge") return bin;
-  if (script === "cli.mjs") return "npx flare-forge";
+  if (script === "cli.mjs") return "npx flare-forge-cli";
   return "npm run cli --";
 }
 
