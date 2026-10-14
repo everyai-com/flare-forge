@@ -169,6 +169,26 @@ describe("dashboard <-> API contract", () => {
     expect(approved).toEqual([id]);
   });
 
+  it("serves the intent-detail extras the dashboard renders: abandon, session, diff", async () => {
+    const h = harness();
+    const d = await h.call("POST", "/v1/forge/intents", { repo: "demo", title: "Edit w", footprint: ["w.ts"], reasoning: "r", agent: "alpha" });
+    const id = rec(d.body.intent).id as string;
+    // unclaimed: no fork, so no session and no diff yet (rendered as muted lines)
+    const sess = (await h.call("GET", `/v1/forge/intents/${id}/session?limit=1000`)).body;
+    expect(sess).toMatchObject({ intentId: id, session: null });
+    expect(typeof sess.note).toBe("string");
+    const diff = await h.call("GET", `/v1/forge/intents/${id}/diff`);
+    expect(diff.status).toBeGreaterThanOrEqual(400);
+    expect(typeof diff.body.code).toBe("string");
+    // the dashboard's Abandon button: admin (fxCanAct) on someone else's intent
+    const ab = await h.call("POST", `/v1/forge/intents/${id}/abandon`, { repo: "demo" }, ADMIN);
+    expect(ab.status).toBe(200);
+    expect(ab.body).toMatchObject({ intentId: id, state: "abandoned" });
+    expect(rec((await h.call("GET", `/v1/forge/intents/${id}`)).body.intent).state).toBe("abandoned");
+    // a second click is a stale-state refusal, never a second transition
+    expect((await h.call("POST", `/v1/forge/intents/${id}/abandon`, { repo: "demo" }, ADMIN)).body.code).toBe("stale_state");
+  });
+
   it("train list/detail carry lanes and stages", async () => {
     const h = harness();
     const d = await h.call("POST", "/v1/forge/intents", { repo: "demo", title: "Edit z", footprint: ["z.ts"], reasoning: "r", agent: "alpha" });

@@ -354,6 +354,33 @@ button kbd { margin-left: 6px; }
 .fx-shared { background-image: repeating-linear-gradient(45deg, var(--tint-overlap) 0 4px, transparent 4px 8px); border: 1px solid var(--st-overlap); border-radius: 4px; padding: 0 4px; }
 .fx-hunk { margin: 0; padding: 6px 8px; background: var(--code-bg); color: var(--code-ink); border-radius: 6px; font: 500 12px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .fx-hunk .add { color: var(--st-landed); } .fx-hunk .del { color: var(--st-conflict); }
+/* intent diff (read-only patch), path history, abandon confirm */
+.fx-diff-sum { margin: 0 0 8px; font: 500 12.5px var(--mono); color: var(--soft); }
+.fx-diff-file { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 12px 0 4px; font-size: 12.5px; }
+.fx-diff-file:first-child { margin-top: 0; }
+.fx-diff-file .st { font: 700 11px/16px var(--mono); min-width: 18px; text-align: center; border-radius: 4px; border: 1px solid var(--line-strong); color: var(--st-working); }
+.fx-diff-file .st.added { color: var(--st-landed); border-color: var(--st-landed); }
+.fx-diff-file .st.deleted { color: var(--st-conflict); border-color: var(--st-conflict); }
+.fx-diff-n { font: 500 12px var(--mono); }
+.fx-diff-pre { margin: 0; padding: 6px 0; background: var(--code-bg); color: var(--code-ink); border: 1px solid var(--line); border-radius: 6px; font: 500 12px/1.5 var(--mono); overflow: auto; max-height: 480px; }
+.fx-diff-pre span { display: block; min-width: max-content; padding: 0 10px; white-space: pre; }
+.fx-diff-pre .add { background: var(--tint-landed); box-shadow: inset 3px 0 0 var(--st-landed); }
+.fx-diff-pre .del { background: var(--tint-conflict); box-shadow: inset 3px 0 0 var(--st-conflict); }
+.fx-diff-pre .hunk { color: var(--st-train); background: var(--tint-train); }
+.fx-hist { list-style: none; margin: 0; padding: 0; }
+.fx-hist li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.fx-hist li:first-child { border-top: none; }
+.fx-hist-c { font: 600 11px var(--mono); color: var(--st-working); }
+.fx-hist-c.added { color: var(--st-landed); } .fx-hist-c.deleted { color: var(--st-conflict); }
+.fx-hist-m { flex: 1 1 220px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-hist-a { font-size: 12px; }
+.fx-hist-i { display: inline-flex; gap: 4px; }
+.fx-steplog.full { max-height: 420px; overflow-y: auto; }
+.fx-plan-md { margin: 0 0 10px; font-size: 12.5px; }
+.fx-plan-md summary { cursor: pointer; color: var(--soft); font: 500 12px var(--mono); }
+.fx-plan-md pre { margin-top: 6px; }
+.fx-confirm { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.fx-confirm-q { font-size: 12.5px; color: var(--danger); flex-basis: 100%; }
 .fx-race { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; padding: 12px 14px; }
 .fx-racecard { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 500 12.5px var(--mono); color: var(--soft); display: flex; flex-direction: column; gap: 4px; }
 .fx-racecard.win { border-color: var(--ink); }
@@ -771,7 +798,7 @@ body.fx-stagemode .fx-notice { display: none; }
 .fx-whyform { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .fx-whyfiles { list-style: none; margin: 0; padding: 0; columns: 2 240px; font-size: 12.5px; }
 .fx-whyfiles li { padding: 2px 0; break-inside: avoid; }
-body.fx-public [data-action="approve_plan"], body.fx-public [data-action="send_back"], body.fx-public [data-action="review_sample"], body.fx-public [data-action="mark_ready"], body.fx-public [data-action="send_note"], body.fx-public [data-action="fork_session"], body.fx-public [data-action="claim_conflict"], body.fx-public [data-action="plan_goal"], body.fx-public [data-action="declare_intent"], body.fx-public [data-action="select_item"], body.fx-public [data-action="explore_demo"], body.fx-public #fxBulk, body.fx-public #fxComposerOverlay, body.fx-public #fxNoteInput, body.fx-public #tabAgents, body.fx-public #tabBench, body.fx-public #tabSettings, body.fx-public #tabRuns, body.fx-public #tabHome, body.fx-public #tabRepos, body.fx-public #tabMerge, body.fx-public #tabTournaments, body.fx-public #logoutBtn, body.fx-public .fx-demo-tag { display: none !important; }
+body.fx-public [data-action="approve_plan"], body.fx-public [data-action="approve_landing"], body.fx-public [data-action="abandon"], body.fx-public [data-action="load_full_session"], body.fx-public [data-action="send_back"], body.fx-public [data-action="review_sample"], body.fx-public [data-action="mark_ready"], body.fx-public [data-action="send_note"], body.fx-public [data-action="fork_session"], body.fx-public [data-action="claim_conflict"], body.fx-public [data-action="plan_goal"], body.fx-public [data-action="declare_intent"], body.fx-public [data-action="select_item"], body.fx-public [data-action="explore_demo"], body.fx-public #fxBulk, body.fx-public #fxComposerOverlay, body.fx-public #fxNoteInput, body.fx-public #tabAgents, body.fx-public #tabBench, body.fx-public #tabSettings, body.fx-public #tabRuns, body.fx-public #tabHome, body.fx-public #tabRepos, body.fx-public #tabMerge, body.fx-public #tabTournaments, body.fx-public #logoutBtn, body.fx-public .fx-demo-tag { display: none !important; }
 body.fx-public #fxRepo:disabled { opacity: 1; cursor: default; }
 body.fx-stagemode .fx-live-grid { grid-template-columns: minmax(0, 1fr) 380px; }
 @media (max-width: 1100px) {

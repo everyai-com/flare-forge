@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DASHBOARD_HTML, DASHBOARD_UI_ACTIONS, FORGE_MCP_TOOL_NAMES } from "./dashboard";
+import { DASHBOARD_HTML, DASHBOARD_UI_ACTIONS, FORGE_MCP_TOOL_NAMES, FORGE_REST_ACTIONS } from "./dashboard";
 import { FORGE_JS } from "./dashboard-forge-js";
 import { NEXT_MOVE_JS } from "./next-move";
 
@@ -145,7 +145,7 @@ describe("ux budget: modes", () => {
   });
 
   it("declares every new data-action", () => {
-    const allowed = new Set<string>([...FORGE_MCP_TOOL_NAMES, ...DASHBOARD_UI_ACTIONS]);
+    const allowed = new Set<string>([...FORGE_MCP_TOOL_NAMES, ...FORGE_REST_ACTIONS, ...DASHBOARD_UI_ACTIONS]);
     for (const a of ["toggle_mode", "toggle_more", "show_more", "open_section"]) expect(allowed).toContain(a);
     for (const m of DASHBOARD_HTML.matchAll(/data-action="([a-z_]+)"/g)) expect(allowed, m[1]).toContain(m[1]);
   });
@@ -376,7 +376,7 @@ describe("ux budget: screens", () => {
 
   it("gives each open Settings section at most one primary form", () => {
     const panes = section("teamPane", "</section>") + section("settingsPane", "</section>");
-    const ids = ["setTokens", "setRunner", "setPeople", "setWebhook", "setNotify", "setGithub"];
+    const ids = ["setTokens", "setRunner", "setPeople", "setWebhook", "setNotify", "setGithub", "setSpectator"];
     for (let i = 0; i < ids.length; i++) {
       const start = panes.indexOf('<h2 id="' + ids[i] + '"');
       const next = i + 1 < ids.length ? panes.indexOf('<h2 id="' + ids[i + 1] + '"') : panes.length;

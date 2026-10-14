@@ -23,7 +23,14 @@ export const FORGE_MCP_TOOL_NAMES = [
   "approve_plan",
   "send_back",
   "review_sample",
+  "diff",
+  "history",
 ] as const;
+
+// Admin-only Forge REST verbs the dashboard calls that have no MCP tool
+// (human buttons, like approve_plan, but REST-only): POST
+// /v1/forge/intents/:id/approve-landing and /v1/forge/intents/:id/abandon.
+export const FORGE_REST_ACTIONS = ["approve_landing", "abandon"] as const;
 
 export const DASHBOARD_UI_ACTIONS = [
   "pause_live",
@@ -51,6 +58,8 @@ export const DASHBOARD_UI_ACTIONS = [
   "show_more",
   "open_section",
   "next_move",
+  // Forge intent detail: load the full flare/session (read-only GET)
+  "load_full_session",
 ] as const;
 
 // GET / -> /dashboard keeping the query string: ?demo=1, ?stage=1 and
@@ -897,6 +906,25 @@ ${FORGE_HOME_CARD_HTML}
 <p><strong><span class="pro-only">App connected — install it on your repos to run pushes.</span><span class="simple-only" data-simple="text">Next, pick which projects Flare checks.</span></strong></p>
 <p><a id="githubInstallLink" href="#" target="_blank" rel="noopener"><span class="pro-only">Install the GitHub App</span><span class="simple-only" data-simple="label">Pick projects on GitHub ↗</span></a></p>
 </div>
+<h2 id="setSpectator">Spectator mode</h2>
+<p class="muted" id="spectatorInfo">Public, read-only <span class="mono">/watch</span> pages for designated Forge repos, plus sandbox-only judge tokens.</p>
+<form id="spectatorForm" class="inline">
+<input id="spectatorRepos" placeholder="public repos, comma-separated (empty = off)" maxlength="500" aria-label="Public spectator repos">
+<button type="submit">Save public repos</button>
+</form>
+<p class="muted" id="spectatorLinks"></p>
+<form id="judgeTokenForm" class="inline simple-more">
+<input id="judgeRepo" placeholder="sandbox repo (default bookshelf-sandbox)" maxlength="100" aria-label="Judge sandbox repo">
+<input id="judgeDays" type="number" min="1" max="30" value="7" aria-label="Days the judge token stays valid">
+<button type="submit" class="s-second">Mint judge token</button>
+</form>
+<div id="judgeTokenBox" hidden>
+<p><strong>Shown once.</strong> Copy it now and share it privately, never on a public page.</p>
+<p><code id="judgeTokenValue" class="mono"></code> <button id="judgeTokenCopy" class="ghost" type="button">Copy</button></p>
+<p class="muted" id="judgeTokenNote"></p>
+</div>
+<p id="spectatorErr" class="err"></p>
+<p id="spectatorOk"></p>
 </section>
 <section id="tournamentsPane" class="card s-pane" hidden>
 <h2 class="s-head" data-simple="head">Agent races</h2>
@@ -1267,6 +1295,13 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
     t_invite_make_fail: "Couldn't make the link. Use an email that isn't here yet.",
     t_gh_user_fail: "Couldn't add them. Check the GitHub name.",
     t_settings_fail: "Couldn't load settings. Try again.",
+    t_watch_on: "Saved. Anyone can now watch these projects.",
+    t_watch_off: "Saved. Watching is off.",
+    t_watch_fail: "Couldn't save. Check the project names and try again.",
+    t_watch_demo: "Pretend data, so this was saved in this tab only.",
+    t_watch_admin: "Only the owner can change who may watch.",
+    t_judge_fail: "Couldn't make a guest key. Try again.",
+    t_judge_demo: "Pretend data, so no key was made.",
     t_secret_set: "The secret is set ✅",
     t_secret_none: "No secret yet. Make one up and save it.",
     t_secret_server: "The server keeps this secret. Nothing to do here.",
@@ -4227,7 +4262,69 @@ ${FORGE_OVERLAYS_HTML}<script type="application/json" id="fxFixtures">${forgeFix
       .catch(function () { err.textContent = plain("t_gh_user_fail", "Could not add user (valid GitHub username required)."); });
   });
 
+  // Spectator mode (forge-public.ts): GET|POST /v1/admin/forge/public and
+  // POST /v1/admin/forge/judge-token. The minted token is shown once in
+  // the page (textContent only), never logged or put in a URL, and is
+  // dropped from the DOM on the next Settings load. Demo: no server call.
+  var spectatorDemo = { repos: ["bookshelf"] };
+  function isForgeDemo() { return typeof FX !== "undefined" && !!FX.demo; }
+  function renderSpectator(d) {
+    var repos = (d && d.repos) || [];
+    document.getElementById("spectatorRepos").value = repos.join(", ");
+    var info = document.getElementById("spectatorInfo");
+    info.textContent = (isForgeDemo() ? "Demo, pretend data: " : "") + (repos.length ? "On for " + repos.join(", ") + "." : "Off: no repo is public.") + (d && d.judgeRepo ? " Judge tokens act only on " + d.judgeRepo + "." : "");
+    var links = document.getElementById("spectatorLinks");
+    while (links.firstChild) links.removeChild(links.firstChild);
+    repos.forEach(function (r) {
+      var a = el("a", location.origin + "/watch?repo=" + encodeURIComponent(r));
+      a.href = "/watch?repo=" + encodeURIComponent(r); a.target = "_blank"; a.rel = "noopener"; a.className = "mono";
+      links.appendChild(a); links.appendChild(document.createTextNode(" "));
+    });
+  }
+  function loadSpectator() {
+    document.getElementById("judgeTokenBox").hidden = true;
+    document.getElementById("judgeTokenValue").textContent = "";
+    document.getElementById("spectatorErr").textContent = "";
+    document.getElementById("spectatorOk").textContent = "";
+    if (isForgeDemo()) { renderSpectator({ repos: spectatorDemo.repos, judgeRepo: "bookshelf-sandbox" }); return; }
+    api("/v1/admin/forge/public").then(renderSpectator).catch(function (e) {
+      document.getElementById("spectatorInfo").textContent = plain("t_watch_admin", "Spectator settings need an admin session (" + ((e && e.message) || "unavailable") + ").");
+    });
+  }
+  document.getElementById("spectatorForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var err = document.getElementById("spectatorErr");
+    var ok = document.getElementById("spectatorOk");
+    err.textContent = ""; ok.textContent = "";
+    var repos = document.getElementById("spectatorRepos").value.split(",").map(function (x) { return x.trim(); }).filter(function (x) { return !!x; });
+    if (isForgeDemo()) { spectatorDemo.repos = repos; renderSpectator({ repos: repos, judgeRepo: "bookshelf-sandbox" }); ok.textContent = plain("t_watch_demo", "Demo: saved in this tab only (no server call)."); return; }
+    api("/v1/admin/forge/public", { method: "POST", body: JSON.stringify({ repos: repos }) })
+      .then(function (d) { renderSpectator(d); ok.textContent = d.enabled ? plain("t_watch_on", "Saved. Spectators can watch these repos.") : plain("t_watch_off", "Saved. Spectator mode is off."); })
+      .catch(function (e) { err.textContent = plain("t_watch_fail", "Could not save: " + ((e && e.message) || "error")); });
+  });
+  document.getElementById("judgeTokenForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var err = document.getElementById("spectatorErr");
+    var ok = document.getElementById("spectatorOk");
+    err.textContent = ""; ok.textContent = "";
+    var repo = document.getElementById("judgeRepo").value.trim();
+    var days = Number(document.getElementById("judgeDays").value) || 7;
+    var body = { ttlDays: Math.max(1, Math.min(30, Math.round(days))) };
+    if (repo) body.repo = repo;
+    if (isForgeDemo()) { ok.textContent = plain("t_judge_demo", "Demo: no token minted. An admin session mints a real one here, shown once."); return; }
+    api("/v1/admin/forge/judge-token", { method: "POST", body: JSON.stringify(body) })
+      .then(function (d) {
+        document.getElementById("judgeTokenValue").textContent = String(d.token || "");
+        document.getElementById("judgeTokenNote").textContent = "Runner scope on " + (d.repo || "the sandbox repo") + ", expires " + String(d.expiresAt || "").slice(0, 10) + ". Revoke early under API tokens (" + String(d.id || "") + ").";
+        document.getElementById("judgeTokenBox").hidden = false;
+      })
+      .catch(function (e) { err.textContent = plain("t_judge_fail", "Could not mint: " + ((e && e.message) || "error")); });
+  });
+  document.getElementById("judgeTokenCopy").addEventListener("click", function () {
+    copyText(document.getElementById("judgeTokenValue").textContent, document.getElementById("judgeTokenCopy"));
+  });
   function loadSettings() {
+    loadSpectator();
     api("/v1/admin/settings").then(function (s) {
       var info = document.getElementById("settingsInfo");
       info.textContent = "";
