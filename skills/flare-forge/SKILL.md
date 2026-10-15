@@ -13,7 +13,7 @@ description: >-
 ## Start here
 
 1. Discover: `whats_happening {repo, paths}` (CLI: `npx flare-forge-cli forge status <repo> <paths>`) shows who is editing what.
-2. Onboard: `declare_intent` → `claim_intent`; then the daily loop: edit, `git push`, `report_push`, `heartbeat`, `mark_ready` when checks pass.
+2. Onboard: `declare_intent` → `claim_intent`; then the daily loop: `commit_files` (no git needed; or edit + `git push` + `report_push`), `heartbeat`, `mark_ready` when checks pass. Repo names may be the Forge name (`everyai-com-gita`) or the GitHub one (`everyai-com/gita`).
 3. Expert: `why` before changing lines you did not write; conflicts replay with `claim_conflict` / `resolve_conflict`. Every result's `nextSteps` names the next tool.
 
 In a Forge repo the unit of work is an **intent** (title, reasoning,
@@ -49,7 +49,8 @@ Do what the hint says.
 | Read (no clone) | `read_file {repo, path}`, `diff {intentId}`, `history {repo, path}` | file or dir at a `sha`, an intent's patch, commits + intents that touched a path |
 | Declare | `declare_intent {repo, goalId?, title, reasoning, footprint, accept}` | `intent`, **`overlaps`**, `similar`, `nextSteps` |
 | Claim | `claim_intent {intentId}` | `forkRemote`, `token` (fork-scoped, 1 h), `cloneCommand`, `pushCommand`, `trailers` |
-| Work | edit in the clone, commit with `trailers` | |
+| Work, no git | `commit_files {intentId, message, files: [{path, content}]}` (or `{path, delete: true}`; CLI: `npx flare-forge-cli forge commit -m <msg> <file>...`) | the server commits to your fork with the trailers and runs `report_push` for you |
+| Work, with git | edit in the clone, commit with `trailers` | |
 | Push | `git push origin HEAD:main` (or `npx flare-forge-cli forge push`) | |
 | Report | `report_push {intentId, sha: <git rev-parse HEAD>}` | actual files, `drift`, risk terms, new overlaps |
 | Keep alive | `heartbeat {intentId}` every `heartbeatEverySeconds` | lease, peer notes, drift |
@@ -103,7 +104,7 @@ token and a fetch command for the source fork's pushed work. Then
   and someone may `fork_session` it.
 - **Long sessions:** fork tokens last 1 h. Call
   `heartbeat {intentId, refreshToken: true}` (or
-  `flare forge heartbeat --refresh-token`) for a fresh one.
+  `npx flare-forge-cli forge heartbeat --refresh-token`) for a fresh one.
 - **Commit with the trailers** from `claim_intent`
   (`Flare-Goal/Intent/Agent/Session`). They power `why`.
 - **Before editing code you did not write**, call
@@ -137,4 +138,5 @@ npx flare-forge-cli forge why <repo> src/api/x.ts:42
 ```
 
 There is also a REST equivalent at `/v1/forge/*` (see
-`docs/FORGE-AGENTS.md`).
+`docs/FORGE-AGENTS.md`; the plain-language guide for humans is
+`docs/WORKING-WITH-AGENTS.md`).

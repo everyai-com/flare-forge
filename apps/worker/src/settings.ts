@@ -186,13 +186,20 @@ export function parseHealOnFailure(value: unknown): { on: boolean } | { error: s
 
 // Open registration (off by default — invite links and the GitHub
 // allow-list stay the only way in). When on, anyone can create a
-// non-admin reader account from the dashboard, by email (no invite)
+// non-admin member account from the dashboard, by email (no invite)
 // or by GitHub login. Same boolean shape as above.
 export function parseOpenRegistration(value: unknown): { on: boolean } | { error: string } {
   if (typeof value === "boolean") return { on: value };
   if (value === "1" || value === "true") return { on: true };
   if (value === "0" || value === "false" || value === "" || value === null || value === undefined) return { on: false };
   return { error: "openRegistration must be a boolean" };
+}
+
+// A GitHub login: 1-39 chars, alphanumerics and single inner hyphens.
+export function parseGithubLogin(value: unknown): { login: string } | { error: string } {
+  const v = typeof value === "string" ? value.trim().replace(/^@/, "") : "";
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(v)) return { error: "adminGithubUser must be a GitHub login" };
+  return { login: v };
 }
 
 // Spend guardrails: monthly compute-minute caps per repo, entered as

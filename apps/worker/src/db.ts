@@ -1050,6 +1050,8 @@ export interface TokenRow {
   created_at: string;
   revoked_at: string | null;
   expires_at?: string | null;
+  // Member agent tokens: the signed-up account that minted it.
+  owner?: string | null;
 }
 
 export interface TokenPublic {
@@ -1065,13 +1067,13 @@ export interface TokenPublic {
 export async function createToken(
   db: Db,
   // expiresAt: optional hard expiry (ISO); null/absent = never expires.
-  token: { id: string; name: string; tokenHash: string; scopes: string; repos: string; expiresAt?: string | null },
+  token: { id: string; name: string; tokenHash: string; scopes: string; repos: string; expiresAt?: string | null; owner?: string | null },
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO api_tokens (id, name, token_hash, scopes, repos, created_at, revoked_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+      "INSERT INTO api_tokens (id, name, token_hash, scopes, repos, created_at, revoked_at, expires_at, owner) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
     )
-    .bind(token.id, token.name, token.tokenHash, token.scopes, token.repos, nowIso(), token.expiresAt ?? null)
+    .bind(token.id, token.name, token.tokenHash, token.scopes, token.repos, nowIso(), token.expiresAt ?? null, token.owner ?? null)
     .run();
 }
 

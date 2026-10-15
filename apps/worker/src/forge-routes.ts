@@ -38,6 +38,7 @@ import {
   planGoal,
   readInboxOp,
   reportPushOp,
+  commitFilesOp,
   resolveConflictOp,
   sendNoteOp,
   sessionOp,
@@ -51,6 +52,7 @@ import {
   readFileOp,
   diffOp,
   historyOp,
+  overviewOp,
   type ForgeArgs,
   type ForgeOp,
   type ForgeOutcome,
@@ -58,12 +60,16 @@ import {
   type ForgeServiceDeps,
 } from "./forge-service";
 import { meteredArtifacts } from "./coordinator";
+import git from "isomorphic-git";
+import http from "isomorphic-git/http/web";
+import { commitFilesToFork } from "./forge-commit";
+import { MemoryFS } from "./memory-fs";
 import type { FeedPort, ForgeCoordinatorPort, TrainPort, WhyPort } from "./forge-ports";
 import type { GoalPlanner } from "./forge-planner";
 import type { BridgeDeps } from "./forge-github";
 
 export interface ForgeIdentity {
-  scope: string; // admin | runner | readonly
+  scope: string; // admin | runner | readonly | member
   actor: string;
   repos: string[];
 }
@@ -90,6 +96,8 @@ export function forgeDepsFromEnv(env: WorkerEnv, adapters: ForgeAdapters = {}): 
     artifacts,
     namespace: env.ARTIFACTS_NAMESPACE ?? "",
     accountId: env.ARTIFACTS_ACCOUNT_ID ?? "",
+    // commit_files over the real git protocol (fresh MemoryFS per call).
+    commitFiles: (a) => commitFilesToFork({ git, http, fs: new MemoryFS() }, a),
     ...adapters,
   });
 }
@@ -110,7 +118,10 @@ function principalOf(ident: ForgeIdentity, request: Request): ForgePrincipal {
     actor: ident.actor,
     repos: ident.repos,
     isAdmin: ident.scope === "admin",
-    canWrite: ident.scope === "admin" || ident.scope === "runner",
+    canWrite: ident.scope === "admin" || ident.scope === "runner" || ident.scope === "member",
+    // Human review verbs: admins, and members signed in as themselves on
+    // the repos they own (their agent tokens cannot approve their work).
+    reviewer: ident.scope === "admin" || (ident.scope === "member" && !ident.actor.startsWith("token:")),
     agent: request.headers.get("X-Flare-Agent") ?? undefined,
   };
 }
@@ -170,6 +181,8 @@ export async function handleForgeRequest(
   if (heartbeatMatch && method === "POST") return write(heartbeatOp, { intentId: heartbeatMatch[1] });
   const pushMatch = /^\/v1\/forge\/intents\/([^/]+)\/push$/.exec(url.pathname);
   if (pushMatch && method === "POST") return write(reportPushOp, { intentId: pushMatch[1] });
+  const commitMatch = /^\/v1\/forge\/intents\/([^/]+)\/commit$/.exec(url.pathname);
+  if (commitMatch && method === "POST") return write(commitFilesOp, { intentId: commitMatch[1] });
   const readyMatch = /^\/v1\/forge\/intents\/([^/]+)\/ready$/.exec(url.pathname);
   if (readyMatch && method === "POST") return write(markReadyOp, { intentId: readyMatch[1] });
   // `/approve`, `/notes`, `/fork` are dashboard aliases of approve-plan,
@@ -200,6 +213,8 @@ export async function handleForgeRequest(
   if (method === "GET" && url.pathname === "/v1/forge/snapshot") return read(snapshotOp);
   // FORGE-UX §10 names the Live map endpoint `live`; same payload.
   if (method === "GET" && url.pathname === "/v1/forge/live") return read(snapshotOp);
+  // One read for the app shell: snapshot + agents + goals + intents + trains + conflicts + inbox.
+  if (method === "GET" && url.pathname === "/v1/forge/overview") return read(overviewOp);
   if (method === "GET" && url.pathname === "/v1/forge/why") return read(whyOp);
   // Server-side reads (no clone): file/dir, diff, path history.
   if (method === "GET" && url.pathname === "/v1/forge/read") return read(readFileOp);

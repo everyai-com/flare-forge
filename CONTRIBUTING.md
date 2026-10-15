@@ -74,7 +74,7 @@ Please don't report vulnerabilities in public issues — see
 
 ## Publishing to npm
 
-The CLI publishes as **`flare-forge`** (bins `flare-forge` and `flare`).
+The CLI publishes as **`flare-forge-cli`** (bins `flare-forge-cli`, `flare-forge` and `flare`).
 In the repo it runs from TypeScript source under Node type stripping; for
 npm, `npm run build:cli` bundles it with esbuild into one self-contained
 `apps/cli/dist/cli.mjs` (the runner SDK and the worker/seats modules it
@@ -82,10 +82,10 @@ imports are inlined, so the package has zero runtime dependencies).
 `prepublishOnly` rebuilds and smoke-runs the bundle.
 
 ```bash
-npm run pack:cli                          # build + flare-forge-X.Y.Z.tgz; inspect the file list
-npm install -g ./flare-forge-*.tgz && flare-forge forge help   # optional local smoke
+npm run pack:cli                          # build + flare-forge-cli-X.Y.Z.tgz; inspect the file list
+npm install -g ./flare-forge-cli-*.tgz && flare-forge-cli forge help   # optional local smoke
 npm login
-npm publish --workspace apps/cli          # publishes flare-forge
+npm publish --workspace apps/cli          # publishes flare-forge-cli
 ```
 
 Bump `version` in `apps/cli/package.json` and tag the release (`vX.Y.Z`).

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Db } from "./db";
 import { handleForgeRequest, type ForgeIdentity } from "./forge-routes";
-import { forgeServiceDeps, type ForgeServiceDeps } from "./forge-service";
-import { createTrain, openConflict, transitionIntent } from "./intents";
+import { forgeServiceDeps, normalizeForgeRepo, type CommitFilesPort, type ForgeServiceDeps } from "./forge-service";
+import { createTrain, openConflict, transitionIntent, transitionTrain } from "./intents";
 import { fakeArtifacts, forgeSqliteDb, sha, type FakeArtifacts } from "./forge.testkit";
 import type { FeedPort } from "./forge-ports";
 import type { GoalPlanner } from "./forge-planner";
@@ -10,6 +10,10 @@ import type { GoalPlanner } from "./forge-planner";
 const RUNNER: ForgeIdentity = { scope: "runner", actor: "token:runner1", repos: [] };
 const ADMIN: ForgeIdentity = { scope: "admin", actor: "email:pat@example.com", repos: [] };
 const READONLY: ForgeIdentity = { scope: "readonly", actor: "token:ro", repos: [] };
+// A self-serve member who owns ns/demo, its agent token, and a stranger.
+const MEMBER: ForgeIdentity = { scope: "member", actor: "email:sam@example.com", repos: ["ns/demo"] };
+const MEMBER_AGENT: ForgeIdentity = { scope: "member", actor: "token:sam-agent", repos: ["ns/demo"] };
+const STRANGER: ForgeIdentity = { scope: "member", actor: "email:eve@example.com", repos: ["-/-"] };
 
 interface Harness {
   db: Db;
@@ -18,7 +22,7 @@ interface Harness {
   call(method: string, path: string, body?: unknown, ident?: ForgeIdentity | null, headers?: Record<string, string>): Promise<{ status: number; body: Record<string, unknown> }>;
 }
 
-function harness(opts: { artifacts?: boolean; feed?: FeedPort; planner?: GoalPlanner } = {}): Harness {
+function harness(opts: { artifacts?: boolean; feed?: FeedPort; planner?: GoalPlanner; commitFiles?: (fake: FakeArtifacts) => CommitFilesPort } = {}): Harness {
   const db = forgeSqliteDb();
   const fake = fakeArtifacts("demo");
   const deps = forgeServiceDeps({
@@ -28,6 +32,7 @@ function harness(opts: { artifacts?: boolean; feed?: FeedPort; planner?: GoalPla
     accountId: "a".repeat(32),
     feed: opts.feed ?? null,
     planner: opts.planner ?? null,
+    commitFiles: opts.commitFiles ? opts.commitFiles(fake) : null,
   });
   return {
     db,
@@ -275,6 +280,18 @@ describe("forge routes: the agent workflow (declare -> claim -> push -> ready)",
     expect(snap.body.headSha).toBe(sha("0"));
     expect((snap.body.cells as Array<{ path: string; state: string }>).find((x) => x.path === "src/api")?.state).toBe("overlap");
     expect((await h.call("GET", "/v1/forge/live?repo=demo")).body.counters).toEqual(snap.body.counters);
+    // The app's single overview read bundles the other reads.
+    const story = await h.call("GET", "/v1/forge/overview?repo=demo");
+    expect(story.status).toBe(200);
+    expect(story.body.repo).toBe("demo");
+    expect(rec(rec(story.body.snapshot).counters)).toEqual(snap.body.counters);
+    expect((rec(story.body.intents).intents as unknown[]).length).toBe(2);
+    expect(rec(story.body.inbox).groups).toBeDefined();
+    expect(rec(story.body.agents).agents).toBeDefined();
+    expect(rec(story.body.goals).goals).toBeDefined();
+    expect(story.body.errors).toEqual({});
+    expect((story.body.activity as Array<{ kind: string }>).map((l) => l.kind)).toContain("declared");
+    expect((await h.call("GET", "/v1/forge/overview")).status).toBe(400);
     const why = await h.call("GET", "/v1/forge/why?repo=demo&path=src/api/cache.ts&line=3");
     expect(why.body.exact).toBe(false);
     expect((why.body.chain as Array<{ kind: string; id: string }>).find((x) => x.kind === "intent")?.id).toBe(aId);
@@ -366,6 +383,19 @@ describe("forge routes: conflicts, trains, fork sessions, feed", () => {
     expect((await h.call("GET", "/v1/forge/trains/nope")).status).toBe(404);
   });
 
+  it("keeps a bisected red lane in the overview after newer rebuilds", async () => {
+    const h = harness();
+    const red = await createTrain(h.db, { repo: "demo", lane: 0, baseSha: sha("0"), intentIds: ["bad"] });
+    expect(await transitionTrain(h.db, red.id, "forming", "merging")).toBe(true);
+    expect(await transitionTrain(h.db, red.id, "merging", "failed")).toBe(true);
+    await h.db.prepare("UPDATE trains SET created_at = ? WHERE id = ?").bind("2026-01-01T00:00:00.000Z", red.id).run();
+    for (let i = 0; i < 12; i++) await createTrain(h.db, { repo: "demo", lane: i + 1, baseSha: sha("0"), intentIds: [`i${i}`] });
+    const story = await h.call("GET", "/v1/forge/overview?repo=demo");
+    const trains = rec(story.body.trains).trains as Array<{ id: string; state: string }>;
+    expect(trains.length).toBe(13);
+    expect(trains.find((t) => t.id === red.id)?.state).toBe("failed");
+  });
+
   it("forks a session to continue another agent's work", async () => {
     const h = harness();
     const src = await declare(h, { title: "Half-done refactor", footprint: ["src/lib/**"], agent: "alpha" });
@@ -408,5 +438,93 @@ describe("forge routes: conflicts, trains, fork sessions, feed", () => {
     const wired = harness({ feed: { upgrade: async () => new Response("{}", { status: 200 }) } });
     expect((await wired.call("GET", "/v1/forge/feed?repo=demo")).status).toBe(426);
     expect((await wired.call("GET", "/v1/forge/feed?repo=demo", undefined, RUNNER, { Upgrade: "websocket" })).status).toBe(200);
+  });
+});
+
+describe("forge routes: self-serve members", () => {
+  it("members drive their own repo end to end and approve plans there; their agents cannot approve", async () => {
+    const h = harness();
+    h.fake.repos.get("demo")?.files.set(".flare/policy.yml", "protected: [\"src/auth/**\"]\n");
+    const d = await declare(h, { title: "Gate admin behind SSO", footprint: ["src/auth/sso.ts"], agent: "sam-agent" }, MEMBER_AGENT);
+    const id = rec(d.intent).id as string;
+    expect(rec(d.intent).state).toBe("awaiting_plan");
+    const byAgent = await h.call("POST", `/v1/forge/intents/${id}/approve-plan`, {}, MEMBER_AGENT);
+    expect(byAgent.body.code).toBe("admin_required");
+    const byOwner = await h.call("POST", `/v1/forge/intents/${id}/approve-plan`, {}, MEMBER);
+    expect(byOwner.status).toBe(200);
+    expect(rec(byOwner.body.intent).state).toBe("draft");
+    const claim = await h.call("POST", `/v1/forge/intents/${id}/claim`, { agent: "sam-agent" }, MEMBER_AGENT);
+    expect(claim.status).toBe(200);
+  });
+
+  it("other members cannot see, declare on, or approve in a repo they do not own", async () => {
+    const h = harness();
+    const d = await declare(h, { title: "Add x", footprint: ["x"] }, MEMBER);
+    const id = rec(d.intent).id as string;
+    const write = await h.call("POST", "/v1/forge/intents", { repo: "demo", title: "t", reasoning: "r", accept: "npm test", footprint: ["y"] }, STRANGER);
+    expect(write.body.code).toBe("repo_not_allowed");
+    expect((await h.call("GET", "/v1/forge/intents?repo=demo", undefined, STRANGER)).body.code).toBe("repo_not_allowed");
+    expect((await h.call("GET", `/v1/forge/intents/${id}`, undefined, STRANGER)).status).toBe(404);
+    expect((await h.call("POST", `/v1/forge/intents/${id}/approve-plan`, {}, STRANGER)).status).toBe(404);
+  });
+});
+
+describe("forge routes: commit_files (no git on the agent side)", () => {
+  it("commits to the claimed fork with trailers and runs report_push on the new sha", async () => {
+    const seen: Array<{ url: string; message: string; paths: string[] }> = [];
+    const h = harness({
+      commitFiles: (fake) => async (a) => {
+        seen.push({ url: a.url, message: a.message, paths: a.changes.map((c) => c.path) });
+        const fork = /\/([^/]+)\.git$/.exec(a.url)?.[1] ?? "";
+        fake.commit(fork, sha("7"), Object.fromEntries(a.changes.map((c) => [c.path, c.bytes ? new TextDecoder().decode(c.bytes) : ""])));
+        return { sha: sha("7"), parent: sha("0"), changed: a.changes.length };
+      },
+    });
+    const d = await declare(h, { title: "Cache pages", footprint: ["src/api/**"], agent: "alpha" });
+    const id = rec(d.intent).id as string;
+    const early = await h.call("POST", `/v1/forge/intents/${id}/commit`, { agent: "alpha", message: "m", files: [{ path: "src/api/a.ts", content: "x" }] });
+    expect(early.body.code).toBe("not_pushable");
+    expect((await h.call("POST", `/v1/forge/intents/${id}/claim`, { agent: "alpha" })).status).toBe(200);
+    const bad = await h.call("POST", `/v1/forge/intents/${id}/commit`, { agent: "alpha", message: "m", files: [{ path: "../etc/passwd", content: "x" }] });
+    expect(bad.body.code).toBe("invalid_request");
+    const out = await h.call("POST", `/v1/forge/intents/${id}/commit`, { agent: "alpha", message: "Cache the list endpoint", files: [{ path: "src/api/cache.ts", content: "export const ttl = 60;\n" }, { path: "docs/cache.md", content: "notes" }] });
+    expect(out.status).toBe(200);
+    expect(rec(out.body.committed)).toEqual({ sha: sha("7"), parent: sha("0"), files: 2 });
+    expect(rec(out.body.intent).headSha).toBe(sha("7"));
+    expect(seen[0].message).toContain(`Flare-Intent: ${id}`);
+    expect(seen[0].paths).toEqual(["src/api/cache.ts", "docs/cache.md"]);
+    // Same verification as a git push: the undeclared file is drift.
+    expect(rec(out.body.footprint ?? {}).drift ?? out.body.drift).toEqual(["docs/cache.md"]);
+    const other = await h.call("POST", `/v1/forge/intents/${id}/commit`, { agent: "beta", message: "m", files: [{ path: "a", content: "b" }] });
+    expect(other.body.code).toBe("not_owner");
+  });
+
+  it("explains when the deployment has no commit engine", async () => {
+    const h = harness();
+    const d = await declare(h, { title: "No engine", footprint: ["x"], agent: "alpha" });
+    const id = rec(d.intent).id as string;
+    await h.call("POST", `/v1/forge/intents/${id}/claim`, { agent: "alpha" });
+    expect((await h.call("POST", `/v1/forge/intents/${id}/commit`, { agent: "alpha", message: "m", files: [{ path: "x", content: "y" }] })).body.code).toBe("not_implemented");
+  });
+
+  it("accepts GitHub-style and namespaced repo names", async () => {
+    expect(normalizeForgeRepo("ns", "everyai-com/gita")).toBe("everyai-com-gita");
+    expect(normalizeForgeRepo("ns", "https://github.com/everyai-com/gita.git")).toBe("everyai-com-gita");
+    expect(normalizeForgeRepo("ns", "ns/demo")).toBe("demo");
+    expect(normalizeForgeRepo("ns", "demo")).toBe("demo");
+    const h = harness();
+    const r = await h.call("POST", "/v1/forge/intents", { repo: "ns/demo", title: "Namespaced name", reasoning: "r", accept: "npm test", footprint: ["z"] });
+    expect(r.status).toBe(201);
+    expect(rec(r.body.intent).repo).toBe("demo");
+  });
+});
+
+describe("forge routes: overview reports whether trunk has CI", () => {
+  it("pipeline.present follows flare.yml at trunk", async () => {
+    const h = harness();
+    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: false });
+    h.fake.repos.get("demo")?.files.set("flare.yml", "jobs:\n  t:\n    steps:\n      - run: npm test\n");
+    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: true });
+    expect((await harness({ artifacts: false }).call("GET", "/v1/forge/overview?repo=demo")).body.pipeline).toBeNull();
   });
 });

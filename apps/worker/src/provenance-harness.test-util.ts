@@ -82,6 +82,10 @@ export function harnessHttp(
         child.stdout.on("data", (c: Buffer) => chunks.push(c));
         child.on("error", reject);
         child.on("close", () => resolve(Buffer.concat(chunks)));
+        // http-backend may exit before reading all of stdin (e.g. an
+        // empty-pack push); the response is still complete, so a late
+        // EPIPE on the pipe is expected, not a failure.
+        child.stdin.on("error", () => undefined);
         child.stdin.end(input);
       });
       const sep = out.indexOf("\r\n\r\n");

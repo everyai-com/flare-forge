@@ -89,7 +89,8 @@ export async function ensureRepoMirror(deps: EnsureMirrorDeps): Promise<EnsureMi
   try {
     await artifacts.import({ source: { url: sourceUrl }, target: { name: mirror } });
   } catch (err) {
-    const code = codeOf(err);
+    // Some binding errors carry the reason only in the message.
+    const code = codeOf(err) || (/already exists/i.test(err instanceof Error ? err.message : String(err)) ? "ALREADY_EXISTS" : "");
     if (code === "ALREADY_EXISTS") {
       // Adopt: someone (an earlier push, the manual CLI) made it.
       try {

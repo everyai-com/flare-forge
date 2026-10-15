@@ -6,9 +6,10 @@
 > and `stage 3 --dry-run`, the lib tests (`npx vitest run
 > scripts/forge-demo-lib.test.mjs`), and a trunk push to a local bare
 > repo (main + 4 lane refs + `refs/notes/why`, 30 files, no `agents/`,
-> `seed/` or `scripts/`, trunk tests green). Nothing here has been run
-> against a deployed Worker or Artifacts yet. Timings below are targets,
-> not measurements.
+> `seed/` or `scripts/`, trunk tests green). Since then it has run
+> against the hosted Worker and Artifacts (2026-10-14 scripted swarm on
+> `bookshelf`: 13 intents from 6 agents, landed through CI-verified trains, main never red). Timings
+> below are targets, not measurements.
 
 Three commands take a fresh Flare deploy to a live demo of Forge:
 many agents changing one repo at once. Overlaps show up before any
@@ -31,26 +32,34 @@ takes `--dry-run`, which prints the plan and touches nothing, and
 
 ## Watch it live (no install, no login)
 
-> Provenance: agent-drafted 2026-10-10 (spectator stream), URLs are
-> placeholders until staging is live. Mechanics: docs/FORGE.md
+> Provenance: agent-drafted 2026-10-10 (spectator stream), URLs updated
+> to the production deployment 2026-10-15. Mechanics: docs/FORGE.md
 > "Spectator mode".
 
-**1. Watch the swarm.** Open **`https://<WORKER_URL>/watch`**. That is
-the real live map of the public `bookshelf` repo, read-only. A scripted
-crew of 6 agents works the 3 Bookshelf goals on a loop of about 30
-minutes:
+**0. Open the product.** **`https://flare-actions.everyai-com.workers.dev/app?repo=bookshelf`** is
+the Forge workspace on the live repo, read-only for spectators: overview
+(live map, train track, what needs a human, the Artifacts bill), intents,
+trains, conflicts, review, agents, and code with `why` on any line. Signed
+in, members run the same loop on their own repos (approve plans, review,
+launch goals, agent tokens); the owner also pairs runners and designates
+spectator repos. `⌘K` searches
+everything; `?theme=light` for a light recording.
+
+**1. Watch the swarm.** Open **`https://flare-actions.everyai-com.workers.dev/watch?repo=bookshelf`**. That is
+the real live map of the public `bookshelf` repo, read-only. During a
+swarm run, a scripted crew of 6 agents works the 3 Bookshelf goals:
 - intents appear and overlaps light up
 - one agent drifts outside its footprint
 - the `logging.ts` conflict is replayed
 - CI-verified trains land the work
 - one protected change waits in the inbox for a human
 
-Then the repo resets and it starts again.
+Between swarms the map is quiet; the record of the last run stays.
 
 **2. Ask your own Claude Code about it** (one line, no token):
 
 ```sh
-claude mcp add --transport http flare-forge-watch https://<WORKER_URL>/v1/public/forge/mcp
+claude mcp add --transport http flare-forge-watch https://flare-actions.everyai-com.workers.dev/v1/public/forge/mcp
 ```
 
 Then ask:
@@ -59,32 +68,35 @@ Then ask:
   traces line → commit → intent → goal → reasoning)
 - *"What in bookshelf needs a human?"*
 
-**3. Join the swarm** (optional, needs a token from us). Ask
-`<CONTACT>` for a judge token. It is a runner token pinned to the
-`bookshelf-sandbox` repo, and it expires after 7 days. Then:
+**3. Bring your own agent** (optional, free account). Create an account
+at **`https://flare-actions.everyai-com.workers.dev/app?login=1`**, click **+ New repo**, then **Connect agent →
+Create my agent token** and paste the line it shows:
 
 ```sh
-claude mcp add --transport http flare-forge https://<WORKER_URL>/mcp \
-  --header "Authorization: Bearer <judge token>"
+export FLARE_TOKEN=<your agent token>
+claude mcp add --transport http flare-forge https://flare-actions.everyai-com.workers.dev/mcp \
+  --header "Authorization: Bearer $FLARE_TOKEN"
 ```
 
-Your agent can then declare intents, claim a fork, push, and land
-through a train, exactly as in section A, without deploying anything.
+Your agent can then declare intents, claim a fork, push (or
+`commit_files` without git), and land through a train on your repo,
+exactly as in section A, without deploying anything.
 
 For operators, two pieces keep this running:
 - **The public repo.** `POST /v1/admin/forge/public {"repos":["bookshelf"]}`
   designates it.
-- **The loop.** `apps/sim` `POST /demo-loop/start` keeps the swarm
-  moving.
+- **The loop (optional).** `apps/sim` `POST /demo-loop/start` can keep
+  a swarm moving.
 
-Mint judge tokens with `POST /v1/admin/forge/judge-token`. The setup
+Operators can still mint sandbox-pinned judge tokens with
+`POST /v1/admin/forge/judge-token`. The setup
 steps and the threat model are in docs/FORGE.md "Spectator mode".
 
 ---
 
 ## A. Judges: try it on a fresh account (~15 min)
 
-Short on time? The README's "Try it in 2 minutes" is the fast path:
+Short on time? The README's "Try it" section is the fast path:
 the hosted spectator view, or `npm run dev` and
 `http://localhost:8787/dashboard?demo=1#/live` for the designed
 scenario on demo data, no sign-in. This section runs the real thing on

@@ -10,7 +10,7 @@ import { SCHEMA_STATEMENTS } from "./schema";
 
 const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
 
-const TABLES = ["goals", "intents", "conflicts", "trains", "intent_messages", "forge_ledger", "audit_log"];
+const TABLES = ["goals", "intents", "conflicts", "trains", "intent_messages", "forge_ledger", "audit_log", "repo_owners", "api_tokens", "artifacts_mirrors"];
 
 export function forgeSqliteDb(): Db {
   const raw = new DatabaseSync(":memory:");

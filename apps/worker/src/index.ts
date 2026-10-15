@@ -90,6 +90,8 @@ import {
   setRepoSecret,
   releaseWebhookDelivery,
   setMirrorDefaultBranch,
+  getMirrorRow,
+  setMirrorRow,
   setRunPrComment,
   setScheduleEnabled,
   setSetting,
@@ -110,6 +112,7 @@ import { commitFilesToNewBranch, deleteRunner, fetchChangedFiles, fetchJobLogDig
 import { processHealClaims, requestHeal } from "./heal";
 import { judgeFlaky } from "./judge";
 import { DASHBOARD_HTML, dashboardRedirectUrl } from "./dashboard";
+import { appHtml } from "./app";
 import { apiDocsPage } from "./apidocs";
 import { OPENAPI_YAML } from "./openapi-spec";
 import { llmsTxtFor } from "./llms";
@@ -123,7 +126,7 @@ import {
   validateSecretName,
   validateSecretValue,
 } from "./secrets";
-import { SETTING_KEYS, isBadgeHiddenRepo, parseAiGatewayId, parseBadgeHiddenRepos, parseBudgetMinutes, parseBudgetMode, parseBudgetKillMultiplier, parseFairSharePerRepo, parseFairSharePerAgent, parseAgentTag, parseGithubRunnerLabels, parseGithubRunnerMode, parseHealOnFailure, parseMcpWriteConfirm, parseOpenRegistration, parseRunnerGroupCache, parseStoredBudgets, parseSupersedeBranchRuns, parseTriageWebSearch, runnerGroupCacheGet, runnerGroupCacheSet, validateBillingApiToken, validateCloudEntitlements, validateCloudMetering, validateCloudflareAccountId, validateGithubRunnerGroupName, validateNotifyFromEmail, validateNotifyMode, validateNotifyWebhookUrl, validateRunnerVersion, validateTriageModel, validateTurnstileSecretKey, validateTurnstileSiteKey, validateWebhookSecret } from "./settings";
+import { SETTING_KEYS, isBadgeHiddenRepo, parseAiGatewayId, parseBadgeHiddenRepos, parseBudgetMinutes, parseBudgetMode, parseBudgetKillMultiplier, parseFairSharePerRepo, parseFairSharePerAgent, parseAgentTag, parseGithubRunnerLabels, parseGithubRunnerMode, parseHealOnFailure, parseMcpWriteConfirm, parseOpenRegistration, parseGithubLogin, parseRunnerGroupCache, parseStoredBudgets, parseSupersedeBranchRuns, parseTriageWebSearch, runnerGroupCacheGet, runnerGroupCacheSet, validateBillingApiToken, validateCloudEntitlements, validateCloudMetering, validateCloudflareAccountId, validateGithubRunnerGroupName, validateNotifyFromEmail, validateNotifyMode, validateNotifyWebhookUrl, validateRunnerVersion, validateTriageModel, validateTurnstileSecretKey, validateTurnstileSiteKey, validateWebhookSecret } from "./settings";
 import {
   addAllowedUser,
   beginOAuth,
@@ -157,6 +160,7 @@ import {
   validatePassword,
   verifyPassword,
 } from "./email";
+import { bridgeDecision, createBetterAuth } from "./better-auth";
 import {
   defaultPipeline,
   emptyProfiles,
@@ -192,6 +196,10 @@ import {
 } from "./ratelimit";
 import {
   authIdentityFromToken,
+  memberRepos,
+  MEMBER_TOKEN_SCOPE,
+  NO_REPOS,
+  type ApiTokenIdentity,
   hashToken,
   newTokenValue,
   normalizeRepos,
@@ -231,7 +239,8 @@ import { READ_CACHE_PREFIX } from "./read-cache";
 import { ARTIFACTS_EVENT, handleArtifactsPush, runnerCheckoutFor, type RunnerCheckout } from "./artifacts-push";
 import { forgeOpsLookups, handleArtifactsOpEvent, isAccountEventType } from "./forge-ops";
 import { coordinatorFor } from "./coordinator";
-import { ensureRepoMirror } from "./artifacts-mirrors";
+import { ensureRepoMirror, mirrorNameFor } from "./artifacts-mirrors";
+import { appendForgeLedger } from "./intents";
 import { resolvePairDedupe } from "./event-dedupe";
 import {
   claimAttempt,
@@ -271,9 +280,12 @@ import {
   validateMergeEnqueue,
 } from "./mergequeue";
 import git from "isomorphic-git";
-import http from "isomorphic-git/http/web";
 import { MemoryFS } from "./memory-fs";
-import { registerTrainDispatch, runTrainTick } from "./train-workflow";
+import { FORGE_READY_DETAIL, MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo, prepareForgeTrunk, starterPipeline } from "./workspace";
+import { commitFilesToFork } from "./forge-commit";
+import { normalizeForgeRepo } from "./forge-service";
+import http from "isomorphic-git/http/web";
+import { registerTrainDispatch, registerTrainHold, runTrainTick } from "./train-workflow";
 import { cronMatches, validateCron } from "./cron";
 import { reportJobCheck } from "./checks";
 import {
@@ -312,7 +324,7 @@ import { forgeDepsFromEnv, handleForgeRequest } from "./forge-routes";
 import { forgeAdaptersFromEnv } from "./forge-adapters";
 import { bindingRateLimiter, handleForgePublicRequest } from "./forge-public"; // forge-spectator
 import { reconcileBridge, syncPushFromGithub } from "./forge-github-env";
-import { listAppRepos, loadSetupFacts, setupSteps } from "./setup";
+import { listAppRepos, loadSetupFacts, publicGithubRepo, repoInstallationAccess, setupSteps } from "./setup";
 import { resolveRunnerRef, runnerScript } from "./runner-script";
 import {
   describeScope,
@@ -391,7 +403,7 @@ function getBearer(request: Request): string | null {
 // login sessions (admin, everyone else reads). Admin does everything;
 // runner runs + reads; readonly only reads runs. `repos` is the token's
 // repo allowlist ([] = all repos).
-async function authIdentity(request: Request, env: WorkerEnv): Promise<{ scope: AuthScope; actor: string; repos: string[] } | null> {
+async function authIdentity(request: Request, env: WorkerEnv): Promise<ApiTokenIdentity | null> {
   const bearer = getBearer(request);
   if (bearer) {
     return authIdentityFromToken(bearer, { db: env.DB, adminToken: env.ADMIN_TOKEN, runnerToken: env.RUNNER_TOKEN });
@@ -402,7 +414,214 @@ async function authIdentity(request: Request, env: WorkerEnv): Promise<{ scope: 
   if (!session || Date.parse(session.expires_at) <= Date.now()) return null;
   const kind = session.kind === "email" ? "email" : "github";
   const actor = `${kind}:${session.github_user}`;
-  return session.is_admin ? { scope: "admin", actor, repos: [] } : { scope: "readonly", actor, repos: [] };
+  if (session.is_admin) return { scope: "admin", actor, repos: [] };
+  // Everyone else is a self-serve member: Forge end to end on the repos
+  // they own, nothing else (see tokens.ts AuthScope).
+  return { scope: "member", actor, repos: await memberRepos(env.DB, actor), owner: actor };
+}
+
+// /v1/me*: the self-serve surface. Members create and own Forge repos
+// and mint agent tokens bound to themselves (scope member, resolved to
+// their repos per request); admins get the same one-click token as a
+// runner token. Session-only writes: an agent token cannot mint tokens
+// or create repos.
+const MEMBER_TOKEN_LIMIT = 10;
+
+async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Response | null> {
+  const ident = await authIdentity(request, env);
+  if (!ident) return json(apiError("unauthorized", "sign in first"), 401);
+  const owner = ident.owner ?? ident.actor;
+  const isSession = !ident.actor.startsWith("token:") && ident.actor !== "break-glass" && ident.actor !== "env:runner";
+  const ns = env.ARTIFACTS_NAMESPACE ?? "";
+  if (request.method === "GET" && url.pathname === "/v1/me") {
+    const repos = ident.scope === "admin" ? null : (await listOwnedRepos(env.DB, owner)).map((r) => r.repo);
+    return json({
+      actor: ident.actor,
+      role: ident.scope === "admin" ? "admin" : ident.scope === "member" ? "member" : ident.scope,
+      repos,
+      repoLimit: ident.scope === "admin" ? null : MEMBER_REPO_LIMIT,
+      mcpUrl: new URL("/mcp", url).toString(),
+    });
+  }
+  // Sessions only, except the owner's admin token may import (scripts,
+  // support): agent tokens never mint tokens or create repos.
+  const adminToken = ident.scope === "admin" && !isSession;
+  if (!(isSession && (ident.scope === "admin" || ident.scope === "member")) && !(adminToken && url.pathname === "/v1/me/import")) {
+    return json(apiError("unauthorized", "sign in to the app to manage repos and tokens"), 401);
+  }
+  if (request.method === "POST" && url.pathname === "/v1/me/repos") {
+    if (!env.ARTIFACTS) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const body = (await request.json().catch(() => ({}))) as { name?: unknown };
+    const out = await createMemberRepo(
+      { db: env.DB, artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS(), namespace: ns },
+      owner,
+      body.name,
+    );
+    if (!out.ok) return json(apiError(out.code, out.error), out.status);
+    await audit(env.DB, ident.actor, "repo.create", out.scoped);
+    return json({ repo: out.repo, headSha: out.headSha, lanes: out.lanes, app: `/app?repo=${encodeURIComponent(out.repo)}` }, 201);
+  }
+  if (request.method === "POST" && url.pathname === "/v1/me/agent-token") {
+    const body = (await request.json().catch(() => ({}))) as { name?: unknown };
+    const label = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 60) : "agent";
+    const live = await env.DB.prepare("SELECT COUNT(*) AS n FROM api_tokens WHERE owner = ? AND revoked_at IS NULL").bind(owner).first<{ n: number }>();
+    if ((live?.n ?? 0) >= MEMBER_TOKEN_LIMIT) return json(apiError("token_limit", `revoke an old agent token first (limit ${MEMBER_TOKEN_LIMIT})`), 409);
+    const id = crypto.randomUUID();
+    const value = newTokenValue();
+    // Members: a member token that follows their repos. Admins: a runner
+    // token (every repo), like Settings → Tokens but in one click.
+    const scopes = ident.scope === "admin" ? "runner" : MEMBER_TOKEN_SCOPE;
+    await createToken(env.DB, { id, name: `${label} (${owner})`.slice(0, 100), tokenHash: await hashToken(value), scopes, repos: "", owner });
+    await audit(env.DB, ident.actor, "token.create.self", id);
+    const mcpUrl = new URL("/mcp", url).toString();
+    return json(
+      {
+        id,
+        token: value,
+        mcpUrl,
+        commands: {
+          claude: `claude mcp add --transport http flare-forge ${mcpUrl} --header "Authorization: Bearer ${value}"`,
+          codex: `[mcp_servers.flare-forge]\nurl = "${mcpUrl}"\nhttp_headers = { Authorization = "Bearer ${value}" }`,
+          cursor: JSON.stringify({ mcpServers: { "flare-forge": { url: mcpUrl, headers: { Authorization: `Bearer ${value}` } } } }, null, 2),
+          env: `export FLARE_ACTIONS_URL=${url.origin}\nexport FLARE_TOKEN=${value}`,
+        },
+      },
+      201,
+    );
+  }
+  if (request.method === "GET" && url.pathname === "/v1/me/github-repos") {
+    // Admins: every repo the Flare App sees. Members signed in with
+    // GitHub: the App-visible repos under their own login. Anyone can
+    // still import a public repo by name.
+    const creds = await getAppCreds(env);
+    const slug = creds ? await getSetting(env.DB, SETTING_KEYS.githubAppSlug) : null;
+    const login = ident.actor.startsWith("github:") ? ident.actor.slice(7).toLowerCase() : null;
+    const all = creds ? ((await listAppRepos(creds)) ?? []) : [];
+    const visible = ident.scope === "admin" ? all : login ? all.filter((r) => r.fullName.toLowerCase().startsWith(`${login}/`)) : [];
+    const owners = await env.DB.prepare("SELECT repo, owner FROM repo_owners").all<{ repo: string; owner: string }>();
+    const ownerOf = new Map(owners.results.map((r) => [r.repo, r.owner]));
+    // Train-ready mirrors only: a plain mirror (no lane pool yet) still
+    // offers Bring into Forge, which adopts it and adds the lanes.
+    const mirrors = new Set((await listMirrorRows(env.DB)).filter((m) => m.status === "ready" && m.detail === FORGE_READY_DETAIL).map((m) => m.mirror));
+    return json({
+      githubLogin: login,
+      installUrl: slug ? installUrl(slug) : null,
+      repos: visible.map((r) => {
+        const name = mirrorNameFor(r.fullName) ?? "";
+        const holder = ownerOf.get(name);
+        return { fullName: r.fullName, private: r.private, defaultBranch: r.defaultBranch, forgeRepo: name, inForge: holder === owner || (ident.scope === "admin" && (holder !== undefined || mirrors.has(name))), takenByOther: holder !== undefined && holder !== owner && ident.scope !== "admin" };
+      }),
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/v1/me/import") {
+    if (!env.ARTIFACTS) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const body = (await request.json().catch(() => ({}))) as { repo?: unknown };
+    const source = parseGithubRepo(body.repo);
+    if (!source) return json(apiError("invalid_request", "repo: a GitHub owner/name or URL"), 400);
+    const creds = await getAppCreds(env);
+    const access = creds ? await repoInstallationAccess(creds, source) : null;
+    const login = ident.actor.startsWith("github:") ? ident.actor.slice(7).toLowerCase() : null;
+    // Private repos: admins through any installation; members only for
+    // repos under their own GitHub login. Everything else: public only.
+    const mayUsePrivate = access !== null && (ident.scope === "admin" || (login !== null && source.toLowerCase().startsWith(`${login}/`)));
+    let isPrivate = false;
+    let token: string | null = null;
+    if (access && mayUsePrivate) {
+      isPrivate = access.isPrivate;
+      token = access.isPrivate ? access.token : null;
+      if (isPrivate) return json(apiError("repo_not_allowed", "private repos cannot be imported yet: Cloudflare Artifacts imports public repos only. Make it public, or create a new Forge repo and push the code to it"), 403);
+    } else if (!(await publicGithubRepo(source))) {
+      return json(apiError("repo_not_allowed", "that repo is private or does not exist: Forge can import public GitHub repos only for now"), 403);
+    }
+    const out = await importGithubRepo(
+      { db: env.DB, artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS(), namespace: env.ARTIFACTS_NAMESPACE ?? "" },
+      owner,
+      source,
+      { isPrivate, installationToken: token, limit: ident.scope === "admin" ? null : MEMBER_REPO_LIMIT },
+    );
+    if (!out.ok) return json(apiError(out.code, out.error), out.status);
+    await audit(env.DB, ident.actor, "repo.import", `${source} -> ${out.repo} (${out.status})`);
+    return json({ ...out, app: `/app?repo=${encodeURIComponent(out.repo)}` }, out.status === "ready" ? 201 : 202);
+  }
+  const ciMatch = /^\/v1\/me\/repos\/([^/]+)\/ci$/.exec(url.pathname);
+  if (request.method === "POST" && ciMatch) {
+    // Add CI: commit a starter flare.yml to trunk (owner or admin).
+    // Trains land nothing without one, so this unblocks a fresh import.
+    if (!env.ARTIFACTS) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const repo = normalizeForgeRepo(ns, decodeURIComponent(ciMatch[1]));
+    if (!/^[\w.-]{1,100}$/.test(repo)) return json(apiError("invalid_request", "repo: a Forge repo name"), 400);
+    if (ident.scope !== "admin") {
+      const holder = await env.DB.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(repo).first<{ owner: string }>();
+      if (!holder || holder.owner !== owner) return json(apiError("repo_not_allowed", "only the repo's owner (or an admin) can add CI"), 403);
+    }
+    let handle: Awaited<ReturnType<NonNullable<typeof env.ARTIFACTS>["get"]>> | null = null;
+    try {
+      handle = await env.ARTIFACTS.get(repo).catch(() => null);
+      if (!handle) return json(apiError("invalid_request", `no Forge repo named ${repo}`), 404);
+      const h = handle;
+      const read = async (path: string): Promise<string | null> => {
+        const f = await h.readFile({ ref: "main", path }).catch(() => null);
+        return f && f.size <= 256 * 1024 ? await f.text() : null;
+      };
+      if ((await read("flare.yml"))?.trim()) return json(apiError("invalid_request", "this repo already has a flare.yml; edit it through an intent"), 409);
+      const [pkg, npmLock, pnpmLock, yarnLock, bunLock, bunLockb, goMod, cargo, pyproject, requirements] = await Promise.all(
+        ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", "go.mod", "Cargo.toml", "pyproject.toml", "requirements.txt"].map((p) => read(p)),
+      );
+      const plan = starterPipeline({
+        packageJson: pkg,
+        lockfile: npmLock !== null ? "npm" : pnpmLock !== null ? "pnpm" : yarnLock !== null ? "yarn" : bunLock !== null || bunLockb !== null ? "bun" : null,
+        goMod: goMod !== null,
+        cargoToml: cargo !== null,
+        python: pyproject !== null || requirements !== null,
+      });
+      const info = await h.info();
+      const tok = await h.createToken("write", 600);
+      const committed = await commitFilesToFork(
+        { git, http, fs: new MemoryFS() },
+        { url: info.remote, token: tok.plaintext, changes: [{ path: "flare.yml", bytes: new TextEncoder().encode(plan.yaml) }], message: `CI: starter flare.yml (${plan.kind})\n\nAdded from the app so trains can verify and land work.`, author: { name: "Flare Forge", email: "forge@flare.invalid" } },
+      );
+      await audit(env.DB, ident.actor, "repo.add_ci", `${repo} ${committed.sha.slice(0, 12)} ${plan.kind}`);
+      return json({ repo, sha: committed.sha, kind: plan.kind, steps: plan.steps, flareYml: plan.yaml }, 201);
+    } catch (err) {
+      log("warn", "add ci failed", { repo, error: String(err).slice(0, 200) });
+      return json(apiError("repo_create_failed", `could not add CI: ${String(err).slice(0, 200)}`), 502);
+    } finally {
+      try {
+        handle?.[Symbol.dispose]?.();
+      } catch {
+        // Disposal never fails a request.
+      }
+    }
+  }
+  if (request.method === "GET" && url.pathname === "/v1/me/tokens") {
+    const res = await env.DB.prepare("SELECT id, name, scopes, created_at, revoked_at FROM api_tokens WHERE owner = ? ORDER BY created_at DESC LIMIT 50").bind(owner).all<{ id: string; name: string; scopes: string; created_at: string; revoked_at: string | null }>();
+    return json({ tokens: res.results.map((t) => ({ id: t.id, name: t.name, createdAt: t.created_at, revoked: t.revoked_at !== null })) });
+  }
+  const revoke = /^\/v1\/me\/tokens\/([^/]+)\/revoke$/.exec(url.pathname);
+  if (request.method === "POST" && revoke) {
+    const done = await env.DB.prepare("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND owner = ? AND revoked_at IS NULL").bind(new Date().toISOString(), revoke[1], owner).run();
+    if (!done.meta.changes) return json(apiError("token_not_found", "token not found"), 404);
+    await audit(env.DB, ident.actor, "token.revoke.self", revoke[1]);
+    return json({ ok: true });
+  }
+  return null;
+}
+
+const MEMBER_CI_MINUTES = 300;
+
+async function memberCiHold(env: WorkerEnv, repo: string): Promise<string | null> {
+  const holder = await env.DB.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(repo).first<{ owner: string }>();
+  if (!holder || holder.owner.startsWith("token:")) return null;
+  const [adminEmail, adminGithub] = await Promise.all([getSetting(env.DB, SETTING_KEYS.adminEmail), getSetting(env.DB, SETTING_KEYS.adminGithubUser)]);
+  const owner = holder.owner.toLowerCase();
+  if ((adminEmail && owner === `email:${adminEmail.toLowerCase()}`) || (adminGithub && owner === `github:${adminGithub.toLowerCase()}`)) return null;
+  const month = monthStartIso();
+  const used = await monthlyComputeMinutes(env.DB, `${env.ARTIFACTS_NAMESPACE ?? ""}/${repo}`, month);
+  if (used < MEMBER_CI_MINUTES) return null;
+  const reason = `monthly CI limit reached (${Math.round(used)} of ${MEMBER_CI_MINUTES} minutes); trains resume next month`;
+  const told = await env.DB.prepare("SELECT 1 AS x FROM forge_ledger WHERE repo = ? AND kind = 'ci_limit' AND created_at >= ? LIMIT 1").bind(repo, month).first<{ x: number }>();
+  if (!told) await appendForgeLedger(env.DB, { repo, subjectKind: "goal", subjectId: "ci-limit", kind: "ci_limit", body: reason, actor: "forge" });
+  return reason;
 }
 
 // Repo-scoped tokens: empty allowlist means every repo (exact
@@ -485,6 +704,11 @@ async function serveMcpRequest(
   basin?: BasinSink,
   ctx?: ExecutionContext,
 ): Promise<Response> {
+  // Non-admin OAuth grants only reach the repos their account owns now
+  // (members' repos are private); a grant without an owner reads nothing.
+  if (!props.isAdmin && props.actor.startsWith("oauth:")) {
+    props = { ...props, repos: props.owner ? await memberRepos(env.DB, props.owner) : [NO_REPOS] };
+  }
   const handler = createMcpHandler(() =>
     buildMcpServer({
       db: env.DB,
@@ -559,7 +783,35 @@ async function isClaimed(env: WorkerEnv): Promise<boolean> {
 }
 
 // Open registration (admin toggle, default off): anyone may create a
-// non-admin reader account from the dashboard, by email or GitHub.
+// non-admin member account from the dashboard, by email or GitHub.
+// Better Auth instance for this request (see better-auth.ts): same D1,
+// request origin as base URL, the deployment's secrets key as secret
+// (env wins, D1 fills the gap — resolveSecretsKey generates it once).
+async function betterAuthFor(env: WorkerEnv, url: URL) {
+  await resolveSecretsKey(env.DB, env.SECRETS_KEY);
+  const secret = env.SECRETS_KEY || (await getSetting(env.DB, SETTING_KEYS.secretsKey)) || "";
+  return createBetterAuth({
+    db: env.DB,
+    baseURL: url.origin,
+    secret,
+    sendMagicLink: async ({ email, url: link }) => {
+      const sender = resolveNotifySender(env.NOTIFY_FROM_EMAIL, await getSetting(env.DB, SETTING_KEYS.notifyFromEmail));
+      const mailer = env.EMAIL;
+      if (!sender || !mailer) {
+        log("info", "better-auth magic link skipped (email not configured)", { sender: !!sender, mail: !!mailer });
+        return;
+      }
+      await mailer.send({
+        from: { name: "Flare Forge", email: sender },
+        to: email,
+        subject: "[flare] Sign in to Flare Forge",
+        text: `Sign in to Flare Forge as ${email}.\n\n${link}\n\nThe link expires in 15 minutes and works once. If this was not you, ignore this email.`,
+      });
+      await audit(env.DB, "magic", "session.magic_sent", email);
+    },
+  });
+}
+
 async function isOpenRegistration(env: WorkerEnv): Promise<boolean> {
   const parsed = parseOpenRegistration(await getSetting(env.DB, SETTING_KEYS.openRegistration));
   return "on" in parsed && parsed.on;
@@ -620,7 +872,7 @@ async function requireScope(
   request: Request,
   env: WorkerEnv,
   need: "run" | "read",
-): Promise<{ scope: AuthScope; actor: string; repos: string[] } | null> {
+): Promise<ApiTokenIdentity | null> {
   const ident = await authIdentity(request, env);
   if (!ident) return null;
   if (ident.scope === "admin" || ident.scope === "runner") return ident;
@@ -629,7 +881,7 @@ async function requireScope(
 
 // Which email's notification prefs the caller may read/write: their own
 // email session by default, any email for admins (explicit param), and
-// admin Bearer [REDACTED] with an explicit email. GitHub sessions carry no
+// admin Bearer token with an explicit email. GitHub sessions carry no
 // email recipient, so they must name one (admins) or log in by email.
 async function resolveNotifyPrefTarget(
   request: Request,
@@ -675,6 +927,10 @@ export interface GitHubWebhookPayload {
     number?: number;
   };
   action?: string;
+  // Push events: who pushed and what (activity feed of the Forge mirror).
+  pusher?: { name?: string };
+  commits?: Array<{ message?: string }>;
+  head_commit?: { message?: string } | null;
   // Runner mode (`runs-on: flare`): structurally matches ghrunners'
   // WorkflowJobPayload so the parsed body passes through without casts.
   workflow_job?: {
@@ -1382,6 +1638,38 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
             });
             if (out.status === "failed") log("warn", "mirror provision failed", { repo, detail: out.detail ?? "" });
             else if (out.status === "ready") log("info", "mirror ready", { repo, mirror: out.mirror });
+            // Train-ready on the first push, hands-free: add main, the
+            // lane pool and refs/notes/why once (marked on the mirror
+            // row), so agents can land without a Bring into Forge click.
+            // Pushes made outside Forge (any agent or person with GitHub
+            // access) still show up: one plain-language activity row on
+            // the mirror's feed. It rides subject kind "goal" (the
+            // ledger CHECK allows four kinds) with its own event kind.
+            if (event === "push" && (out.status === "ready" || out.status === "importing")) {
+              const n = Array.isArray(payload.commits) ? payload.commits.length : 0;
+              const msg = (payload.head_commit?.message ?? "").split("\n")[0].slice(0, 120);
+              const pusher = (payload.pusher?.name ?? "").replace(/[^\w.-]/g, "").slice(0, 39);
+              await appendForgeLedger(env.DB, {
+                repo: out.mirror,
+                subjectKind: "goal",
+                subjectId: sha.slice(0, 40),
+                kind: "github_push",
+                body: JSON.stringify({ branch, commits: n, sha: sha.slice(0, 40), message: msg }),
+                actor: pusher ? `github-${pusher}` : "github",
+              });
+            }
+            if (out.status === "ready" && env.ARTIFACTS) {
+              const row = await getMirrorRow(env.DB, repo);
+              if (row && row.detail !== FORGE_READY_DETAIL) {
+                try {
+                  const prep = await prepareForgeTrunk({ artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS() }, out.mirror);
+                  await setMirrorRow(env.DB, repo, out.mirror, "ready", FORGE_READY_DETAIL);
+                  log("info", "mirror train-ready", { repo, lanesCreated: prep.lanesCreated });
+                } catch (err) {
+                  log("warn", "mirror train prep failed", { repo, error: String(err) });
+                }
+              }
+            }
             // Trunk sync input: seats fast-forward the mirror's default
             // branch on pushes to it (see apps/seats trunkSyncScript),
             // keyed on the default branch recorded here (no-op write
@@ -2116,6 +2404,7 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
       triageWebSearch?: unknown;
       healOnFailure?: unknown;
       openRegistration?: unknown;
+      adminGithubUser?: unknown;
       budgetMinutes?: unknown;
       budgetMode?: unknown;
       budgetKillMultiplier?: unknown;
@@ -2149,6 +2438,7 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
     const hasWebSearch = body.triageWebSearch !== undefined;
     const hasHeal = body.healOnFailure !== undefined;
     const hasOpenReg = body.openRegistration !== undefined;
+    const hasAdminGithub = body.adminGithubUser !== undefined;
     const hasBudget = body.budgetMinutes !== undefined;
     const hasBudgetMode = body.budgetMode !== undefined;
     const hasKillMultiplier = body.budgetKillMultiplier !== undefined;
@@ -2165,7 +2455,7 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
     if (
       !hasWebhook && !hasNotifyFrom && !hasNotifyMode && !hasNotifyWebhook && !hasBadgeHidden &&
       !hasTurnstileSite && !hasTurnstileSecret && !hasFairShare && !hasAgentShare && !hasGateway && !hasWriteConfirm && !hasWebSearch &&
-      !hasHeal && !hasOpenReg && !hasBudget && !hasBudgetMode && !hasKillMultiplier && !hasSupersede && !hasGhMode && !hasGhLabels && !hasGhGroup && !hasBillingToken && !hasAccountId && !hasTriageModel && !hasRunnerVersion && !hasCloudEnt && !hasCloudMetering
+      !hasHeal && !hasOpenReg && !hasAdminGithub && !hasBudget && !hasBudgetMode && !hasKillMultiplier && !hasSupersede && !hasGhMode && !hasGhLabels && !hasGhGroup && !hasBillingToken && !hasAccountId && !hasTriageModel && !hasRunnerVersion && !hasCloudEnt && !hasCloudMetering
     ) {
       return json({ error: "no settings provided" }, 400);
     }
@@ -2304,6 +2594,14 @@ async function handleSettingsUpdate(request: Request, env: WorkerEnv): Promise<R
       await setSetting(env.DB, SETTING_KEYS.openRegistration, parsed.on ? "1" : "0");
       await audit(env.DB, ident.actor, "settings.open_registration", parsed.on ? "on" : "off");
       log("info", "open registration toggled", { on: parsed.on });
+    }
+    if (hasAdminGithub) {
+      // Links the owner's GitHub login so "Continue with GitHub" signs
+      // the owner in as admin (an email-claimed deploy has none).
+      const parsed = parseGithubLogin(body.adminGithubUser);
+      if ("error" in parsed) return json({ error: parsed.error }, 400);
+      await setSetting(env.DB, SETTING_KEYS.adminGithubUser, parsed.login);
+      await audit(env.DB, ident.actor, "settings.admin_github_user", parsed.login);
     }
     if (hasBudget) {
       const parsed = parseBudgetMinutes(body.budgetMinutes);
@@ -2572,6 +2870,11 @@ export { ForgePushWorkflow } from "./forge-push-workflow";
 // export, and trains dispatch CI through the same dispatchRun + seat
 // wake path as every other run.
 export { TrainWorkflow } from "./train-workflow";
+// Open sign-up spends the operator's container minutes: a repo owned by
+// a member (not an admin, not a mirror) gets MEMBER_CI_MINUTES of train
+// CI a month. Over the cap no train is cut (intents stay ready) and the
+// repo's feed says so once a month.
+registerTrainHold(async (env, repo) => memberCiHold(env, repo));
 registerTrainDispatch(async (env, input) => {
   const out = await dispatchRun(env, input);
   for (const jobId of out.queuedIds) await wakeSeat(env, jobId);
@@ -2592,15 +2895,36 @@ export default {
         // /?demo=1#/live. Browsers carry the #fragment across a 302.
         // A bare visit with no session lands on the guided demo, not a
         // login form; signed-in users still go straight to the dashboard.
-        if (url.search === "" && parseSessionCookie(request) === null) {
-          return Response.redirect(new URL("/dashboard?demo=1&tour=1#/live", url).toString(), 302);
+        // The product app is the front door: signed in it opens the
+        // workspace, signed out it opens the public repo read-only (or the
+        // sign-in screen when nothing is public). ?demo=1 keeps the
+        // fixture tour on the classic dashboard.
+        if (url.searchParams.get("demo") !== null || url.searchParams.get("tour") !== null) {
+          return Response.redirect(dashboardRedirectUrl(url), 302);
         }
-        return Response.redirect(dashboardRedirectUrl(url), 302);
+        const app = new URL("/app", url);
+        app.search = url.search;
+        return Response.redirect(app.toString(), 302);
       }
       if (request.method === "GET" && url.pathname === "/dashboard") {
         return dashboardResponse();
       }
+      // The product app (Forge): a static shell like /dashboard, served
+      // before the schema check; its client reads /v1/forge/overview (or the
+      // public bundle for spectators).
+      if (request.method === "GET" && url.pathname === "/app") {
+        return new Response(appHtml(), {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        });
+      }
       await ensureSchema(env.DB);
+      // Better Auth owns /v1/auth/* (sign-up, sign-in, magic-link verify,
+      // sign-out, session). It does its own origin checks and rate
+      // limiting; a Flare session comes from /v1/admin/auth/bridge.
+      if (url.pathname.startsWith("/v1/auth/")) {
+        const auth = await betterAuthFor(env, url);
+        return auth.handler(request);
+      }
       // CSRF defense-in-depth for cookie-authenticated mutations:
       // browsers send Origin on cross-site and same-origin fetch/form
       // POSTs, so a mismatch is rejected. Bearer flows (API, MCP) and
@@ -2699,13 +3023,16 @@ export default {
       if (request.method === "POST" && url.pathname === "/mcp") {
         // Same-origin browser callers (the Cloudflare Site MCP Server
         // pack, native page tools) carry the dashboard session cookie
-        // instead of a Bearer [REDACTED] the global CSRF check above already
+        // instead of a Bearer token; the global CSRF check above already
         // rejected cross-origin cookie POSTs, so a valid session here is
         // the visitor acting as themselves.
         if (!getBearer(request)) {
           const session = await oauthSession(request, env);
           if (session) {
-            const { props, canWrite } = principalFromSession(session);
+            const base = principalFromSession(session);
+            // Non-admin sessions only see the repos they own.
+            const props = session.isAdmin ? base.props : { ...base.props, repos: await memberRepos(env.DB, session.actor), owner: session.actor };
+            const canWrite = base.canWrite;
             return serveMcpRequest(request, env, props, canWrite, basinSink(env, ctx), ctx);
           }
         }
@@ -3976,6 +4303,12 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/admin/tokens") {
         return await handleCreateToken(request, env);
       }
+      // Self-serve account surface (any signed-in account or its agent
+      // token): who am I, my repos, one-click agent tokens.
+      if (url.pathname === "/v1/me" || url.pathname.startsWith("/v1/me/")) {
+        const meResponse = await handleMe(request, env, url);
+        if (meResponse) return meResponse;
+      }
       const revokeMatch = /^\/v1\/admin\/tokens\/([^/]+)\/revoke$/.exec(url.pathname);
       if (request.method === "POST" && revokeMatch) {
         const ident = await authIdentity(request, env);
@@ -4025,7 +4358,7 @@ export default {
       }
       // Self-service connected apps: any logged-in dashboard user
       // lists and revokes their own OAuth grants. Session-cookie only
-      // (Bearer [REDACTED] carry no OAuth user id); cookie mutations are
+      // (Bearer tokens carry no OAuth user id); cookie mutations are
       // CSRF-checked at the top of fetch.
       if (request.method === "GET" && url.pathname === "/v1/oauth/grants") {
         const session = await oauthSession(request, env);
@@ -4251,7 +4584,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/v1/admin/github/login") {
         const creds = await getOAuthCreds(env);
         if (!creds) {
-          return Response.redirect(new URL("/dashboard?github=error&reason=noapp", url).toString(), 302);
+          return Response.redirect(new URL("/app?login=1&github=noapp", url).toString(), 302);
         }
         const state = await beginOAuth(env.DB);
         const redirectUri = new URL("/v1/admin/github/oauth/callback", url).toString();
@@ -4259,7 +4592,7 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/v1/admin/github/oauth/callback") {
         const fail = (reason: string): Response =>
-          Response.redirect(new URL(`/dashboard?github=error&reason=${reason}`, url).toString(), 302);
+          Response.redirect(new URL(`/app?login=1&github=${reason}`, url).toString(), 302);
         const state = url.searchParams.get("state") ?? "";
         const code = url.searchParams.get("code") ?? "";
         if (!state || !code) return fail("missing");
@@ -4274,7 +4607,7 @@ export default {
         let decision = await decideLogin(env.DB, login);
         if (!decision.allowed) {
           log("info", "github login denied", { login });
-          return Response.redirect(new URL("/dashboard?github=forbidden", url).toString(), 302);
+          return Response.redirect(new URL("/app?login=1&github=forbidden", url).toString(), 302);
         }
         if (!decision.claimed) {
           // Atomic gate for the first login: a concurrent first login
@@ -4288,7 +4621,7 @@ export default {
             decision = await decideLogin(env.DB, login);
             if (!decision.allowed) {
               log("info", "github login denied", { login });
-              return Response.redirect(new URL("/dashboard?github=forbidden", url).toString(), 302);
+              return Response.redirect(new URL("/app?login=1&github=forbidden", url).toString(), 302);
             }
           }
         }
@@ -4297,7 +4630,9 @@ export default {
         return new Response(null, {
           status: 302,
           headers: {
-            Location: new URL("/dashboard", url).toString(),
+            // The product app is the home after sign-in (the legacy
+            // dashboard stays at /dashboard).
+            Location: new URL("/app", url).toString(),
             "Set-Cookie": sessionSetCookie(sessionId, url.protocol === "https:"),
           },
         });
@@ -4361,6 +4696,55 @@ export default {
         const invite = await peekInvite(env.DB, decodeURIComponent(inviteMatch[1]));
         if (!invite) return json({ error: "invite invalid or expired" }, 404);
         return json({ email: invite.email });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/admin/auth/bridge") {
+        // Better Auth vouched for an email (cookie flare_auth.session_token);
+        // mint the Flare session the rest of the app reads. Same doors as
+        // the legacy routes: known account → login, first account → admin,
+        // otherwise open registration decides (bridgeDecision).
+        const auth = await betterAuthFor(env, url);
+        const vouched = await auth.api.getSession({ headers: request.headers });
+        if (!vouched) return json(apiError("unauthorized", "no Better Auth session", "sign in or create an account first"), 401);
+        const emailErr = validateEmail(vouched.user.email);
+        if (emailErr) return json(apiError("invalid_request", emailErr), 400);
+        const email = normalizeEmail(vouched.user.email);
+        const existing = await getUser(env.DB, email);
+        const decision = bridgeDecision({
+          existing: existing !== null,
+          claimed: await isClaimed(env),
+          openRegistration: await isOpenRegistration(env),
+        });
+        let isAdmin = existing?.is_admin === 1;
+        if (decision === "deny") {
+          return json({ error: "registration is closed on this deployment", hint: "ask the owner for an invite link, or for open registration in Settings" }, 403);
+        }
+        if (decision === "claim_admin") {
+          if (!(await claimAdminMarker(env.DB))) return json(apiError("already_claimed", "already claimed"), 403);
+          try {
+            await createUser(env.DB, { email, passwordHash: await hashPassword(crypto.randomUUID()), isAdmin: true });
+            await setSetting(env.DB, SETTING_KEYS.adminEmail, email);
+          } catch (err) {
+            await releaseAdminMarker(env.DB);
+            throw err;
+          }
+          isAdmin = true;
+          await audit(env.DB, `email:${email}`, "admin.claim", "better-auth");
+          log("info", "admin claimed", { email, via: "better-auth" });
+        } else if (decision === "register") {
+          // Credentials live in Better Auth; the Flare row carries an
+          // unguessable placeholder so the legacy password door stays shut.
+          await createUser(env.DB, { email, passwordHash: await hashPassword(crypto.randomUUID()), isAdmin: false });
+          await audit(env.DB, `email:${email}`, "session.register", "better-auth");
+        }
+        const sessionId = await createLoginSession(env.DB, { kind: "email", login: email, isAdmin });
+        await audit(env.DB, `email:${email}`, "session.login", "better-auth");
+        return new Response(JSON.stringify({ ok: true, admin: isAdmin }), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "Set-Cookie": sessionSetCookie(sessionId, url.protocol === "https:"),
+          },
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/admin/register") {
         const body = (await request.json().catch(() => ({}))) as { token?: unknown; email?: unknown; password?: unknown; turnstileToken?: unknown };

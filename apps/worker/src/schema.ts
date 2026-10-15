@@ -61,7 +61,8 @@ export const SCHEMA_STATEMENTS = [
     repos TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     revoked_at TEXT,
-    expires_at TEXT
+    expires_at TEXT,
+    owner TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_tokens_hash ON api_tokens(token_hash)`,
   `CREATE TABLE IF NOT EXISTS app_settings (
@@ -91,6 +92,60 @@ export const SCHEMA_STATEMENTS = [
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
+  // Better Auth core tables (migration 0051): credentials + magic links
+  // under /v1/auth/*; Flare sessions are minted by the bridge route.
+  `CREATE TABLE IF NOT EXISTS auth_user (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    emailVerified INTEGER NOT NULL DEFAULT 0,
+    image TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS auth_session (
+    id TEXT PRIMARY KEY,
+    expiresAt TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    ipAddress TEXT,
+    userAgent TEXT,
+    userId TEXT NOT NULL REFERENCES auth_user(id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_session_user ON auth_session(userId)`,
+  `CREATE TABLE IF NOT EXISTS auth_account (
+    id TEXT PRIMARY KEY,
+    accountId TEXT NOT NULL,
+    providerId TEXT NOT NULL,
+    userId TEXT NOT NULL REFERENCES auth_user(id),
+    accessToken TEXT,
+    refreshToken TEXT,
+    idToken TEXT,
+    accessTokenExpiresAt TEXT,
+    refreshTokenExpiresAt TEXT,
+    scope TEXT,
+    password TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_account_user ON auth_account(userId)`,
+  `CREATE TABLE IF NOT EXISTS auth_verification (
+    id TEXT PRIMARY KEY,
+    identifier TEXT NOT NULL,
+    value TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON auth_verification(identifier)`,
+  `CREATE TABLE IF NOT EXISTS repo_owners (
+    repo TEXT PRIMARY KEY,
+    scoped TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_repo_owners_owner ON repo_owners(owner)`,
   `CREATE TABLE IF NOT EXISTS repo_secrets (
     repo TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -552,6 +607,7 @@ export const ALTER_STATEMENTS = [
   `ALTER TABLE artifacts_mirrors ADD COLUMN trunk_sha TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE artifacts_mirrors ADD COLUMN trunk_detail TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE artifacts_mirrors ADD COLUMN trunk_at TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE api_tokens ADD COLUMN owner TEXT`,
 ];
 
 let schemaPromise: Promise<void> | null = null;

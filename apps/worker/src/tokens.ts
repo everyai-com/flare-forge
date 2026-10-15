@@ -88,12 +88,31 @@ export function reposAllow(repos: string[], repo: string): boolean {
   });
 }
 
-export type AuthScope = "admin" | "runner" | "readonly";
+// member: a self-serve account (or its agent token). Forge writes on
+// the repos it owns, reads like readonly; never an executor or admin.
+export type AuthScope = "admin" | "runner" | "readonly" | "member";
+
+// Scope key stored on member agent tokens (api_tokens.scopes); never
+// mintable through the admin token API (not in TOKEN_SCOPES).
+export const MEMBER_TOKEN_SCOPE = "member";
+
+// A repo allowlist entry that matches no repo: a member who owns
+// nothing must not fall back to [] (= every repo).
+export const NO_REPOS = "-/-";
+
+/** Owned Forge repos as `<namespace>/<name>` scope entries, never []. */
+export async function memberRepos(db: Db, owner: string): Promise<string[]> {
+  const res = await db.prepare("SELECT scoped FROM repo_owners WHERE owner = ? ORDER BY created_at").bind(owner).all<{ scoped: string }>();
+  const repos = res.results.map((r) => r.scoped);
+  return repos.length > 0 ? repos : [NO_REPOS];
+}
 
 export interface ApiTokenIdentity {
   scope: AuthScope;
   actor: string;
   repos: string[];
+  // Member identities: the account that owns the repos (email:… / github:…).
+  owner?: string;
 }
 
 export async function timingSafeEqualStr(a: string, b: string): Promise<boolean> {
@@ -120,6 +139,10 @@ export async function authIdentityFromToken(
   }
   const row = await findLiveToken(secrets.db, await hashToken(token));
   if (!row) return null;
+  if (row.scopes === MEMBER_TOKEN_SCOPE) {
+    if (!row.owner) return null;
+    return { scope: "member", actor: `token:${row.id}`, repos: await memberRepos(secrets.db, row.owner), owner: row.owner };
+  }
   const scopes = parseScopes(row.scopes);
   const repos = parseRepos(row.repos ?? "");
   if (scopesAllow(scopes, "admin")) return { scope: "admin", actor: `token:${row.id}`, repos };

@@ -50,6 +50,14 @@ export function registerTrainDispatch(fn: TrainDispatcher): void {
   dispatcher = fn;
 }
 
+// Same isolate wiring for the spend hold (index.ts owns budgets).
+export type TrainHold = (env: WorkerEnv, repo: string) => Promise<string | null>;
+let holder: TrainHold | null = null;
+
+export function registerTrainHold(fn: TrainHold): void {
+  holder = fn;
+}
+
 function workflowOf(env: WorkerEnv): Workflow<TrainWorkflowParams> | null {
   return env.TRAIN_WORKFLOW ?? null;
 }
@@ -74,6 +82,7 @@ export function trainDepsFromEnv(env: WorkerEnv, opts: { launch?: boolean } = {}
     http,
     fs: () => new MemoryFS(),
     dispatch: registered ? (input) => registered(env, input) : null,
+    holdReason: holder ? (repo) => (holder ? holder(env, repo) : Promise.resolve(null)) : undefined,
     launch: wf
       ? async (repo, key) => {
           await wf.create({ id: trainInstanceId(repo, key), params: { repo } });

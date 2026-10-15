@@ -106,7 +106,7 @@ describe("parseR2BandwidthGroups", () => {
 });
 
 describe("fetchR2Bandwidth", () => {
-  it("posts the dated bandwidth query with a Bearer [REDACTED]", async () => {
+  it("posts the dated bandwidth query with a Bearer API token", async () => {
     let seenUrl = "";
     let seenBody = "";
     const stub: GraphqlFetch = async (url, init) => {

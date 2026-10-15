@@ -91,8 +91,38 @@ export const FORGE_PURE_JS = String.raw`
     var base = 1000 * Math.pow(2, Math.max(0, attempt));
     return Math.min(30000, base + Math.floor((rnd || 0) * base * 0.5));
   }
+  // Which approval a needs-you inbox item takes: "plan" (awaiting_plan),
+  // "landing" (ready, routed to a human by risk: approve-landing), or ""
+  // (nothing to approve yet). The API's approve.kind wins when present.
+  function fxApproveKind(it) {
+    if (!it) return "";
+    if (it.approve && it.approve.kind) return it.approve.kind === "plan" || it.approve.kind === "landing" ? it.approve.kind : "";
+    if (it.reason === "plan") return "plan";
+    if (it.bucket === "needs_you" && it.state === "ready" && !it.landingApproved) return "landing";
+    return "";
+  }
+  // A unified patch as rows ({cls, text}) capped at max; add/del count the
+  // whole patch, cut = rows past the cap (rendered as a note, never hidden).
+  function fxDiffLines(patch, max) {
+    var lines = String(patch || "").split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    var rows = [], add = 0, del = 0, cut = 0;
+    for (var n = 0; n < lines.length; n++) {
+      var ln = lines[n], c = ln.charAt(0);
+      var cls = ln.indexOf("@@") === 0 ? "hunk" : c === "+" ? "add" : c === "-" ? "del" : "";
+      if (cls === "add") add++; else if (cls === "del") del++;
+      if (rows.length < max) rows.push({ cls: cls, text: ln }); else cut++;
+    }
+    return { rows: rows, add: add, del: del, cut: cut };
+  }
+  // A commit time (epoch seconds, epoch ms or ISO) as ISO; "" if unknown.
+  function fxEpochIso(at) {
+    if (at === null || at === undefined || at === "") return "";
+    var ms = typeof at === "number" ? (at < 1e12 ? at * 1000 : at) : Date.parse(String(at));
+    return isFinite(ms) ? new Date(ms).toISOString() : "";
+  }
   // Everything a spectator must never see or trigger (data-action = MCP verb).
-  var FX_WRITE_ACTIONS = ["approve_plan", "send_back", "review_sample", "mark_ready", "send_note", "fork_session", "claim_conflict", "plan_goal", "declare_intent", "select_item", "explore_demo", "import_github_repo", "sync_github"];
+  var FX_WRITE_ACTIONS = ["approve_plan", "approve_landing", "abandon", "send_back", "review_sample", "mark_ready", "send_note", "fork_session", "claim_conflict", "plan_goal", "declare_intent", "select_item", "explore_demo", "import_github_repo", "sync_github"];
   var FX_PUBLIC_HIDDEN_TABS = ["tabHome", "tabTournaments", "tabRepos", "tabMerge", "tabRuns", "tabSettings", "tabAgents", "tabBench"];
 `;
 
@@ -104,6 +134,8 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
   var FX_TERM_LABEL = { protected_path: "protected", footprint_size: "size", drift: "drift", llm_replay: "LLM replay", weak_evidence: "weak CI", reviewer_disagrees: "reviewer disagrees", truncated_footprint: "footprint truncated — routed to a human" };
   var FX_REST = {
     approve_plan: { m: "POST", p: "/v1/forge/intents/:id/approve" },
+    approve_landing: { m: "POST", p: "/v1/forge/intents/:id/approve-landing" },
+    abandon: { m: "POST", p: "/v1/forge/intents/:id/abandon" },
     send_back: { m: "POST", p: "/v1/forge/intents/:id/send-back" },
     review_sample: { m: "POST", p: "/v1/forge/intents/:id/review" },
     mark_ready: { m: "POST", p: "/v1/forge/intents/:id/ready" },
@@ -210,6 +242,8 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     inbox_why_plan: "It changes files that need a person's OK.",
     inbox_why_sample: "We check a few finished plans at random.",
     inbox_why_help: "The agent got stuck and asked for help.",
+    inbox_land_h: "Can this change land?",
+    inbox_why_land: "Tests passed, but the change is risky. A person decides.",
     inbox_by: "by {n}",
     inbox_files: "Files it will touch:",
     more_n: "+{n} more",
@@ -223,6 +257,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     risk_high: "High risk",
     btn_approve: "Approve",
     btn_good: "Looks good",
+    btn_land: "Let it land",
     btn_back: "Send back",
     btn_details: "See details",
     back_ph: "Tell the agent what to fix",
@@ -232,7 +267,8 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     toast_approved: "Approved!",
     toast_good: "Marked as good.",
     toast_sent_back: "Sent back to the agent.",
-    toast_noplan: "This one has no plan to approve.",
+    toast_noplan: "Nothing to approve yet. Send it back or wait.",
+    toast_landing: "Approved. It lands once tests pass.",
     toast_wait: "You can undo for five seconds.",
     toast_undo: "Undone. Nothing was sent.",
     toast_pretend: "Pretend data, so nothing really changed.",
@@ -437,7 +473,9 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     inboxFilter: "all", groupBy: "story", inboxFocus: "", selected: {}, expandEvidence: {}, sendBack: "",
     pathFilter: "", tableView: false, renderTimer: null, lastUpdate: 0, undo: null, benchOk: false,
     sim: { t: 0, landedAt: 0 }, proposals: [], drawer: null, knownIds: {},
-    pub: "", pubApi: "", pubJoin: null, pubState: ""
+    pub: "", pubApi: "", pubJoin: null, pubState: "",
+    // read-only detail extras, kept across live re-renders
+    diffs: {}, diffOpen: {}, fullSession: {}
   };
 
   // ---------- small utils ----------
@@ -822,6 +860,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     Object.keys(f.mailbox || {}).forEach(function (k) { f.mailbox[k].forEach(function (m) { m.at = sh(m.at); }); });
     Object.keys(f.snapshot || {}).forEach(function (k) { var s = f.snapshot[k]; if (s.head) s.head.at = sh(s.head.at); });
     if (f.bench) f.bench.measured_at = sh(f.bench.measured_at);
+    Object.keys(f.history || {}).forEach(function (k) { (f.history[k] || []).forEach(function (c) { c.at = sh(c.at); }); });
     return f;
   }
   // Public API path for a /v1/forge/* path (identity outside spectator mode).
@@ -978,7 +1017,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
       var items = (f.intents || []).filter(function (i) { return i.goal_id === g.id && i.route; }).map(function (i) {
         var bucket = i.route === "human" ? "needs_you" : i.route === "audit" ? "sample" : "auto";
         if (i.state === "landed" && i.route === "human") bucket = "auto";
-        return { intent: { id: i.id, title: i.title, agent: i.agent, state: i.state }, bucket: bucket, reason: i.escalation === "plan" ? "plan" : i.escalation ? "escalation" : "", why: i.escalation === "plan" ? "Protected path per .flare/policy.yml: " + fxProtectedHits(i.footprint.declared).join(", ") : (i.escalation || (bucket === "sample" ? "Random audit of auto-landed work (audit_sample 0.05)." : "")), risk: i.risk, terms: i.risk_terms, evidence: i.evidence, plan: i.plan, footprint: i.footprint.declared, train_id: i.train_id };
+        return { intent: { id: i.id, title: i.title, agent: i.agent, state: i.state }, bucket: bucket, reason: i.escalation === "plan" ? "plan" : i.escalation ? "escalation" : "", why: i.escalation === "plan" ? "Protected path per .flare/policy.yml: " + fxProtectedHits(i.footprint.declared).join(", ") : (i.escalation || (bucket === "sample" ? "Random audit of auto-landed work (audit_sample 0.05)." : "")), risk: i.risk, terms: i.risk_terms, evidence: i.evidence, plan: i.plan, footprint: i.footprint.declared, train_id: i.train_id, approve: i.escalation === "plan" ? { kind: "plan" } : bucket === "needs_you" && i.state === "ready" ? { kind: "landing" } : null };
       });
       return { goal: g, items: items };
     });
@@ -1018,6 +1057,38 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     if (i.evidence && i.evidence.sha) st.push({ t: 180, kind: "push", text: fxShort(i.evidence.sha) + " " + i.footprint.actual.length + " files" });
     if (i.state === "landed") st.push({ t: 260, kind: "tool", text: "mark_ready -> " + (i.train_id || "train") });
     return st;
+  }
+  // Demo diff (forge-fixtures diffs): the intent's patch, or its touched
+  // files listed without a patch when the demo data has none.
+  function fxFxDiff(i) {
+    var d = (fxFixtures().diffs || {})[i.id];
+    if (d) return JSON.parse(JSON.stringify(d));
+    var fp = i.footprint || {};
+    var files = ((fp.actual && fp.actual.length ? fp.actual : fp.declared) || []).filter(function (p) { return String(p).indexOf("*") < 0; });
+    return { demo: true, files: files.map(function (p) { return { path: p, status: "modified", patch: null, omitted: "demo" }; }), truncated: false, note: "No pushed head yet." };
+  }
+  // Demo path history: the fixture list, else the landed intents that
+  // touched the path plus the pre-Forge scaffold commit.
+  function fxFxHistory(path) {
+    var f = fxFixtures();
+    var list = (f.history || {})[path];
+    if (!list) {
+      list = [];
+      (f.intents || []).forEach(function (i) {
+        var fp = i.footprint || {};
+        if (i.state === "landed" && i.landed_sha && ((fp.actual || []).indexOf(path) >= 0 || (fp.declared || []).indexOf(path) >= 0)) list.push({ hash: i.landed_sha, message: i.title, author: "forge-train", at: i.created_at, change: "modified", intents: [{ id: i.id, title: i.title }] });
+      });
+      list.push({ hash: "a07c3e9", message: "Bookshelf API scaffold", author: "maintainer", at: null, change: "added", intents: [] });
+    }
+    return { demo: true, path: path, commits: list, scanned: list.length, truncated: false };
+  }
+  // Demo full session: the fixture steps as flare/session log lines + plan.md.
+  function fxFxSession(i) {
+    var full = fxFxIntent(i.id) || i;
+    var base = Date.parse(full.created_at) || Date.now();
+    var steps = ((full.session && full.session.steps) || []).map(function (s) { return { ts: new Date(base + (Number(s.t) || 0) * 1000).toISOString(), kind: s.kind, text: s.text }; });
+    var plan = (full.plan || []).length ? "# " + full.title + "\n\n" + full.plan.map(function (p, n) { return (n + 1) + ". " + p; }).join("\n") : null;
+    return { intentId: i.id, forkRepo: full.forkRepo || null, session: { branch: "flare/session", plan: plan, steps: steps, totalSteps: steps.length }, note: null };
   }
   function fxFxTrains() { return { trains: (fxFixtures().trains || []).slice() }; }
   function fxFxTrain(id) { var t = null; (fxFixtures().trains || []).forEach(function (x) { if (x.id === id) t = x; }); return t; }
@@ -2543,7 +2614,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     (d.groups || []).forEach(function (g) {
       (g.items || []).forEach(function (it) {
         var i = it.intent || it;
-        d.items.push({ id: i.id, title: i.title, agent: typeof i.agent === "object" && i.agent ? i.agent.id : i.agent, state: i.state, bucket: it.bucket || "auto", reason: it.reason || "", why: it.why || it.why_needs_you || "", risk: it.risk !== undefined ? it.risk : i.risk, terms: it.terms || it.risk_terms || i.risk_terms || [], evidence: it.evidence || null, plan: it.plan || [], footprint: it.footprint || [], goal: g.goal || null, train_id: it.train_id || null });
+        d.items.push({ id: i.id, title: i.title, agent: typeof i.agent === "object" && i.agent ? i.agent.id : i.agent, state: i.state, bucket: it.bucket || "auto", reason: it.reason || "", why: it.why || it.why_needs_you || "", risk: it.risk !== undefined ? it.risk : i.risk, terms: it.terms || it.risk_terms || i.risk_terms || [], evidence: it.evidence || null, plan: it.plan || [], footprint: it.footprint || [], goal: g.goal || null, train_id: it.train_id || null, approve: it.approve || null, landingApproved: !!it.landingApproved });
       });
     });
     var rank = { needs_you: 0, sample: 1, auto: 2 };
@@ -2576,7 +2647,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     q.forEach(function (it, n) { if (it.id === FX.inboxFocus) idx = n; });
     var it = q[idx];
     FX.inboxFocus = it.id;
-    var reason = it.bucket === "sample" ? "sample" : it.reason === "plan" ? "plan" : "help";
+    var reason = it.bucket === "sample" ? "sample" : it.reason === "plan" ? "plan" : fxApproveKind(it) === "landing" ? "land" : "help";
     var band = fxBand(it.risk);
     var ev = it.evidence;
     var tests = !ev ? "tests_none" : ev.status === "success" ? (Number(ev.tests) === 0 ? "tests_weak" : "tests_ok") : ev.status === "failure" || ev.status === "error" ? "tests_bad" : "tests_run";
@@ -2599,6 +2670,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     else {
       if (reason === "plan") acts.appendChild(btn(fxS("btn_approve"), "approve_plan", false, function () { fxApprove(it); }));
       else if (reason === "sample") acts.appendChild(btn(fxS("btn_good"), "review_sample", false, function () { fxReviewSample(it); }, { "data-decision": "agree" }));
+      else if (reason === "land") acts.appendChild(btn(fxS("btn_land"), "approve_landing", false, function () { fxApprove(it); }));
       acts.appendChild(btn(fxS("btn_back"), "send_back", reason !== "help", function () { fxOpenSendBack(it); }));
       acts.appendChild(h("a", { href: "#/intents/" + it.id, cls: "fx-json", "data-action": "open_detail", "data-target": it.id, text: fxS("btn_details") }));
     }
@@ -2748,6 +2820,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
       acts.appendChild(btn("Looks good", "a", "review_sample", false, function () { fxReviewSample(it); }, { "data-decision": "agree" }));
       acts.appendChild(btn("Send back", "x", "send_back", true, function () { fxOpenSendBack(it); }));
     } else {
+      if (fxApproveKind(it) === "landing") acts.appendChild(btn("Approve landing", "a", "approve_landing", false, function () { fxApprove(it); }));
       acts.appendChild(btn("Send back", "x", "send_back", true, function () { fxOpenSendBack(it); }));
       acts.appendChild(h("a", { href: "#/intents/" + it.id, cls: "fx-json", text: "Open intent ↗" }));
     }
@@ -2773,7 +2846,9 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
   function fxApprove(it) {
     if (FX.pub) return;
     if (it.bucket === "sample") { fxReviewSample(it); return; }
-    if (it.reason !== "plan") { toast(fxSimple() ? fxS("toast_noplan") : it.id + " has no plan to approve"); return; }
+    var kind = fxApproveKind(it);
+    if (kind === "landing") { fxCommitWithUndo(fxSimple() ? fxS("toast_landing") : "Landing approved · " + it.id, it, function () { return fxCall("approve_landing", it.id, {}); }); return; }
+    if (kind !== "plan") { toast(fxSimple() ? fxS("toast_noplan") : it.id + " is " + fxWord(it.state) + ": nothing to approve yet (send it back, or wait until it is ready to land)"); return; }
     fxCommitWithUndo(fxSimple() ? fxS("toast_approved") : "Plan approved · " + it.id, it, function () { return fxCall("approve_plan", it.id, {}); });
   }
   function fxReviewSample(it) {
@@ -2860,8 +2935,8 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     bar.appendChild(h("span", { cls: "num", text: ids.length + " selected" }));
     var appr = h("button", { type: "button", "data-action": "approve_plan", "data-target": ids.join(","), text: "Approve all" });
     appr.addEventListener("click", function () {
-      ids.forEach(function (id) { var it = fxFindItem(id); if (it && it.bucket === "needs_you" && it.reason === "plan") fxCall("approve_plan", id, {}); else if (it && it.bucket === "sample") fxCall("review_sample", id, { decision: "agree" }); });
-      FX.selected = {}; toast("Approved " + ids.length + " (plans approved, samples marked good)");
+      ids.forEach(function (id) { var it = fxFindItem(id); if (it && it.bucket === "needs_you" && it.reason === "plan") fxCall("approve_plan", id, {}); else if (it && fxApproveKind(it) === "landing") fxCall("approve_landing", id, {}); else if (it && it.bucket === "sample") fxCall("review_sample", id, { decision: "agree" }); });
+      FX.selected = {}; toast("Approved " + ids.length + " (plans and landings approved, samples marked good)");
     });
     var back = h("button", { type: "button", cls: "ghost", "data-action": "send_back", "data-target": ids.join(","), text: "Send back" });
     back.addEventListener("click", function () { FX.sendBack = ids[0]; FX.inboxFocus = ids[0]; FX.selected = {}; fxRenderInbox(); });
@@ -2926,6 +3001,8 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     var f = fxFixtures();
     var i = null; (f.intents || []).forEach(function (x) { if (x.id === target) i = x; });
     if (tool === "approve_plan" && i) { i.state = "draft"; i.route = null; i.escalation = null; f.inbox.metrics.human_seconds_today += 15; }
+    else if (tool === "approve_landing" && i) { i.route = "auto"; i.escalation = null; i.landing_approved = true; f.inbox.metrics.human_seconds_today += 15; }
+    else if (tool === "abandon" && i) { i.state = "abandoned"; i.route = null; i.escalation = null; i.lease_expires_at = null; i.lease_expires_in_s = null; }
     else if (tool === "review_sample" && i) { i.route = "auto"; f.inbox.metrics.human_seconds_today += 20; f.inbox.metrics.disagreement.n += 1; }
     else if (tool === "send_back" && i) { i.route = null; i.escalation = null; i.state = i.state === "landed" ? "landed" : "working"; f.inbox.metrics.human_seconds_today += 30; if (args.reason) { f.mailbox[i.id] = (f.mailbox[i.id] || []).concat([{ from_intent: "human", from_agent: "you", body: args.reason, at: new Date().toISOString() }]); } }
     else if (tool === "mark_ready" && i) { i.state = "ready"; }
@@ -3229,7 +3306,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     if (i.state === "awaiting_plan") {
       if (fxCanAct()) card.appendChild(h("div", { cls: "fx-actions" }, [h("button", { type: "button", cls: "fx-sv-primary", "data-action": "approve_plan", "data-target": i.id, text: fxS("btn_approve"), on: { click: function () { fxCall("approve_plan", i.id, {}).then(function () { fxLoadIntent(i.id, box.getAttribute("data-md") ? box : null); }, function () {}); } } })]));
       else card.appendChild(h("p", { cls: "fx-sv-note", text: fxS("plan_ask_owner") }));
-    }
+    } else if (fxNeedsLanding(i) && fxCanAct()) card.appendChild(h("div", { cls: "fx-actions" }, [h("button", { type: "button", cls: "fx-sv-primary", "data-action": "approve_landing", "data-target": i.id, text: fxS("btn_land"), on: { click: function () { fxCall("approve_landing", i.id, {}).then(function () { fxReloadIntent(i.id, box); }, function () {}); } } })]));
     var band = fxBand(i.risk);
     var ev = i.evidence;
     var tests = !ev ? "tests_none" : ev.status === "success" ? (Number(ev.tests) === 0 ? "tests_weak" : "tests_ok") : ev.status === "failure" || ev.status === "error" ? "tests_bad" : "tests_run";
@@ -3284,25 +3361,25 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     var tb = h("tbody");
     declared.forEach(function (p) {
       var touched = actual.some(function (x) { return fxPathsOverlap(p, x); });
-      tb.appendChild(h("tr", { cls: touched ? "eq" : "miss", "data-kind": "path", "data-id": p, "data-state": touched ? "touched" : "untouched" }, [h("td", { cls: "mk", "aria-label": touched ? "declared and touched" : "declared, not touched", text: touched ? "=" : "−" }), h("td", { text: p }), h("td", { cls: "st", text: touched ? "✓" : "not touched" })]));
+      tb.appendChild(h("tr", { cls: touched ? "eq" : "miss", "data-kind": "path", "data-id": p, "data-state": touched ? "touched" : "untouched" }, [h("td", { cls: "mk", "aria-label": touched ? "declared and touched" : "declared, not touched", text: touched ? "=" : "−" }), h("td", {}, [fxWhyLink(p)]), h("td", { cls: "st", text: touched ? "✓" : "not touched" })]));
     });
     drift.forEach(function (p) {
-      tb.appendChild(h("tr", { cls: "drift", "data-kind": "path", "data-id": p, "data-state": "drift" }, [h("td", { cls: "mk", "aria-label": "undeclared drift", text: "+" }), h("td", { text: p }), h("td", { cls: "st", text: "◐ drift (undeclared)" })]));
+      tb.appendChild(h("tr", { cls: "drift", "data-kind": "path", "data-id": p, "data-state": "drift" }, [h("td", { cls: "mk", "aria-label": "undeclared drift", text: "+" }), h("td", {}, [fxWhyLink(p)]), h("td", { cls: "st", text: "◐ drift (undeclared)" })]));
     });
     tbl.appendChild(tb);
     left.appendChild(fxPanel("Footprint", [h("div", { cls: "fx-pad", style: "padding-top:6px" }, [tbl])], [h("span", { cls: "fx-path", text: "declared " + declared.length + " · actual " + actual.length + (drift.length ? " · drift " + drift.length : "") })]));
     left.lastChild.style.marginTop = "12px";
     left.appendChild(fxPanel("Evidence", [h("div", { cls: "fx-pad" }, [fxEvidence(i.evidence)])]));
     left.lastChild.style.marginTop = "12px";
-    // session
+    // diff (not on the spectator API: hidden on /watch)
+    if (!FX.pub) {
+      left.appendChild(fxDiffPanel(i));
+      left.lastChild.style.marginTop = "12px";
+    }
+    // session: the embedded tail, or the full flare/session on demand
     var steps = (i.session && i.session.steps) || [];
-    if (steps.length) {
-      var maxT = 1; steps.forEach(function (s) { if (s.t > maxT) maxT = s.t; });
-      var ticks = h("div", { cls: "fx-ticks", "aria-hidden": "true" });
-      steps.forEach(function (s) { ticks.appendChild(h("span", { cls: s.kind, style: "left:" + (s.t / maxT * 98).toFixed(1) + "%", title: fxClock(s.t) + " " + s.kind })); });
-      var log = h("ol", { cls: "fx-steplog", "aria-label": "Session step log" });
-      steps.forEach(function (s) { log.appendChild(h("li", { "data-kind": "step", "data-state": s.kind }, [h("span", { cls: "t", text: fxClock(s.t) }), h("span", { cls: "k " + s.kind, text: s.kind }), h("span", { text: s.text })])); });
-      left.appendChild(fxPanel("Session", [h("div", { cls: "fx-pad" }, [ticks, log])], [h("span", { cls: "fx-path", text: ((i.session && i.session.repo) || "flare/session") + " · 0:00 → " + fxClock(maxT) })]));
+    if (steps.length || FX.fullSession[i.id] || (i.fork_repo && !FX.pub)) {
+      left.appendChild(fxSessionPanel(i));
       left.lastChild.style.marginTop = "12px";
     }
     // mailbox
@@ -3339,6 +3416,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     right.appendChild(pk);
     var acts = h("div", { cls: "fx-actions" });
     if (i.state === "awaiting_plan" && !FX.pub) acts.appendChild(h("button", { type: "button", "data-action": "approve_plan", "data-target": i.id, "aria-keyshortcuts": "a", on: { click: function () { fxCall("approve_plan", i.id, {}).then(function () { fxLoadIntent(i.id); }); } } }, ["Approve plan ", h("kbd", { text: "a" })]));
+    if (fxNeedsLanding(i) && fxCanAct()) acts.appendChild(h("button", { type: "button", "data-action": "approve_landing", "data-target": i.id, "aria-keyshortcuts": "a", title: "Risk is above the auto-land line: approve it to ride the next train (it still lands only on green CI)", on: { click: function () { fxCall("approve_landing", i.id, {}).then(function () { fxReloadIntent(i.id, box); }, function () {}); } } }, ["Approve landing ", h("kbd", { text: "a" })]));
     if (i.state === "working" && !FX.pub) acts.appendChild(h("button", { type: "button", "data-action": "mark_ready", "data-target": i.id, "aria-keyshortcuts": "m", on: { click: function () { fxCall("mark_ready", i.id, {}).then(function () { fxLoadIntent(i.id); }); } } }, ["Mark ready ", h("kbd", { text: "m" })]));
     if (!FX.pub) {
       acts.appendChild(h("button", { type: "button", cls: "ghost", "data-action": "fork_session", "data-target": i.id, "aria-keyshortcuts": "f", on: { click: function () { fxFork(i.id, right); } } }, ["Fork session ", h("kbd", { text: "f" })]));
@@ -3346,7 +3424,153 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     }
     var whyPath = (i.footprint.actual && i.footprint.actual[0]) || i.footprint.declared[0];
     if (whyPath) acts.appendChild(h("button", { type: "button", cls: "ghost", "data-action": "why", "data-target": whyPath, "aria-keyshortcuts": "w", on: { click: function () { fxOpenWhy(FX.repo, whyPath, fxFirstLine(whyPath, i.id)); } } }, ["Why ", h("kbd", { text: "w" })]));
+    if (FX_ABANDONABLE[i.state] && fxCanAct()) acts.appendChild(fxAbandonButton(i, box));
     right.appendChild(acts);
+  }
+  // Reload an intent into the same mount (master-detail pane or full page).
+  function fxReloadIntent(id, box) { fxLoadIntent(id, box && box.getAttribute && box.getAttribute("data-md") ? box : null); }
+  // A ready intent the policy routed to a human (risk above the auto-land
+  // line) waits for approve-landing. Inbox data wins; else route/risk.
+  function fxNeedsLanding(i) {
+    if (!i || i.state !== "ready" || i.landing_approved || i.landingApproved) return false;
+    var item = fxFindItem(i.id);
+    if (item) return fxApproveKind(item) === "landing";
+    if (i.route) return i.route === "human";
+    var pol = (FX.snap && FX.snap.policy) || {};
+    var max = Number(pol.auto_land_max_risk !== undefined ? pol.auto_land_max_risk : pol.autoLandMaxRisk);
+    return pol && isFinite(max) && Number(i.risk) > max;
+  }
+  var FX_ABANDONABLE = { draft: 1, awaiting_plan: 1, claimed: 1, working: 1, ready: 1, conflicted: 1, replaying: 1, expired: 1 };
+  // Abandon is permanent: the first click asks, the second one sends.
+  function fxAbandonButton(i, box) {
+    var wrap = h("span", { cls: "fx-confirm", "data-kind": "abandon", "data-id": i.id });
+    function ask() {
+      fxClear(wrap);
+      var yes = h("button", { type: "button", cls: "danger", "data-action": "abandon", "data-target": i.id, "data-confirmed": "true", text: "Abandon " + i.id });
+      var no = h("button", { type: "button", cls: "ghost", text: "Cancel" });
+      yes.addEventListener("click", function () { yes.disabled = true; fxCall("abandon", i.id, {}).then(function () { fxReloadIntent(i.id, box); }, function () { yes.disabled = false; }); });
+      no.addEventListener("click", function () { idle(); });
+      wrap.appendChild(h("span", { cls: "fx-confirm-q", role: "alert", text: "Stop this intent and free its footprint? This cannot be undone." }));
+      wrap.appendChild(yes);
+      wrap.appendChild(no);
+      setTimeout(function () { try { no.focus(); } catch (e) {} }, 0);
+    }
+    function idle() {
+      fxClear(wrap);
+      wrap.appendChild(h("button", { type: "button", cls: "ghost danger", "data-action": "abandon", "data-target": i.id, title: "Stop this intent for good (admin)", on: { click: ask } }, ["Abandon…"]));
+    }
+    idle();
+    return wrap;
+  }
+  // A footprint path as a link to the Why screen (globs stay plain text).
+  function fxWhyLink(p) {
+    p = String(p || "");
+    if (!p || p.indexOf("*") >= 0 || FX.pub) return h("span", { cls: "mono", text: p });
+    return h("a", { href: "#/why?path=" + encodeURIComponent(p) + "&line=1", cls: "mono", "data-action": "why", "data-target": p + ":1", title: "Open " + p + " on the Why screen", text: p });
+  }
+  // ---------- diff (GET /v1/forge/intents/:id/diff, read-only) ----------
+  var FX_DIFF_MAX_LINES = 1200;
+  function fxDiffPanel(i) {
+    var key = i.id + "@" + (i.head_sha || i.headSha || "");
+    var body = h("div", { cls: "fx-pad", "data-kind": "diff", "data-id": i.id });
+    var note = h("span", { cls: "fx-path", text: "fork head vs base" });
+    function load() {
+      FX.diffOpen[i.id] = true;
+      fxClear(body).appendChild(h("p", { cls: "muted", style: "margin:0;font-size:13px", text: "Loading diff…" }));
+      var p = FX.diffs[key] ? Promise.resolve(FX.diffs[key]) : FX.demo ? Promise.resolve(fxFxDiff(i)) : fxFetch("/v1/forge/intents/" + encodeURIComponent(i.id) + "/diff");
+      p.then(function (d) {
+        d = d || {};
+        FX.diffs[key] = d;
+        fxClear(body);
+        if (d.base && d.head) note.textContent = fxShort(d.base) + ".." + fxShort(d.head) + (d.fork ? " · " + d.fork : "");
+        fxRenderDiff(body, d, i.id);
+      }, function (err) {
+        fxClear(body).appendChild(h("p", { cls: "muted", style: "margin:0;font-size:13px", "data-state": "error", "data-code": err.code || "", text: "Diff unavailable: " + err.message + (err.hint ? " · " + err.hint : "") + " [" + (err.code || "error") + "]" }));
+      });
+    }
+    if (FX.diffOpen[i.id]) load();
+    else body.appendChild(h("p", { style: "margin:0;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" }, [h("span", { cls: "muted", text: "What this intent changed: its fork head against its base." }), h("button", { type: "button", cls: "ghost", "data-action": "diff", "data-target": i.id, on: { click: load } }, ["Show diff"])]));
+    return fxPanel("Diff", [body], [note]);
+  }
+  function fxRenderDiff(body, d, id) {
+    var files = d.files || [];
+    if (!files.length) { body.appendChild(h("p", { cls: "muted", style: "margin:0;font-size:13px", "data-state": "empty", text: d.note || "No changed files between base and head." })); return; }
+    var budget = FX_DIFF_MAX_LINES, add = 0, del = 0, cut = 0;
+    var list = h("div", { cls: "fx-diff" });
+    files.forEach(function (f) {
+      var st = f.status === "added" ? "A" : f.status === "deleted" ? "D" : "M";
+      var headRow = h("div", { cls: "fx-diff-file", "data-kind": "path", "data-id": f.path, "data-state": f.status || "modified" }, [h("span", { cls: "st " + (f.status || "modified"), title: f.status || "modified", text: st }), fxWhyLink(f.path)]);
+      list.appendChild(headRow);
+      if (typeof f.patch !== "string") {
+        headRow.appendChild(h("span", { cls: "muted", text: "patch omitted (" + ({ binary: "binary", too_large: "too large", budget: "server patch budget spent", listed: "past the per-call file cap", demo: "not in the demo data" }[f.omitted] || f.omitted || "unavailable") + ")" }));
+        return;
+      }
+      var r = fxDiffLines(f.patch, Math.max(0, budget));
+      budget -= r.rows.length; add += r.add; del += r.del; cut += r.cut;
+      headRow.appendChild(h("span", { cls: "fx-diff-n" }, [h("span", { cls: "st-landed", text: "+" + r.add }), " ", h("span", { cls: "st-conflict", text: "−" + r.del })]));
+      if (r.rows.length) {
+        var pre = h("pre", { cls: "fx-diff-pre", "aria-label": "Patch for " + f.path });
+        r.rows.forEach(function (row) { pre.appendChild(h("span", { cls: row.cls || null, text: row.text || " " })); });
+        list.appendChild(pre);
+      }
+    });
+    var stat = d.stat || {};
+    var sum = h("p", { cls: "fx-diff-sum", "data-kind": "diff-stat" }, [
+      h("span", { text: fxPlural(files.length, "file") + (stat.added || stat.deleted ? " (" + (stat.added || 0) + " added, " + (stat.modified || 0) + " modified, " + (stat.deleted || 0) + " deleted)" : "") + " · " }),
+      h("span", { cls: "st-landed", text: "+" + add }), " ", h("span", { cls: "st-conflict", text: "−" + del })
+    ]);
+    body.appendChild(sum);
+    body.appendChild(list);
+    if (cut || d.truncated) body.appendChild(h("p", { cls: "muted", style: "margin:8px 0 0;font-size:12.5px", "data-state": "truncated" }, [cut ? fxNum(cut) + " more lines not shown here (dashboard cap " + fxNum(FX_DIFF_MAX_LINES) + "). " : "", d.truncated ? "The server listed only part of the change. " : "", "Full patch: ", h("code", { text: "GET /v1/forge/intents/" + id + "/diff" }), " or the diff MCP tool."]));
+  }
+  // ---------- session (embedded tail; GET /v1/forge/intents/:id/session) ----------
+  function fxSessionPanel(i) {
+    var full = FX.fullSession[i.id] || null;
+    var steps = full ? full.steps : ((i.session && i.session.steps) || []);
+    var body = h("div", { cls: "fx-pad" });
+    var maxT = 1; steps.forEach(function (s) { if (s.t > maxT) maxT = s.t; });
+    if (full && full.plan) body.appendChild(h("details", { cls: "fx-plan-md", "data-kind": "session-plan" }, [h("summary", { text: "plan.md" }), h("pre", { cls: "fx-hunk", text: full.plan })]));
+    if (steps.length) {
+      var ticks = h("div", { cls: "fx-ticks", "aria-hidden": "true" });
+      steps.forEach(function (s) { ticks.appendChild(h("span", { cls: s.kind, style: "left:" + (s.t / maxT * 98).toFixed(1) + "%", title: fxClock(s.t) + " " + s.kind })); });
+      var log = h("ol", { cls: "fx-steplog" + (full ? " full" : ""), "aria-label": "Session step log" });
+      steps.forEach(function (s) { log.appendChild(h("li", { "data-kind": "step", "data-state": s.kind }, [h("span", { cls: "t", text: fxClock(s.t) }), h("span", { cls: "k " + s.kind, text: s.kind }), h("span", { text: s.text })])); });
+      body.appendChild(ticks);
+      body.appendChild(log);
+    } else body.appendChild(h("p", { cls: "muted", style: "margin:0;font-size:13px", "data-state": "empty", text: (full && full.note) || "No session steps embedded yet. The agent writes them to flare/session on its fork." }));
+    var extra = [h("span", { cls: "fx-path", text: ((i.session && i.session.repo) || "flare/session") + (steps.length ? " · 0:00 → " + fxClock(maxT) : "") })];
+    if (full) extra.push(h("span", { cls: "fx-path", "data-state": "full", text: "full · " + fxPlural(steps.length, "step") + (full.total > steps.length ? " of " + fxNum(full.total) : "") }));
+    else if (!FX.pub) {
+      var more = h("button", { type: "button", cls: "ghost fx-mini", "data-action": "load_full_session", "data-target": i.id, title: "The detail embeds the last 50 steps; load up to 1000 plus plan.md" }, ["Load full session"]);
+      more.addEventListener("click", function () {
+        more.disabled = true;
+        more.textContent = "Loading…";
+        var p = FX.demo ? Promise.resolve(fxFxSession(i)) : fxFetch("/v1/forge/intents/" + encodeURIComponent(i.id) + "/session?limit=1000");
+        p.then(function (d) {
+          FX.fullSession[i.id] = fxNormSession(d);
+          var old = more.closest ? more.closest("section.fx-panel") : null;
+          var fresh = fxSessionPanel(i);
+          fresh.style.marginTop = "12px";
+          if (old && old.parentNode) old.parentNode.replaceChild(fresh, old);
+        }, function (err) {
+          more.disabled = false;
+          more.textContent = "Load full session";
+          toast("Session unavailable: " + err.message + (err.hint ? " · " + err.hint : "") + " [" + (err.code || "error") + "]", true);
+        });
+      });
+      extra.push(more);
+    }
+    return fxPanel("Session", [body], extra);
+  }
+  // sessionOp payload -> { steps [{t, kind, text}], plan, total, note }.
+  function fxNormSession(d) {
+    d = d || {};
+    var v = d.session || null;
+    if (!v) return { steps: [], plan: null, total: 0, note: d.note || "No session yet." };
+    var raw = v.steps || [];
+    var t0 = raw.length ? Date.parse(raw[0].ts) : NaN;
+    var steps = raw.map(function (s) { var t = Date.parse(s.ts); return { t: isFinite(t0) && isFinite(t) ? Math.max(0, Math.round((t - t0) / 1000)) : 0, kind: String(s.kind || "note"), text: String(s.text || "") }; });
+    return { steps: steps, plan: typeof v.plan === "string" && v.plan ? v.plan : null, total: Number(v.totalSteps) || steps.length, note: d.note || null };
   }
   function fxFirstLine(path, intentId) {
     var w = fxFixtures().why || {};
@@ -4162,15 +4386,77 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     var mount = h("div", {});
     box.appendChild(mount);
     var useFixture = FX.demo || (path === w.path && FX.repo === "flare/bookshelf");
-    var src = useFixture && w.path === path ? Promise.resolve({ text: (w.source || []).join("\n") }) : fxFetch("/v1/repos/" + encodeURIComponent(FX.repo) + "/blob?ref=main&path=" + encodeURIComponent(path));
+    var blobUrl = "/v1/repos/" + encodeURIComponent(FX.repo) + "/blob?ref=main&path=" + encodeURIComponent(path);
+    // Server-side read (GET /v1/forge/read, no clone); the repo blob
+    // route stays as the fallback for deployments without Forge reads.
+    var src = useFixture && w.path === path ? Promise.resolve({ text: (w.source || []).join("\n") })
+      : FX.demo ? Promise.resolve({ demoMissing: true })
+      : fxFetch("/v1/forge/read?repo=" + encodeURIComponent(FX.repo) + "&path=" + encodeURIComponent(path)).then(null, function (err) { if (err.status === 401 || err.status === 403) throw err; return fxFetch(blobUrl); });
+    var hist = fxSimple() || !path ? null : fxHistoryPanel(FX.repo, path);
+    function withHistory() { if (hist) { hist.style.marginTop = "12px"; mount.appendChild(hist); } }
     src.then(function (b) {
-      if (b && typeof b.text === "string") mount.appendChild(fxCodeView(b.text, FX.repo, path, line, w.path === path ? w.blame : null));
+      if (b && b.kind === "dir") mount.appendChild(fxDirView(b, path));
+      else if (b && typeof b.text === "string") {
+        mount.appendChild(fxCodeView(b.text, FX.repo, path, line, w.path === path ? w.blame : null));
+        if (b.truncated) mount.appendChild(h("p", { cls: "muted", style: "margin:6px 0 0;font-size:12.5px", "data-state": "truncated", text: "Showing the first " + fxNum(b.text.length) + " characters of " + fxNum(b.size || 0) + " bytes." }));
+        fxScrollToLine(mount);
+      }
+      else if (b && b.demoMissing) mount.appendChild(fxSimple() ? fxEmptySimple("source_not_in_demo", "nopreview_h", "nopreview", null, null) : fxEmpty("source_not_in_demo", "No demo source for this file.", "The demo data carries source for " + (w.path || "one file") + " only. Its history below and the why chain still work.", null));
       else mount.appendChild(fxSimple() ? fxEmptySimple("source_unavailable", "nopreview_h", "nopreview", null, null) : fxEmpty("source_unavailable", "No preview for this file.", "Binary or too large to preview. The why chain still works per line.", "flare why " + path + ":1"));
+      withHistory();
       if (line) fxOpenWhy(FX.repo, path, line);
     }, function (err) {
-      if (w.path === path) { mount.appendChild(fxCodeView((w.source || []).join("\n"), FX.repo, path, line, w.blame)); FX.fallback.why = "GET /v1/repos/.../blob returned " + (err.status || "an error"); fxRenderNotice("why"); if (line) fxOpenWhy(FX.repo, path, line); }
-      else mount.appendChild(fxErrorCard(err, fxLoadWhyScreen));
+      if (w.path === path) { mount.appendChild(fxCodeView((w.source || []).join("\n"), FX.repo, path, line, w.blame)); FX.fallback.why = "GET /v1/repos/.../blob returned " + (err.status || "an error"); fxRenderNotice("why"); withHistory(); if (line) fxOpenWhy(FX.repo, path, line); }
+      else { mount.appendChild(fxErrorCard(err, fxLoadWhyScreen)); withHistory(); }
     });
+  }
+  function fxScrollToLine(mount) {
+    var sel = mount.querySelector(".ln.sel");
+    if (sel && sel.scrollIntoView) { try { sel.scrollIntoView({ block: "center" }); } catch (e) {} }
+  }
+  // A directory read: entries link back into the Why screen.
+  function fxDirView(d, path) {
+    var ul = h("ul", { cls: "fx-whyfiles", "aria-label": "Entries in " + (path || "/") });
+    (d.entries || []).forEach(function (e) {
+      var child = (path ? path.replace(/\/+$/, "") + "/" : "") + e.name;
+      ul.appendChild(h("li", { "data-kind": e.type === "dir" ? "dir" : "file", "data-id": child }, [h("a", { href: "#/why?path=" + encodeURIComponent(child) + (e.type === "dir" ? "" : "&line=1"), cls: "mono", text: e.name + (e.type === "dir" ? "/" : "") })]));
+    });
+    if (!(d.entries || []).length) ul.appendChild(h("li", { cls: "muted", text: "Empty directory." }));
+    return fxPanel("Directory", [h("div", { cls: "fx-pad" }, [ul])], [h("span", { cls: "fx-path", text: (path || "/") + (d.truncated ? " · truncated" : "") })]);
+  }
+  // Commits that changed a path (GET /v1/forge/history), newest first,
+  // each linked to the intents a train landed with it. Not on /watch.
+  function fxHistoryPanel(repo, path) {
+    var body = h("div", { cls: "fx-pad", "data-kind": "history", "data-id": path }, [h("p", { cls: "muted", style: "margin:0;font-size:13px", text: "Loading history…" })]);
+    var note = h("span", { cls: "fx-path", text: path });
+    var panel = fxPanel("History", [body], [note]);
+    if (FX.pub) return null;
+    var p = FX.demo ? Promise.resolve(fxFxHistory(path)) : fxFetch("/v1/forge/history?repo=" + encodeURIComponent(repo) + "&path=" + encodeURIComponent(path) + "&limit=20");
+    p.then(function (d) {
+      d = d || {};
+      fxClear(body);
+      var commits = d.commits || [];
+      note.textContent = path + " · " + fxPlural(commits.length, "commit") + (d.sha ? " from " + fxShort(d.sha) : "");
+      if (!commits.length) { body.appendChild(h("p", { cls: "muted", style: "margin:0;font-size:13px", "data-state": "empty", text: "No commit in the last " + fxNum(d.scanned || 0) + " on this branch changed this path." })); return; }
+      var ol = h("ol", { cls: "fx-hist", "aria-label": "History of " + path });
+      commits.forEach(function (c) {
+        var iso = fxEpochIso(c.at);
+        var links = h("span", { cls: "fx-hist-i" });
+        (c.intents || []).forEach(function (x) { links.appendChild(fxLink(x.id, "intent")); });
+        ol.appendChild(h("li", { "data-kind": "commit", "data-id": c.hash, "data-state": c.change || "" }, [
+          fxSha(c.hash),
+          h("span", { cls: "fx-hist-c " + (c.change || "modified"), text: c.change || "modified" }),
+          h("span", { cls: "fx-hist-m", title: c.message || "", text: c.message || "(no message)" }),
+          h("span", { cls: "fx-hist-a muted" }, [c.author ? c.author + " · " : "", iso ? fxTime(iso) : h("span", { text: "earlier" })]),
+          links.firstChild ? links : null
+        ]));
+      });
+      body.appendChild(ol);
+      if (d.truncated) body.appendChild(h("p", { cls: "muted", style: "margin:8px 0 0;font-size:12.5px", "data-state": "truncated", text: "Scanned " + fxNum(d.scanned || commits.length) + " commits; older history is cut off. Agents get the same list from the history MCP tool." }));
+    }, function (err) {
+      fxClear(body).appendChild(h("p", { cls: "muted", style: "margin:0;font-size:13px", "data-state": "error", "data-code": err.code || "", text: "History unavailable: " + err.message + (err.hint ? " · " + err.hint : "") + " [" + (err.code || "error") + "]" }));
+    });
+    return panel;
   }
 
   // ---------- Goal composer ----------
@@ -4502,7 +4788,9 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     var focusId = FX.route.screen === "inbox" ? FX.inboxFocus : (cur && cur.kind === "intent" && FX.route.screen === "intents" && FX.route.id ? cur.id : "");
     if (focusId) {
       var it = fxFindItem(focusId) || { id: focusId, bucket: "", reason: (cur && cur.state === "awaiting_plan") ? "plan" : "" };
-      cmds.push({ group: "Intent " + focusId, label: "Approve plan", key: "a", desc: "Protected-path plan, one keystroke with a 5s undo", mcp: "approve_plan", run: function () { if (it.bucket) fxApprove(it); else fxCall("approve_plan", focusId, {}); } });
+      var landing = it.bucket ? fxApproveKind(it) === "landing" : !!(cur && cur.state === "ready" && fxNeedsLanding(fxIntentById(focusId)));
+      if (landing) cmds.push({ group: "Intent " + focusId, label: "Approve landing", key: "a", desc: "Risk is above the auto-land line; it still lands only on green CI", mcp: "approve_landing", run: function () { if (it.bucket) fxApprove(it); else fxCall("approve_landing", focusId, {}); } });
+      else cmds.push({ group: "Intent " + focusId, label: "Approve plan", key: "a", desc: "Protected-path plan, one keystroke with a 5s undo", mcp: "approve_plan", run: function () { if (it.bucket) fxApprove(it); else fxCall("approve_plan", focusId, {}); } });
       cmds.push({ group: "Intent " + focusId, label: "Send back with reason…", key: "x", desc: "Requires a one-line reason", mcp: "send_back", run: function () { if (FX.route.screen === "inbox" && it.bucket) fxOpenSendBack(it); else fxNav("#/inbox"); } });
       cmds.push({ group: "Intent " + focusId, label: "Mark ready", key: "m", desc: "Queue for the next train", mcp: "mark_ready", run: function () { fxCall("mark_ready", focusId, {}); } });
       cmds.push({ group: "Intent " + focusId, label: "Send note…", key: "n", desc: "Delivered on the recipient's next tool call", mcp: "send_note", run: function () { fxNav("#/intents/" + focusId); setTimeout(function () { var n = document.getElementById("fxNoteInput"); if (n) n.focus(); }, 400); } });
@@ -4623,7 +4911,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
       if (k === "k" || k === "ArrowUp") { e.preventDefault(); fxMoveFocus(-1); return; }
       if (k === "1" || k === "2" || k === "3") { e.preventDefault(); FX.inboxFilter = { "1": "needs_you", "2": "sample", "3": "auto" }[k]; fxRenderInbox(); return; }
       if (!it) return;
-      if (k === "Enter") { e.preventDefault(); if (it.bucket === "needs_you" && it.reason === "plan" && !it.pending && !FX.pub) fxApprove(it); else fxNav("#/intents/" + it.id); return; }
+      if (k === "Enter") { e.preventDefault(); if (it.bucket === "needs_you" && fxApproveKind(it) && !it.pending && !FX.pub) fxApprove(it); else fxNav("#/intents/" + it.id); return; }
       if (FX.pub && (k === "a" || k === "x" || k === "s" || k === " ")) return;
       if (k === "a" && !it.pending && it.bucket !== "auto") { e.preventDefault(); fxApprove(it); return; }
       if (k === "x" && !it.pending && it.bucket !== "auto") { e.preventDefault(); fxOpenSendBack(it); return; }

@@ -63,10 +63,15 @@ same as unknown ids (no existence oracle).
 | `goal_closed` | 409 | declaring against a done/abandoned goal | `plan_goal` a new goal or drop `goalId` |
 | `lease_lost` | 409 | heartbeat on a lapsed or moved-on lease | `claim_intent` again (expired is re-claimable) or `fork_session` |
 | `fork_failed` | 502 | Artifacts fork or fork-token mint failed (claim released) | retry in a few seconds |
-| `push_unverified` | 422 | `report_push`/`resolve_conflict` sha is not on the fork | `git push` to the fork first (`flare forge push`), retry |
+| `push_unverified` | 422 | `report_push`/`resolve_conflict` sha is not on the fork | `git push` to the fork first (`npx flare-forge-cli forge push`), retry |
 | `artifacts_unconfigured` | 503 | no `ARTIFACTS` binding (claims need forks) | bind the namespace in `wrangler.jsonc` |
 | `conflict_not_claimable` | 409 | conflict already claimed/resolved, out of replay attempts, or resolved by a non-claimer | list `state=open` conflicts; only the claimer resolves |
-| `admin_required` | 403 | plan approval by a non-admin | a human admin approves in the dashboard Inbox |
-| `not_implemented` | 501 | capability not wired on this deployment (e.g. the live feed before the Coordinator) | follow the fallback in `hint` (poll `/v1/forge/snapshot`) |
+| `admin_required` | 403 | plan approval by neither an admin nor the repo's owner | the owner or an admin approves in Review |
+| `not_implemented` | 501 | capability not wired on this deployment (e.g. commit_files or the live feed not bound on this deployment) | follow the fallback in `hint` (poll `/v1/forge/snapshot`) |
+| `repo_exists` | 409 | `POST /v1/me/repos` with a name already taken | pick another name |
+| `repo_limit` | 409 | the account already owns the per-account repo limit | reuse a repo, or ask the deployment owner |
+| `repo_create_failed` | 502 | Artifacts create or the starter seed failed | retry with another name |
+| `token_limit` | 409 | too many live self-serve agent tokens | revoke one (`POST /v1/me/tokens/<id>/revoke`) |
+| `token_not_found` | 404 | revoking a token that is not yours or already revoked | `GET /v1/me/tokens` |
 | `github_repo_unavailable` | 404 | `import_github_repo` on a repo that is missing, or private without the GitHub App | fix owner/name, or install the Flare GitHub App on the repo, retry |
 | `github_link_exists` | 409 | the trunk name is already linked to a different GitHub repo | pick another `name`, or unlink the old link first |

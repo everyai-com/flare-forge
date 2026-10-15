@@ -30,6 +30,7 @@ import {
   type BridgeDeps,
   type GithubLink,
 } from "./forge-github";
+import { COMMIT_LIMITS, parseChanges } from "./forge-commit";
 import { audit, type Db, nowIso } from "./db";
 import { apiError, type ApiErrorBody, type ErrorCode } from "./errors";
 import {
@@ -124,6 +125,9 @@ export interface ForgePrincipal {
   isAdmin: boolean;
   // run scope (runner/admin tokens, flare:run OAuth): every write verb.
   canWrite: boolean;
+  // Human review verbs (approve plan/landing, send back, review sample):
+  // admins, or a member's own session on its own repos. Unset = isAdmin.
+  reviewer?: boolean;
   // Agent tag from X-Flare-Agent (MCP) — a default for `agent` args.
   agent?: string;
 }
@@ -157,7 +161,20 @@ export interface ForgeServiceDeps {
   github: BridgeDeps | null;
   loadPolicy(repo: string): Promise<{ policy: ForgePolicy; warning: string | null }>;
   trunkHead(repo: string): Promise<string>;
+  // Small text files at trunk head (null when absent or unreadable).
+  readTrunkFile(repo: string, path: string): Promise<string | null>;
+  // commit_files: write a commit to a fork without git on the agent side
+  // (forge-commit.ts on isomorphic-git); null = not wired here.
+  commitFiles: CommitFilesPort | null;
 }
+
+export type CommitFilesPort = (args: {
+  url: string;
+  token: string;
+  changes: Array<{ path: string; bytes: Uint8Array | null }>;
+  message: string;
+  author: { name: string; email: string };
+}) => Promise<{ sha: string; parent: string; changed: number }>;
 
 export type ForgeArgs = Record<string, unknown>;
 
@@ -185,6 +202,7 @@ export function forgeServiceDeps(input: {
   planner?: GoalPlanner | null;
   waitUntil?: ((p: Promise<unknown>) => void) | null;
   github?: BridgeDeps | null;
+  commitFiles?: CommitFilesPort | null;
 }): ForgeServiceDeps {
   const artifacts = input.artifacts ?? null;
   // Deps live for one request: one trunk lookup per repo serves every
@@ -195,8 +213,8 @@ export function forgeServiceDeps(input: {
     let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
     try {
       handle = await artifacts.get(repo);
-      // Trunk work always lands on `main` (an imported repo's default
-      // branch may be named otherwise; the GitHub bridge aliases it).
+      // Trains land on main; a GitHub import's default branch may be
+      // master, so name the trunk ref instead of trusting the default.
       const log = await handle.log({ ref: "main", limit: 1 });
       const hash = log[0]?.hash ?? "";
       return /^[0-9a-f]{40}$/.test(hash) ? hash : "";
@@ -226,6 +244,7 @@ export function forgeServiceDeps(input: {
     planner: input.planner ?? null,
     waitUntil: input.waitUntil ?? null,
     github: input.github ?? null,
+    commitFiles: input.commitFiles ?? null,
     // `.flare/policy.yml` from trunk; missing = default, invalid =
     // default plus a warning surfaced to the agent (never a 500). Read at
     // the trunk sha when known, so the read cache can answer it.
@@ -248,6 +267,21 @@ export function forgeServiceDeps(input: {
       }
     },
     trunkHead,
+    async readTrunkFile(repo, path) {
+      if (!artifacts) return null;
+      let handle: Awaited<ReturnType<ForgeArtifacts["get"]>> | null = null;
+      try {
+        const ref = (await trunkHead(repo)) || "main";
+        handle = await artifacts.get(repo);
+        const file = await handle.readFile({ ref, path });
+        if (!file || file.size > 256 * 1024) return null;
+        return await file.text();
+      } catch {
+        return null;
+      } finally {
+        disposeHandle(handle);
+      }
+    },
   };
 }
 
@@ -326,13 +360,30 @@ function needWrite(p: ForgePrincipal, verb: string): ForgeOutcome | null {
   return forgeFail("unauthorized", `${verb} needs run scope`, "use a runner or admin token (OAuth: the flare:run scope); readonly tokens can only read the forge");
 }
 
+// Agents name repos the way they know them: "<namespace>/name" scopes
+// and GitHub "owner/name" both map to the Forge repo (Artifacts names
+// have no slash; a GitHub repo's Forge copy is "owner-name").
+export function normalizeForgeRepo(namespace: string, v: string): string {
+  if (!v.includes("/")) return v;
+  if (namespace && v.startsWith(`${namespace}/`) && !v.slice(namespace.length + 1).includes("/")) return v.slice(namespace.length + 1);
+  const m = /^(?:https?:\/\/)?(?:www\.)?(?:github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(v);
+  return m ? `${m[1]}-${m[2]}` : v;
+}
+
 function repoArg(deps: ForgeServiceDeps, p: ForgePrincipal, v: unknown): { repo: string } | ForgeOutcome {
-  const repo = str(v);
+  const raw = str(v);
+  const repo = raw ? normalizeForgeRepo(deps.namespace, raw) : raw;
   if (!repo || !validateRepo(repo)) {
     return forgeFail("invalid_request", "repo is required: the Artifacts repo name (e.g. shop)");
   }
   if (!tournamentAllowed(p.repos, deps.namespace, repo)) return forgeFail("repo_not_allowed", "token is not scoped to that repo");
   return { repo };
+}
+
+// Review verbs load the intent through the principal's repo scope, so a
+// member reviewer only ever reaches the repos it owns.
+function canReview(p: ForgePrincipal): boolean {
+  return p.isAdmin || p.reviewer === true;
 }
 
 function isOutcome(v: unknown): v is ForgeOutcome {
@@ -940,6 +991,45 @@ export async function heartbeatOp(deps: ForgeServiceDeps, p: ForgePrincipal, arg
   });
 }
 
+// commit_files: the git-free twin of "edit, commit, git push": the agent
+// sends file contents (or deletions) and a message; the server commits
+// them on top of the fork's main with the intent's trailers, pushes, and
+// runs report_push on the new sha (footprint, drift, risk as usual).
+export async function commitFilesOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const denied = needWrite(p, "commit_files");
+  if (denied) return denied;
+  const who = resolveAgent(p, args.agent);
+  if (isOutcome(who)) return who;
+  const intent = await loadIntent(deps, p, args.intentId);
+  if (isOutcome(intent)) return intent;
+  const notOwner = await ownerCheck(deps, p, intent.id);
+  if (notOwner) return notOwner;
+  if (intent.agent !== who.agent) return forgeFail("not_owner", "intent is owned by another agent");
+  if (!intent.forkRepo || !["claimed", "working", "ready", "replaying"].includes(intent.state)) {
+    return forgeFail("not_pushable", `intent is ${intent.state}; claim it first`, "claim_intent gives you a fork; then commit_files writes to it");
+  }
+  const parsed = parseChanges(args.files);
+  if ("error" in parsed) return forgeFail("invalid_request", parsed.error, "files: [{path, content}] (content UTF-8, or encoding: \"base64\"), or {path, delete: true}");
+  const summary = str(args.message);
+  if (!summary || summary.length > COMMIT_LIMITS.message) return forgeFail("invalid_request", `message is required (1-${COMMIT_LIMITS.message} chars)`);
+  if (!deps.commitFiles || !deps.artifacts) return forgeFail("not_implemented", "commit_files is not wired on this deployment", "clone the fork and git push instead (claim_intent returns the commands)");
+  const minted = await mintForkToken(deps, intent.forkRepo, "write");
+  const url = minted ? forkRemote(deps, intent.forkRepo, minted.remote) : "";
+  if (!minted || !url) return forgeFail("fork_failed", "could not mint a write token for the fork", "retry in a few seconds");
+  const trailerFields = { goal: intent.goalId ?? "", intent: intent.id, agent: who.agent, session: intent.forkRepo };
+  let committed: { sha: string; parent: string; changed: number };
+  try {
+    committed = await deps.commitFiles({ url, token: minted.token, changes: parsed.changes, message: appendTrailers(summary, trailerFields), author: { name: who.agent, email: `${who.agent}@agents.flare.invalid` } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return forgeFail(/rejected|moved/.test(msg) ? "stale_state" : "invalid_request", `commit failed: ${msg.slice(0, 300)}`, "re-read the fork (read_file) and retry; nothing was written");
+  }
+  await auditWrite(deps, p, "intent.commit_files", `${intent.repo} ${intent.id} ${committed.sha.slice(0, 12)} (${committed.changed} files)`);
+  const pushed = await reportPushOp(deps, p, { intentId: intent.id, sha: committed.sha, agent: who.agent });
+  if (!pushed.ok) return pushed;
+  return ok({ ...pushed.data, committed: { sha: committed.sha, parent: committed.parent, files: committed.changed } });
+}
+
 export async function reportPushOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
   const denied = needWrite(p, "report_push");
   if (denied) return denied;
@@ -1067,7 +1157,7 @@ export async function markReadyOp(deps: ForgeServiceDeps, p: ForgePrincipal, arg
 }
 
 export async function approvePlanOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "plan approval needs an admin");
+  if (!canReview(p)) return forgeFail("admin_required", "plan approval needs an admin or the repo's owner");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   const done = await approvePlan(deps.db, intent.id, p.actor);
@@ -1081,7 +1171,7 @@ export async function approvePlanOp(deps: ForgeServiceDeps, p: ForgePrincipal, a
 // approve_landing (human/admin): a ready intent routed `human` (risk
 // above policy) may ride trains from now on, still CI-gated.
 export async function approveLandingOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "landing approval needs an admin");
+  if (!canReview(p)) return forgeFail("admin_required", "landing approval needs an admin or the repo's owner");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   if (!deps.trains.approveLanding) {
@@ -2087,7 +2177,7 @@ function reviewReason(v: unknown, required: boolean): { reason: string } | Forge
 // gate); landed work is never moved (the review feeds the disagreement
 // rate and the note asks for a follow-up intent).
 export async function sendBackOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "send_back is a human review verb (admin); agents use send_note");
+  if (!canReview(p)) return forgeFail("admin_required", "send_back is a human review verb (admin or repo owner); agents use send_note");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   const rr = reviewReason(args.reason, true);
@@ -2120,7 +2210,7 @@ export async function sendBackOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
 // disagree -> `review.disagreed` (+ a note to the owner). Both feed the
 // inbox disagreement rate; neither moves state.
 export async function reviewSampleOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
-  if (!p.isAdmin) return forgeFail("admin_required", "review_sample is a human review verb (admin)");
+  if (!canReview(p)) return forgeFail("admin_required", "review_sample is a human review verb (admin or repo owner)");
   const intent = await loadIntent(deps, p, args.intentId);
   if (isOutcome(intent)) return intent;
   const decision = args.decision === undefined || args.decision === null || args.decision === "" ? "agree" : args.decision;
@@ -2413,6 +2503,7 @@ export const FORGE_MCP_OPS: Record<string, ForgeOp> = {
   claim_intent: claimOp,
   heartbeat: heartbeatOp,
   report_push: reportPushOp,
+  commit_files: commitFilesOp,
   mark_ready: markReadyOp,
   send_note: sendNoteOp,
   read_inbox: readInboxOp,
@@ -2428,3 +2519,79 @@ export const FORGE_MCP_OPS: Record<string, ForgeOp> = {
   github_links: listGithubLinksOp,
   sync_github: syncGithubOp,
 };
+
+// ---------------------------------------------------------------------------
+// Overview: one read for the app's live pages (/app). It composes the
+// existing read ops so a spectator tab polling every few seconds stays
+// well under the public read rate limit (one request instead of seven).
+// Parts that fail (a missing Artifacts binding, an empty repo) come back
+// as `null` with their error code under `errors`, never as a 500.
+// ---------------------------------------------------------------------------
+
+/** Merge red lanes the recent page missed, newest first, without duplicates. */
+function withFailedTrains(recent: ForgeOutcome, failed: ForgeOutcome): ForgeOutcome {
+  if (!recent.ok || !failed.ok) return recent;
+  const list = (data: Record<string, unknown>): Record<string, unknown>[] => (Array.isArray(data.trains) ? (data.trains as Record<string, unknown>[]) : []);
+  const seen = new Set(list(recent.data).map((t) => t.id));
+  const extra = list(failed.data).filter((t) => !seen.has(t.id));
+  if (extra.length === 0) return recent;
+  const merged = [...list(recent.data), ...extra].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const { empty: _empty, ...rest } = recent.data;
+  return ok({ ...rest, trains: merged });
+}
+
+export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
+  const r = repoArg(deps, p, args.repo);
+  if (isOutcome(r)) return r;
+  const base: ForgeArgs = { repo: r.repo };
+  const [snapshot, agents, goals, intents, recentTrains, failedTrains, conflicts, inbox, activity, pipelineText] = await Promise.all([
+    snapshotOp(deps, p, base),
+    agentsOp(deps, p, base),
+    listGoalsOp(deps, p, base),
+    listIntentsOp(deps, p, { ...base, limit: 100 }),
+    listTrainsOp(deps, p, { ...base, limit: 12 }),
+    // Speculative rebuilds (aborted) push a bisected red lane out of the
+    // newest 12 within seconds; keep the latest red lanes visible.
+    listTrainsOp(deps, p, { ...base, state: "failed", limit: 3 }),
+    listConflictsOp(deps, p, { ...base, limit: 20 }),
+    storyInboxOp(deps, p, base),
+    // The repo-wide ledger, newest first: the app's activity feed reads
+    // it as plain sentences ("agent-4 declared …", "train cut …").
+    deps.db
+      .prepare("SELECT subject_kind, subject_id, kind, body, actor, created_at FROM forge_ledger WHERE repo = ? ORDER BY created_at DESC LIMIT 80")
+      .bind(r.repo)
+      .all<{ subject_kind: string; subject_id: string; kind: string; body: string; actor: string; created_at: string }>()
+      .then((x) => x.results.map((l) => ({ subjectKind: l.subject_kind, subjectId: l.subject_id, kind: l.kind, body: l.body.slice(0, 400), actor: l.actor, at: l.created_at })))
+      .catch(() => []),
+    // Trains land nothing without CI at trunk (invariant 2): the app
+    // says so instead of leaving intents silently in Ready.
+    deps.artifacts ? deps.readTrunkFile(r.repo, "flare.yml") : Promise.resolve(null),
+  ]);
+  if (!snapshot.ok) return snapshot;
+  const trains = withFailedTrains(recentTrains, failedTrains);
+  const errors: Record<string, string> = {};
+  const part = (name: string, o: ForgeOutcome): Record<string, unknown> | null => {
+    if (o.ok) return o.data;
+    errors[name] = o.body.code;
+    return null;
+  };
+  return ok({
+    repo: r.repo,
+    generatedAt: nowIso(),
+    namespace: deps.namespace,
+    // The trunk's git remote on Artifacts (empty when the account id is
+    // unknown). Dropped from the public view like every other remote.
+    remote: forkRemote(deps, r.repo, ""),
+    snapshot: snapshot.data,
+    agents: part("agents", agents),
+    goals: part("goals", goals),
+    intents: part("intents", intents),
+    trains: part("trains", trains),
+    conflicts: part("conflicts", conflicts),
+    inbox: part("inbox", inbox),
+    activity,
+    // null = unknown (no Artifacts binding); false = trains cannot land.
+    pipeline: deps.artifacts ? { present: !!(pipelineText && pipelineText.trim()) } : null,
+    errors,
+  });
+}

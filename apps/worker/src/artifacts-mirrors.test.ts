@@ -162,6 +162,13 @@ describe("ensureRepoMirror", () => {
     expect(row(db)).toMatchObject({ status: "ready" });
   });
 
+  it("adopts an existing mirror when the binding says so only in the message", async () => {
+    const db = dbWith();
+    const artifacts = fakeBinding({ importThrows: new Error("repo already exists: o-r") });
+    expect(await ensureRepoMirror(deps(db, artifacts))).toEqual({ status: "ready", mirror: "o-r" });
+    expect(row(db)).toMatchObject({ status: "ready" });
+  });
+
   it("stays importing while another import runs", async () => {
     const db = dbWith();
     const artifacts = fakeBinding({ importThrows: codedError("ALREADY_EXISTS"), getThrows: codedError("IMPORT_IN_PROGRESS") });

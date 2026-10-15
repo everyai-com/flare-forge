@@ -46,7 +46,7 @@ Append-only: new fields take higher slots, never reuse one.
 ### Querying (SQL API)
 
 Endpoint: `POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/analytics_engine/sql`
-with a Bearer [REDACTED] carrying Account Analytics Read. Request body is the
+with a Bearer API token carrying Account Analytics Read. Request body is the
 raw SQL. Counts always weight by `_sample_interval` (AE samples under
 load); terminal queries dedupe by `run_id` (redelivered transitions
 emit twice; durations derive from stamped timestamps so duplicates

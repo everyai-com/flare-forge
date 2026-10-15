@@ -17,6 +17,7 @@ import {
   runnerGroupCacheGet,
   runnerGroupCacheSet,
   parseOpenRegistration,
+  parseGithubLogin,
   parseStoredBudgets,
   parseSupersedeBranchRuns,
   parseTriageWebSearch,
@@ -152,6 +153,16 @@ describe("parseMcpWriteConfirm", () => {
     expect(parseMcpWriteConfirm(undefined)).toEqual({ on: false });
     expect("error" in parseMcpWriteConfirm("sometimes")).toBe(true);
     expect("error" in parseMcpWriteConfirm(2)).toBe(true);
+  });
+});
+
+describe("parseGithubLogin", () => {
+  it("accepts GitHub logins, trims and drops a leading @", () => {
+    expect(parseGithubLogin(" @everyai-com ")).toEqual({ login: "everyai-com" });
+    expect(parseGithubLogin("a")).toEqual({ login: "a" });
+  });
+  it("rejects anything else", () => {
+    for (const v of ["", "-x", "x-", "a--b", "a b", "x".repeat(40), 5, null]) expect(parseGithubLogin(v)).toHaveProperty("error");
   });
 });
 

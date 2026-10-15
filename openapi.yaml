@@ -2251,6 +2251,267 @@ paths:
                 type: string
         '400':
           $ref: '#/components/responses/BadRequest'
+  /v1/me:
+    get:
+      tags: [admin]
+      operationId: getMe
+      summary: The signed-in account (role, owned repos, MCP URL)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Account summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [actor, role, mcpUrl]
+                properties:
+                  actor: { type: string }
+                  role: { type: string, enum: [admin, member, runner, readonly] }
+                  repos:
+                    type: array
+                    nullable: true
+                    items: { type: string }
+                  repoLimit: { type: integer, nullable: true }
+                  mcpUrl: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/repos:
+    post:
+      tags: [admin]
+      operationId: createMyRepo
+      summary: Create a Forge repo you own, seeded with a starter project (session only)
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+      responses:
+        '201':
+          description: Repo created and seeded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repo, headSha, lanes, app]
+                properties:
+                  repo: { type: string }
+                  headSha: { type: string }
+                  lanes: { type: integer }
+                  app: { type: string }
+        '400':
+          description: Invalid name (invalid_request)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Name taken (repo_exists) or repo limit reached (repo_limit)
+        '502':
+          description: Artifacts create or seed failed (repo_create_failed)
+        '503':
+          description: Artifacts is not configured (artifacts_unconfigured)
+  /v1/me/agent-token:
+    post:
+      tags: [admin]
+      operationId: createMyAgentToken
+      summary: One-click agent token bound to you, with ready-to-paste MCP commands (session only, shown once)
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 60 }
+      responses:
+        '201':
+          description: Token created (plaintext shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, token, mcpUrl, commands]
+                properties:
+                  id: { type: string }
+                  token: { type: string }
+                  mcpUrl: { type: string }
+                  commands:
+                    type: object
+                    properties:
+                      claude: { type: string }
+                      codex: { type: string }
+                      cursor: { type: string }
+                      env: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Too many live agent tokens (token_limit)
+  /v1/me/github-repos:
+    get:
+      tags: [admin]
+      operationId: listMyGithubRepos
+      summary: 'GitHub repos you can bring into Forge (admins see every App-visible repo; members signed in with GitHub see their own)'
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Repos with their Forge status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repos]
+                properties:
+                  githubLogin: { type: string, nullable: true }
+                  installUrl: { type: string, nullable: true }
+                  repos:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fullName: { type: string }
+                        private: { type: boolean }
+                        defaultBranch: { type: string }
+                        forgeRepo: { type: string }
+                        inForge: { type: boolean }
+                        takenByOther: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/import:
+    post:
+      tags: [admin]
+      operationId: importGithubRepo
+      summary: Bring a GitHub repo into Forge (Artifacts import + train lane pool); you own it
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo]
+              properties:
+                repo: { type: string, description: 'owner/name or a github.com URL' }
+      responses:
+        '201':
+          description: Imported and ready for trains
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ready] }
+                  repo: { type: string }
+                  trunk: { type: string }
+                  lanesCreated: { type: integer }
+                  app: { type: string }
+        '202':
+          description: GitHub is still copying; call again in a minute
+        '400':
+          description: Not a GitHub owner/name (invalid_request)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Private or missing, and not reachable through your GitHub App access (repo_not_allowed)
+        '409':
+          description: In Forge under another account (repo_exists) or repo limit reached (repo_limit)
+        '502':
+          description: Import or lane setup failed (repo_create_failed)
+  /v1/me/repos/{repo}/ci:
+    post:
+      tags: [admin]
+      operationId: addRepoCi
+      summary: Add a starter flare.yml to a repo's trunk so trains can land (owner or admin)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Committed a starter pipeline chosen from the repo's files
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repo: { type: string }
+                  sha: { type: string }
+                  kind: { type: string, enum: [node, go, rust, python, generic] }
+                  steps: { type: array, items: { type: string } }
+                  flareYml: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not the repo's owner (repo_not_allowed)
+        '409':
+          description: The repo already has a flare.yml
+        '502':
+          description: Commit failed (repo_create_failed)
+  /v1/me/tokens:
+    get:
+      tags: [admin]
+      operationId: listMyTokens
+      summary: Your self-serve agent tokens (metadata only)
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Your tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        createdAt: { type: string }
+                        revoked: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/tokens/{id}/revoke:
+    post:
+      tags: [admin]
+      operationId: revokeMyToken
+      summary: Revoke one of your agent tokens
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Not your token, or already revoked (token_not_found)
   /v1/admin/tokens:
     get:
       tags: [admin]
@@ -2881,6 +3142,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Ok'
+  /v1/auth/{endpoint}:
+    get:
+      tags: [auth]
+      operationId: betterAuthGet
+      summary: Better Auth endpoints (magic-link verify, session, sign-out) — handled by better-auth
+      security: []
+      parameters:
+        - name: endpoint
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Better Auth response
+        '302':
+          description: Redirect (magic-link verify)
+    post:
+      tags: [auth]
+      operationId: betterAuthPost
+      summary: Better Auth endpoints (sign-up/email, sign-in/email, sign-in/magic-link, sign-out) — handled by better-auth
+      security: []
+      parameters:
+        - name: endpoint
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Better Auth response
+  /v1/admin/auth/bridge:
+    post:
+      tags: [auth]
+      operationId: bridgeBetterAuthSession
+      summary: Mint a Flare session from the Better Auth session cookie (first account claims admin; otherwise open registration decides)
+      security: []
+      responses:
+        '200':
+          description: Flare session cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  admin:
+                    type: boolean
+        '401':
+          description: No Better Auth session
+        '403':
+          description: Registration closed, or admin already claimed
   /v1/admin/magic/request:
     post:
       tags: [auth]
@@ -5080,6 +5400,57 @@ paths:
           $ref: '#/components/responses/ForgeConflict'
         '502':
           $ref: '#/components/responses/ForgeUpstream'
+  /v1/forge/intents/{intentId}/commit:
+    post:
+      tags: [forge]
+      operationId: forgeCommitFiles
+      summary: Commit files to your fork without git (then report_push runs on the new sha)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: intentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, files]
+              properties:
+                message: { type: string, maxLength: 4000 }
+                agent: { type: string }
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [path]
+                    properties:
+                      path: { type: string }
+                      content: { type: string }
+                      encoding: { type: string, enum: [utf8, base64] }
+                      delete: { type: boolean }
+      responses:
+        '200':
+          description: Committed and verified (report_push result plus committed {sha, parent, files})
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid files or message (invalid_request)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Not claimed (not_pushable), not your intent (not_owner), or the fork moved (stale_state)
+        '501':
+          description: Commit engine not wired here (not_implemented)
   /v1/forge/intents/{intentId}/push:
     post:
       tags:
@@ -5805,6 +6176,53 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ForgeSnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/forge/overview:
+    get:
+      tags:
+        - forge
+      operationId: forgeOverview
+      summary: 'One read for the app: snapshot + agents + goals + intents + trains + conflicts + inbox'
+      description: Composes the read ops so a page polling every few seconds makes one request. Parts that fail come back as null with their error code under `errors`.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: repo
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Artifacts repo name (e.g. shop); token allowlists scope it as `<namespace>/<repo>`
+      responses:
+        '200':
+          description: Overview bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  repo:
+                    type: string
+                  generatedAt:
+                    type: string
+                  namespace:
+                    type: string
+                  remote:
+                    type: string
+                    description: The trunk's Artifacts git remote (empty when unknown)
+                  snapshot:
+                    $ref: '#/components/schemas/ForgeSnapshot'
+                  errors:
+                    type: object
+                    additionalProperties:
+                      type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -6794,6 +7212,23 @@ paths:
                 $ref: '#/components/schemas/Error'
         '501':
           $ref: '#/components/responses/ForgeNotImplemented'
+  /app:
+    get:
+      tags:
+        - forge
+      operationId: forgeApp
+      summary: 'The Forge product app (static shell; signed in it reads /v1/forge/overview, spectators the public bundle)'
+      security: []
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 'Repo to open (default: the first repo the account can see, or the first public repo)'
+      responses:
+        '200':
+          description: App HTML (text/html)
   /watch:
     get:
       tags:
@@ -7113,6 +7548,32 @@ paths:
       responses:
         '200':
           description: Sanitized read-only payload (credentials, commands, mailboxes and nextSteps removed)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/public/forge/overview:
+    get:
+      tags:
+        - forge
+      operationId: forgePublicOverview
+      summary: 'Public overview bundle (sanitized): snapshot + agents + goals + intents + trains + conflicts + inbox'
+      security: []
+      parameters:
+        - name: repo
+          in: query
+          required: true
+          schema:
+            type: string
+          description: A repo the admin designated in forge_public_repos
+      responses:
+        '200':
+          description: Sanitized read-only payload (credentials, remotes, commands, mailboxes and nextSteps removed)
           content:
             application/json:
               schema:

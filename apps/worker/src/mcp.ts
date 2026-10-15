@@ -75,6 +75,7 @@ export const MCP_TOOL_RISK: Record<string, McpToolRisk> = {
   claim_intent: "contained-write",
   heartbeat: "contained-write",
   report_push: "contained-write",
+  commit_files: "contained-write",
   mark_ready: "contained-write",
   send_note: "contained-write",
   read_inbox: "read",
@@ -165,6 +166,23 @@ const FORGE_TOOL_SCHEMAS = {
     intentId: forgeIntent,
     sha: z.string().describe("Full 40-hex sha you just pushed to your fork: git rev-parse HEAD (required)").optional(),
     files: z.array(z.string()).describe("Only when the server cannot diff the fork: files you changed").optional(),
+    agent: forgeAgent,
+    confirm: forgeConfirm,
+  }),
+  commit_files: z.object({
+    intentId: forgeIntent,
+    message: z.string().describe("Commit summary (required); the Flare trailers are appended for you").optional(),
+    files: z
+      .array(
+        z.object({
+          path: z.string().describe("Repo-relative path, e.g. src/app.ts"),
+          content: z.string().describe("Full new file content (UTF-8, or base64 with encoding: base64); omit with delete").optional(),
+          encoding: z.enum(["utf8", "base64"]).optional(),
+          delete: z.boolean().describe("true to delete the file").optional(),
+        }),
+      )
+      .describe("1-50 files, ≤1 MB each, ≤5 MB total (required)")
+      .optional(),
     agent: forgeAgent,
     confirm: forgeConfirm,
   }),
@@ -312,7 +330,7 @@ const TOOL_SCHEMAS = {
 // declare_intent -> claim_intent -> (edit, git push) -> report_push ->
 // mark_ready. Every forge result carries `nextSteps: [{tool, args, why}]`
 // and every failure `{ error, code, hint }` (docs/ERRORS.md).
-const FORGE_LOOP = "Forge loop: whats_happening → declare_intent → claim_intent → edit + git push → report_push → mark_ready.";
+const FORGE_LOOP = "Forge loop: whats_happening → declare_intent → claim_intent → commit_files (no git) or edit + git push → report_push → mark_ready.";
 export const FORGE_TOOLS: McpToolDef[] = [
   {
     name: "plan_goal",
@@ -341,6 +359,11 @@ export const FORGE_TOOLS: McpToolDef[] = [
     name: "report_push",
     description:
       "Call after every `git push` to your fork, with the pushed sha. The server verifies the sha is on your fork, diffs it against your base to get the actual files changed, recomputes risk (drift = undeclared files), and returns {intent, actualFootprint, drift, risk{score, terms}, overlaps, inbox, nextSteps}. push_unverified means the push did not land yet. Next: mark_ready once the acceptance check passes. Scope: run.",
+  },
+  {
+    name: "commit_files",
+    description:
+      "No git needed: call after claim_intent with the full new content of each file you changed (or {path, delete: true}) and a commit message. The server commits them on top of your fork's main with the Flare trailers, pushes, and runs report_push for you, returning the same {intent, actualFootprint, drift, risk, overlaps, inbox, nextSteps} plus committed {sha, parent, files}. Use read_file to fetch current content first. Call again for more commits. stale_state means the fork moved: re-read and retry. Next: mark_ready once the acceptance check passes. Scope: run.",
   },
   {
     name: "mark_ready",

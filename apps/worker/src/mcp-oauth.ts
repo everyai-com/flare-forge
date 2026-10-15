@@ -48,10 +48,13 @@ export interface McpPrincipalProps {
   actor: string;
   repos: string[];
   isAdmin: boolean;
+  // Non-admin grants: the account (email:… / github:…) whose owned repos
+  // bound every call, resolved per request.
+  owner?: string;
 }
 
-export function oauthProps(login: string): McpPrincipalProps {
-  return { actor: `oauth:${login}`, repos: [], isAdmin: false };
+export function oauthProps(login: string, owner?: string): McpPrincipalProps {
+  return owner ? { actor: `oauth:${login}`, repos: [], isAdmin: false, owner } : { actor: `oauth:${login}`, repos: [], isAdmin: false };
 }
 
 // Grant storage keys are colon-separated, so user ids must not contain
@@ -110,7 +113,7 @@ export function resourceServerConfig(origin: string): {
   };
 }
 
-// Dual-auth fallback: a Bearer [REDACTED] the authorization server does not
+// Dual-auth fallback: a Bearer token the authorization server does not
 // recognize is checked against the legacy API tokens (env secrets, then
 // D1). OAuth and API tokens converge on one principal shape downstream.
 export async function principalFromApiToken(
@@ -121,7 +124,8 @@ export async function principalFromApiToken(
   const ident = await authIdentityFromToken(token, secrets);
   if (!ident) return null;
   const scope =
-    ident.scope === "admin" || ident.scope === "runner"
+    // Member tokens write too, bounded by ident.repos (the owner's repos).
+    ident.scope === "admin" || ident.scope === "runner" || ident.scope === "member"
       ? [MCP_OAUTH_SCOPE_READ, MCP_OAUTH_SCOPE_RUN]
       : [MCP_OAUTH_SCOPE_READ];
   return { props: { actor: ident.actor, repos: ident.repos, isAdmin: ident.scope === "admin" }, audience: resource, scope };
@@ -281,7 +285,7 @@ export async function handleAuthorizePost(request: Request, ctx: AuthorizeContex
       userId: ctx.session.userId,
       metadata: { login: ctx.session.login, role: ctx.session.isAdmin ? "admin" : "user", clientName: client.clientName ?? null },
       scope,
-      props: oauthProps(ctx.session.login),
+      props: ctx.session.isAdmin ? oauthProps(ctx.session.login) : oauthProps(ctx.session.login, ctx.session.actor),
     });
     await ctx.audit("oauth.grant", `${client.clientId} ${scope.join(",")}`).catch(() => undefined);
     return Response.redirect(redirectTo, 302);

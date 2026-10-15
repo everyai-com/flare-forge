@@ -1,6 +1,6 @@
 {
   "name": "flare-forge-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI for Flare Forge (intent-native git for many agents on one repo) and Flare Actions (its CI engine): declare intents, connect agents over MCP, verify runs, read digests.",
   "keywords": [
     "agents",
