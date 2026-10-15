@@ -63,16 +63,12 @@ export function parseGithubRepo(input: unknown): string | null {
   return `${owner}/${name}`;
 }
 
-// Trunk name for an imported repo: `gh-owner-name`, lowercase, within
-// the Artifacts name rules. Prefixed so it never collides with the CI
-// mirror of the same repo (`owner-name`, artifacts-mirrors.ts).
+// Trunk name for an imported repo: `owner-name`, the same name as the
+// CI mirror of that repo (artifacts-mirrors.ts mirrorNameFor), so one
+// GitHub repo is one Forge repo. Both writers of its main only ever
+// fast-forward from GitHub and refuse diverged history.
 export function defaultTrunkName(githubRepo: string): string {
-  const slug = `gh-${githubRepo.replace("/", "-")}`
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/-$/, "");
-  return slug.slice(0, 100);
+  return githubRepo.replace("/", "-").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 100);
 }
 
 export function isSyncMode(v: unknown): v is SyncMode {
@@ -315,6 +311,9 @@ export interface BridgeArtifacts {
     target: { name: string; opts?: { description?: string } };
   }): Promise<{ remote: string }>;
   get(name: string): Promise<BridgeRepoHandle>;
+  // Empty repo for private sources: Artifacts imports only public HTTPS
+  // remotes, so a private repo is created empty and seeded by a pull.
+  create?(name: string, opts?: { description?: string; setDefaultBranch?: string }): Promise<{ remote: string }>;
 }
 
 export interface GithubRepoInfo {
@@ -345,6 +344,9 @@ export interface BridgeDeps {
   // Git remote of a GitHub repo (tests point it at a local fixture).
   githubRemote?: (githubRepo: string) => string;
   dashboardUrl?: string;
+  // After an import settles: make the trunk train-ready (lane pool,
+  // refs/notes/why). Absent = the caller prepares it.
+  prepareTrunk?: (repo: string, githubRepo: string) => Promise<void>;
 }
 
 function githubUrl(deps: BridgeDeps, githubRepo: string): string {
@@ -480,16 +482,22 @@ export async function importGithubRepo(deps: BridgeDeps, input: ImportInput): Pr
   });
   await audit(deps.db, input.actor, "forge.github.import", `${githubRepo} -> ${trunk}`).catch(() => undefined);
 
-  // Server-side import: no history ever passes through the Worker.
-  const sourceUrl = token ? `https://x-access-token:${token}@github.com/${githubRepo}.git` : `https://github.com/${githubRepo}.git`;
+  // Public: server-side import, no history passes through the Worker.
+  // Private: Artifacts refuses credentials in the source URL, so create
+  // the repo empty and let the first pull seed it with the App token.
+  const sourceUrl = `https://github.com/${githubRepo}.git`;
   let status: ImportResult["status"] = "ready";
   try {
-    await deps.artifacts.import({
+    if (info.isPrivate) {
+      if (!deps.artifacts.create) throw Object.assign(new Error("private imports need Artifacts create"), { code: "UNSUPPORTED" });
+      await deps.artifacts.create(trunk, { description: `Imported from github.com/${githubRepo} by Flare Forge`, setDefaultBranch: TRUNK_BRANCH });
+    } else await deps.artifacts.import({
       source: { url: deps.githubRemote ? githubUrl(deps, githubRepo) : sourceUrl, branch: info.defaultBranch },
       target: { name: trunk, opts: { description: `Imported from github.com/${githubRepo} by Flare Forge` } },
     });
   } catch (err) {
-    const code = codeOf(err);
+    // Some binding errors carry the reason only in the message.
+    const code = codeOf(err) || (/already exists/i.test(err instanceof Error ? err.message : String(err)) ? "ALREADY_EXISTS" : "");
     if (code === "ALREADY_EXISTS") {
       warnings.push(`trunk ${trunk} already existed: adopted it as the link target`);
     } else if (code === "IMPORT_IN_PROGRESS") {
@@ -513,6 +521,7 @@ export async function importGithubRepo(deps: BridgeDeps, input: ImportInput): Pr
       await patchGithubLink(deps.db, trunk, { status: "importing", detail: sync.detail });
     } else {
       await patchGithubLink(deps.db, trunk, { status: "ready", detail: "" });
+      if (deps.prepareTrunk) await deps.prepareTrunk(trunk, githubRepo).catch((err: unknown) => warnings.push(`trains not ready yet: ${redact(err)} (retried by the next sync)`));
     }
   }
   const link = await getGithubLink(deps.db, trunk);
@@ -534,6 +543,7 @@ export async function reconcileGithubLinks(deps: BridgeDeps, limit = 3): Promise
       continue;
     }
     await patchGithubLink(deps.db, row.repo, { status: "ready", detail: "" });
+    if (deps.prepareTrunk) await deps.prepareTrunk(row.repo, row.github_repo).catch(() => undefined);
     done += 1;
   }
   return done;
@@ -580,6 +590,12 @@ async function hasCommit(ctx: SyncCtx, oid: string): Promise<boolean> {
 async function serverRef(ctx: SyncCtx, url: string, ref: string, user: string, token: string | null): Promise<string | null> {
   const refs = await ctx.deps.git.listServerRefs({ http: ctx.deps.http, url, prefix: ref, ...auth(user, token) });
   return refs.find((r) => r.ref === ref)?.oid ?? null;
+}
+
+// Seeding an empty trunk needs complete history: a shallow push would
+// reference parents the trunk does not have.
+async function fetchFull(ctx: SyncCtx, url: string, ref: string, user: string, token: string | null): Promise<void> {
+  await ctx.deps.git.fetch({ fs: ctx.fs, http: ctx.deps.http, gitdir: GITDIR, remote: await remoteName(ctx, url), ref, singleBranch: true, tags: false, ...auth(user, token) });
 }
 
 async function fetchDepth(ctx: SyncCtx, url: string, ref: string, depth: number, user: string, token: string | null): Promise<string | null> {
@@ -677,7 +693,11 @@ async function pullOnce(deps: BridgeDeps, link: GithubLink, trunkUrl: string): P
   const trunkSha = await serverRef(ctx, trunkUrl, `refs/heads/${TRUNK_BRANCH}`, "x", readToken);
   if (trunkSha === githubSha) return { status: "noop", detail: "trunk matches GitHub", githubSha, trunkSha };
 
-  await fetchCovering(ctx, ghUrl, link.defaultBranch, trunkSha, "x-access-token", ghToken);
+  // An empty trunk (a private repo created empty) needs full history; a
+  // trunk that only lacks the `main` alias already holds the objects.
+  const trunkEmpty = !trunkSha && (await ctx.deps.git.listServerRefs({ http: ctx.deps.http, url: trunkUrl, prefix: "refs/heads/", ...auth("x", readToken) })).length === 0;
+  if (trunkEmpty) await fetchFull(ctx, ghUrl, link.defaultBranch, "x-access-token", ghToken);
+  else await fetchCovering(ctx, ghUrl, link.defaultBranch, trunkSha, "x-access-token", ghToken);
   if (!trunkSha) {
     // No `main` yet (GitHub's default branch has another name): alias it.
     const writeToken = await mintTrunkToken(deps, link.repo, "write");

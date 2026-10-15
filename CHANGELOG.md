@@ -8,6 +8,18 @@ tagged on `main` (`v0.1.0` is the first).
 
 ### Added (2026-10-15)
 
+- **Private GitHub repos import.** Artifacts refuses credentials in an
+  import URL, so a private repo is created empty and seeded by the
+  bridge's first pull (full history fetched in the Worker with the App
+  installation token, never stored). **Bring into Forge** now runs
+  through the bridge: one GitHub repo becomes one Forge repo named like
+  its CI mirror (`owner-name`), linked for two-way sync (landed work goes
+  back as one rolling pull request when the App can write), and made
+  train-ready (lane pool + `refs/notes/why`) — which bridge imports
+  previously were not.
+- The "no CI" banner follows the train's rule: `flare.yml`, or the
+  repo's GitHub workflows when they translate.
+
 - **Add CI in one click.** A repo with no `flare.yml` shows why its
   intents wait in Ready, and **Add CI** commits a starter pipeline picked
   from the repo (npm/pnpm/yarn/bun scripts, Go, Rust, Python), so trains

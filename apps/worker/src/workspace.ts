@@ -67,6 +67,25 @@ export function parseGithubRepo(v: unknown): string | null {
   return m && m[2] !== "." && m[2] !== ".." ? `${m[1]}/${m[2]}` : null;
 }
 
+// Record (or confirm) who owns a Forge repo before importing into it:
+// the same account may re-run; another account gets repo_exists; a new
+// repo counts against the limit (null = no limit, admins).
+export async function claimRepoOwnership(
+  db: Db,
+  owner: string,
+  name: string,
+  namespace: string,
+  limit: number | null,
+): Promise<{ ok: true } | { ok: false; status: number; code: "repo_exists" | "repo_limit"; error: string }> {
+  const holder = await db.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(name).first<{ owner: string }>();
+  if (holder) return holder.owner === owner ? { ok: true } : { ok: false, status: 409, code: "repo_exists", error: "that repo is already in Forge under another account" };
+  if (limit !== null && (await listOwnedRepos(db, owner)).length >= limit) {
+    return { ok: false, status: 409, code: "repo_limit", error: `each account can own ${limit} repos` };
+  }
+  await db.prepare("INSERT INTO repo_owners (repo, scoped, owner, created_at) VALUES (?, ?, ?, ?)").bind(name, `${namespace}/${name}`, owner, nowIso()).run();
+  return { ok: true };
+}
+
 export async function importGithubRepo(
   deps: ImportRepoDeps,
   owner: string,
@@ -75,21 +94,15 @@ export async function importGithubRepo(
 ): Promise<ImportRepoResult> {
   const name = mirrorNameFor(source);
   if (!name) return { ok: false, status: 400, code: "invalid_request", error: "repo must be a GitHub owner/name" };
-  const holder = await deps.db.prepare("SELECT owner FROM repo_owners WHERE repo = ?").bind(name).first<{ owner: string }>();
-  if (holder && holder.owner !== owner) return { ok: false, status: 409, code: "repo_exists", error: "that repo is already in Forge under another account" };
-  if (!holder) {
-    if (opts.limit !== null && (await listOwnedRepos(deps.db, owner)).length >= (opts.limit ?? MEMBER_REPO_LIMIT)) {
-      return { ok: false, status: 409, code: "repo_limit", error: `each account can own ${opts.limit ?? MEMBER_REPO_LIMIT} repos` };
-    }
-    await deps.db.prepare("INSERT INTO repo_owners (repo, scoped, owner, created_at) VALUES (?, ?, ?, ?)").bind(name, `${deps.namespace}/${name}`, owner, nowIso()).run();
-  }
+  const claimed = await claimRepoOwnership(deps.db, owner, name, deps.namespace, opts.limit === undefined ? MEMBER_REPO_LIMIT : opts.limit);
+  if (!claimed.ok) return claimed;
   const mirror = await ensureRepoMirror({ db: deps.db, artifacts: deps.artifacts, repo: source, isPrivate: opts.isPrivate, installationToken: opts.installationToken ?? null });
   if (mirror.status === "importing") return { ok: true, status: "importing", repo: name, source };
   if (mirror.status !== "ready") {
     const detail = mirror.status === "skipped" ? mirror.reason : mirror.detail ?? "";
     // Artifacts imports public HTTPS remotes only (credentials in the URL
     // are refused), so a private repo cannot come in this way yet.
-    const hint = opts.isPrivate || /auth|private/i.test(detail) ? " (Cloudflare Artifacts can import public repos only; private repos are not supported yet)" : "";
+    const hint = opts.isPrivate || /auth|private/i.test(detail) ? " (private repos import through Bring into Forge with the Flare GitHub App)" : "";
     return { ok: false, status: 502, code: "repo_create_failed", error: `import from GitHub failed: ${detail}${hint}` };
   }
   try {

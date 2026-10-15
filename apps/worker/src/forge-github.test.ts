@@ -101,6 +101,12 @@ function harness(): Harness {
       return { remote: fx.remoteFor(target.name) };
     },
     get: (name) => fx.artifacts.get(name),
+    async create(name) {
+      const dst = path.join(fx.root, `${name}.git`);
+      if (nfs.existsSync(dst)) throw Object.assign(new Error("exists"), { code: "ALREADY_EXISTS" });
+      fx.sh(["init", "-q", "--bare", "-b", "main", dst]);
+      return { remote: fx.remoteFor(name) };
+    },
   };
   const deps: BridgeDeps = {
     db,
@@ -146,8 +152,8 @@ describe("pure helpers", () => {
     }
   });
 
-  it("names trunks so they never collide with CI mirrors", () => {
-    expect(defaultTrunkName("Acme/Widgets.js")).toBe("gh-acme-widgets.js");
+  it("names a trunk like the repo's CI mirror (one GitHub repo, one Forge repo)", () => {
+    expect(defaultTrunkName("Acme/Widgets.js")).toBe("Acme-Widgets.js");
     expect(defaultTrunkName(`a/${"x".repeat(120)}`).length).toBeLessThanOrEqual(100);
   });
 
@@ -170,18 +176,44 @@ describe("pure helpers", () => {
 // Real git fixtures: each test does several clones/pushes, which can
 // pass 5s when the full suite saturates the machine.
 describe("import", { timeout: 30_000 }, () => {
+  it("imports a private repo: created empty, seeded with full history over the App token, then made train-ready", async () => {
+    seedGithub();
+    const second = h.fx.commit(ghBare(GH), { "src/a.ts": "a2\n" }, "second");
+    h.gh.info = { defaultBranch: "main", isPrivate: true };
+    const prepared: Array<{ repo: string; githubRepo: string }> = [];
+    const out = await importGithubRepo({ ...h.deps, prepareTrunk: async (repo, githubRepo) => void prepared.push({ repo, githubRepo }) }, { github: GH, actor: "admin" });
+    if ("error" in out) throw new Error(out.message);
+    expect(out.status).toBe("ready");
+    expect(out.trunk).toBe("acme-widgets");
+    // No credentials ever went to Artifacts import: the repo was created empty.
+    expect(h.imports).toEqual([]);
+    const trunk = path.join(h.fx.root, "acme-widgets.git");
+    expect(h.fx.sh(["rev-parse", "main"], trunk)).toBe(second);
+    // Full history, not a shallow seed: the first commit is present too.
+    expect(h.fx.sh(["rev-list", "--count", "main"], trunk)).toBe("2");
+    expect(prepared).toEqual([{ repo: "acme-widgets", githubRepo: GH }]);
+  });
+
+  it("refuses a private repo without the App installed", async () => {
+    seedGithub();
+    h.gh.info = { defaultBranch: "main", isPrivate: true };
+    h.gh.installed = false;
+    const out = await importGithubRepo(h.deps, { github: GH, actor: "admin" });
+    expect(out).toMatchObject({ error: "github_repo_unavailable" });
+  });
+
   it("imports a public repo as a trunk and records the link", async () => {
     const head = seedGithub();
     const out = await importGithubRepo(h.deps, { github: `https://github.com/${GH}`, actor: "admin" });
     if ("error" in out) throw new Error(out.message);
     expect(out.status).toBe("ready");
-    expect(out.trunk).toBe("gh-acme-widgets");
+    expect(out.trunk).toBe("acme-widgets");
     expect(out.sync?.status).toBe("noop");
-    expect(h.fx.head("gh-acme-widgets")).toBe(head);
-    expect(h.imports[0]).toMatchObject({ branch: "main", name: "gh-acme-widgets" });
-    const link = await getGithubLink(h.db, "gh-acme-widgets");
+    expect(h.fx.head("acme-widgets")).toBe(head);
+    expect(h.imports[0]).toMatchObject({ branch: "main", name: "acme-widgets" });
+    const link = await getGithubLink(h.db, "acme-widgets");
     expect(link).toMatchObject({ githubRepo: GH, syncMode: "pr", syncBranch: "flare/trunk", pullUpstream: true, status: "ready", installationId: 7, lastPulledSha: head });
-    expect((await listGithubLinks(h.db)).map((l) => l.repo)).toEqual(["gh-acme-widgets"]);
+    expect((await listGithubLinks(h.db)).map((l) => l.repo)).toEqual(["acme-widgets"]);
   });
 
   it("re-importing is idempotent; another GitHub repo cannot take the name", async () => {
@@ -191,7 +223,7 @@ describe("import", { timeout: 30_000 }, () => {
     const again = await importGithubRepo(h.deps, { github: GH, actor: "admin" });
     expect(again).toMatchObject({ status: "exists" });
     expect(h.imports).toHaveLength(1);
-    const clash = await importGithubRepo(h.deps, { github: "other/repo", name: "gh-acme-widgets", actor: "admin" });
+    const clash = await importGithubRepo(h.deps, { github: "other/repo", name: "acme-widgets", actor: "admin" });
     expect(clash).toMatchObject({ error: "github_link_exists" });
   });
 
@@ -201,7 +233,7 @@ describe("import", { timeout: 30_000 }, () => {
     const out = await importGithubRepo(h.deps, { github: GH, actor: "admin" });
     if ("error" in out) throw new Error(out.message);
     expect(out.sync?.status).toBe("seeded");
-    expect(h.fx.head("gh-acme-widgets", "main")).toBe(head);
+    expect(h.fx.head("acme-widgets", "main")).toBe(head);
   });
 
   it("refuses private repos without the App, and bad input", async () => {
@@ -260,7 +292,7 @@ describe("import", { timeout: 30_000 }, () => {
     const pending = await importGithubRepo(settling, { github: GH, actor: "a" });
     expect(pending).toMatchObject({ status: "importing" });
     expect(await reconcileGithubLinks(h.deps)).toBe(1);
-    expect((await getGithubLink(h.db, "gh-acme-widgets"))?.status).toBe("ready");
+    expect((await getGithubLink(h.db, "acme-widgets"))?.status).toBe("ready");
   });
 });
 
@@ -375,30 +407,30 @@ describe("REST surface (/v1/forge/github/*)", { timeout: 30_000 }, () => {
 
     const created = await call("POST", "/v1/forge/github/links", { github: `https://github.com/${GH}`, syncMode: "branch" }, ADMIN);
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ status: "ready", repo: "gh-acme-widgets" });
+    expect(created.body).toMatchObject({ status: "ready", repo: "acme-widgets" });
     expect((created.body.nextSteps as Array<{ tool: string }>).map((s) => s.tool)).toContain("plan_goal");
 
     const list = await call("GET", "/v1/forge/github/links", undefined, RUNNER);
-    expect((list.body.links as Array<{ repo: string; githubUrl: string }>)[0]).toMatchObject({ repo: "gh-acme-widgets", githubUrl: `https://github.com/${GH}` });
+    expect((list.body.links as Array<{ repo: string; githubUrl: string }>)[0]).toMatchObject({ repo: "acme-widgets", githubUrl: `https://github.com/${GH}` });
     // Repo-scoped tokens only see their trunks.
     expect((await call("GET", "/v1/forge/github/links", undefined, SCOPED)).body.links).toEqual([]);
-    expect((await call("GET", "/v1/forge/github/links/gh-acme-widgets", undefined, SCOPED)).status).toBe(403);
+    expect((await call("GET", "/v1/forge/github/links/acme-widgets", undefined, SCOPED)).status).toBe(403);
 
-    expect((await call("PATCH", "/v1/forge/github/links/gh-acme-widgets", { syncMode: "pr" }, RUNNER)).status).toBe(403);
-    expect((await call("PATCH", "/v1/forge/github/links/gh-acme-widgets", { syncMode: "bogus" }, ADMIN)).status).toBe(400);
-    const patched = await call("PATCH", "/v1/forge/github/links/gh-acme-widgets", { syncMode: "pr", pullUpstream: false }, ADMIN);
+    expect((await call("PATCH", "/v1/forge/github/links/acme-widgets", { syncMode: "pr" }, RUNNER)).status).toBe(403);
+    expect((await call("PATCH", "/v1/forge/github/links/acme-widgets", { syncMode: "bogus" }, ADMIN)).status).toBe(400);
+    const patched = await call("PATCH", "/v1/forge/github/links/acme-widgets", { syncMode: "pr", pullUpstream: false }, ADMIN);
     expect(patched.body.link).toMatchObject({ syncMode: "pr", pullUpstream: false });
 
-    const landed = h.fx.commit("gh-acme-widgets", { "src/a.ts": "a3\n" }, "landed");
-    const synced = await call("POST", "/v1/forge/github/links/gh-acme-widgets/sync", { direction: "push" }, RUNNER);
+    const landed = h.fx.commit("acme-widgets", { "src/a.ts": "a3\n" }, "landed");
+    const synced = await call("POST", "/v1/forge/github/links/acme-widgets/sync", { direction: "push" }, RUNNER);
     expect(synced.body.push).toMatchObject({ status: "pr-opened", trunkSha: landed });
     expect(synced.body.link).toMatchObject({ prUrl: `https://github.com/${GH}/pull/1` });
-    expect((await call("POST", "/v1/forge/github/links/gh-acme-widgets/sync", { direction: "sideways" }, RUNNER)).status).toBe(400);
+    expect((await call("POST", "/v1/forge/github/links/acme-widgets/sync", { direction: "sideways" }, RUNNER)).status).toBe(400);
 
-    expect((await call("DELETE", "/v1/forge/github/links/gh-acme-widgets", undefined, RUNNER)).status).toBe(403);
-    expect((await call("DELETE", "/v1/forge/github/links/gh-acme-widgets", undefined, ADMIN)).body).toMatchObject({ unlinked: true });
-    expect((await call("GET", "/v1/forge/github/links/gh-acme-widgets", undefined, ADMIN)).status).toBe(404);
+    expect((await call("DELETE", "/v1/forge/github/links/acme-widgets", undefined, RUNNER)).status).toBe(403);
+    expect((await call("DELETE", "/v1/forge/github/links/acme-widgets", undefined, ADMIN)).body).toMatchObject({ unlinked: true });
+    expect((await call("GET", "/v1/forge/github/links/acme-widgets", undefined, ADMIN)).status).toBe(404);
     // Unlinking never deletes the trunk.
-    expect(h.fx.head("gh-acme-widgets")).toBe(landed);
+    expect(h.fx.head("acme-widgets")).toBe(landed);
   });
 });

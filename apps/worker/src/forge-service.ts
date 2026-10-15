@@ -13,6 +13,7 @@
 // are minted only on `i-<id>` forks (invariant 1).
 //
 // Runtime-free: vitest drives it with node:sqlite + fake Artifacts.
+import { loadTrunkCi } from "./trunk-ci";
 import {
   defaultTrunkName,
   deleteGithubLink,
@@ -2540,6 +2541,23 @@ function withFailedTrains(recent: ForgeOutcome, failed: ForgeOutcome): ForgeOutc
   return ok({ ...rest, trains: merged });
 }
 
+// Isolate cache (not request state): CI kind per repo@sha. A trunk sha's
+// files never change, so entries never go stale; bounded by eviction.
+const CI_KIND_CACHE = new Map<string, "flare" | "actions" | "none">();
+
+async function trunkCiKind(deps: ForgeServiceDeps, repo: string): Promise<"flare" | "actions" | "none" | null> {
+  const sha = await deps.trunkHead(repo);
+  if (!sha || !deps.artifacts) return null;
+  const key = `${repo}@${sha}`;
+  const hit = CI_KIND_CACHE.get(key);
+  if (hit) return hit;
+  const ci = await loadTrunkCi(deps.artifacts, repo, sha).catch(() => null);
+  const kind = ci ? ci.kind : "none";
+  if (CI_KIND_CACHE.size > 500) CI_KIND_CACHE.clear();
+  CI_KIND_CACHE.set(key, kind);
+  return kind;
+}
+
 export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args: ForgeArgs): Promise<ForgeOutcome> {
   const r = repoArg(deps, p, args.repo);
   if (isOutcome(r)) return r;
@@ -2564,8 +2582,9 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
       .then((x) => x.results.map((l) => ({ subjectKind: l.subject_kind, subjectId: l.subject_id, kind: l.kind, body: l.body.slice(0, 400), actor: l.actor, at: l.created_at })))
       .catch(() => []),
     // Trains land nothing without CI at trunk (invariant 2): the app
-    // says so instead of leaving intents silently in Ready.
-    deps.artifacts ? deps.readTrunkFile(r.repo, "flare.yml") : Promise.resolve(null),
+    // says so instead of leaving intents silently in Ready. Same rule as
+    // the train: flare.yml, else translatable GitHub workflows.
+    deps.artifacts ? trunkCiKind(deps, r.repo) : Promise.resolve(null),
   ]);
   if (!snapshot.ok) return snapshot;
   const trains = withFailedTrains(recentTrains, failedTrains);
@@ -2591,7 +2610,7 @@ export async function overviewOp(deps: ForgeServiceDeps, p: ForgePrincipal, args
     inbox: part("inbox", inbox),
     activity,
     // null = unknown (no Artifacts binding); false = trains cannot land.
-    pipeline: deps.artifacts ? { present: !!(pipelineText && pipelineText.trim()) } : null,
+    pipeline: deps.artifacts ? { present: pipelineText !== "none", kind: pipelineText === "none" ? null : pipelineText } : null,
     errors,
   });
 }

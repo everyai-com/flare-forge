@@ -80,9 +80,13 @@ MIT licensed. One Worker serves the API + dashboard; runners are external pull c
 - Forge <-> GitHub bridge (`forge-github.ts` runtime-free, `forge-github-env.ts`
   wiring, `docs/FORGE-GITHUB.md`): `POST /v1/forge/github/links` (admin;
   MCP `import_github_repo`, `cli forge import`) imports a GitHub repo
-  into an Artifacts trunk server-side (`gh-<owner>-<name>`, installation
-  token for private repos, never logged) and records
-  `forge_github_links` (migration 0047). Trunk work is on `main` (a
+  into an Artifacts trunk (`<owner>-<name>`, the CI mirror's name; public
+  repos via the Artifacts import, private ones created empty and seeded
+  by a Worker pull with the installation token, never logged), makes it
+  train-ready (`prepareTrunk` → `prepareForgeTrunk`) and records
+  `forge_github_links` (migration 0053). The app's **Bring into Forge**
+  (`POST /v1/me/import`) goes through the same import with ownership
+  and limits. Trunk work is on `main` (a
   non-main default branch gets a `main` alias on first sync). Push
   sync runs after every landing train (`github-<round>` Workflow step +
   cron path): `pr` (default; force-updates only `sync_branch` +

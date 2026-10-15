@@ -522,9 +522,12 @@ describe("forge routes: commit_files (no git on the agent side)", () => {
 describe("forge routes: overview reports whether trunk has CI", () => {
   it("pipeline.present follows flare.yml at trunk", async () => {
     const h = harness();
-    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: false });
-    h.fake.repos.get("demo")?.files.set("flare.yml", "jobs:\n  t:\n    steps:\n      - run: npm test\n");
-    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: true });
+    expect(rec((await h.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: false, kind: null });
+    // A fresh request (the trunk head is memoised per request) on a trunk with CI.
+    const h2 = harness();
+    h2.fake.commit("demo", sha("9"), { "README.md": "r1", "src/api/a.ts": "a1", "flare.yml": "jobs:\n  t:\n    steps:\n      - run: npm test\n" }, sha("0"));
+    h2.fake.repos.get("demo")?.files.set("flare.yml", "jobs:\n  t:\n    steps:\n      - run: npm test\n");
+    expect(rec((await h2.call("GET", "/v1/forge/overview?repo=demo")).body.pipeline)).toEqual({ present: true, kind: "flare" });
     expect((await harness({ artifacts: false }).call("GET", "/v1/forge/overview?repo=demo")).body.pipeline).toBeNull();
   });
 });

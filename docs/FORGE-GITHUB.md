@@ -34,7 +34,7 @@ CLI (admin token):
 
 ```bash
 npm run cli -- forge import https://github.com/acme/widgets
-# ready: github.com/acme/widgets -> trunk gh-acme-widgets
+# ready: github.com/acme/widgets -> trunk acme-widgets
 #   sync: pr (flare/trunk); pull upstream: on
 ```
 
@@ -43,16 +43,20 @@ MCP (any agent, admin token): `import_github_repo { github: "acme/widgets" }`.
 REST: `POST /v1/forge/github/links {"github":"acme/widgets"}`.
 
 Then hand the trunk to agents as usual (`docs/FORGE-AGENTS.md`):
-`plan_goal { repo: "gh-acme-widgets", text: "…", plan: true }`.
+`plan_goal { repo: "acme-widgets", text: "…", plan: true }`.
 
 ## What happens
 
-1. **Import.** The Worker calls the Artifacts `import` binding. The
-   history never passes through the Worker, so repo size isn't limited
-   by Worker memory. A private repo is fetched with a short-lived GitHub
-   App installation token. The token is used only in memory and is never
-   stored or logged. The trunk is named `gh-<owner>-<name>` by default,
-   which never collides with the CI mirror (`<owner>-<name>`).
+1. **Import.** A public repo goes through the Artifacts `import`
+   binding, so its history never passes through the Worker. Artifacts
+   refuses credentials in an import URL, so a **private** repo is created
+   empty and seeded by the first pull: the Worker fetches the default
+   branch's full history with a short-lived GitHub App installation token
+   (memory only, never stored or logged) and pushes it to the trunk; that
+   path is bounded by Worker memory, so very large private repos may not
+   fit. The trunk is named `<owner>-<name>`, the same name as the repo's
+   CI mirror, so one GitHub repo is one Forge repo. After the import the
+   trunk gets the train lane pool and `refs/notes/why`, ready to land.
 2. **`main` alias.** Forge trunks land on `main`. If GitHub's default
    branch has another name (for example `master`), the first sync
    creates `main` at the same commit and tracks your branch from then
@@ -124,10 +128,10 @@ only if agents are meant to change CI files.
 
 ```bash
 npm run cli -- forge links                       # every link: mode, last push/pull, PR, errors
-npm run cli -- forge sync gh-acme-widgets        # pull then push, now
-npm run cli -- forge sync gh-acme-widgets --pull # GitHub -> trunk only
-npm run cli -- forge link-set gh-acme-widgets --sync direct --pull off
-npm run cli -- forge unlink gh-acme-widgets
+npm run cli -- forge sync acme-widgets        # pull then push, now
+npm run cli -- forge sync acme-widgets --pull # GitHub -> trunk only
+npm run cli -- forge link-set acme-widgets --sync direct --pull off
+npm run cli -- forge unlink acme-widgets
 ```
 
 | Endpoint | Scope | Purpose |

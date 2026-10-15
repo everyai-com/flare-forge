@@ -4,6 +4,8 @@
 // as the connected GitHub App (env creds or dashboard Connect). Shared
 // by REST/MCP (forge-adapters.ts), trains (train-workflow.ts) and the
 // webhook + cron hooks in index.ts.
+import { setMirrorRow } from "./db";
+import { FORGE_READY_DETAIL, prepareForgeTrunk } from "./workspace";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { resolveAppCreds } from "./connect";
@@ -36,6 +38,12 @@ export function bridgeDepsFromEnv(env: WorkerEnv): BridgeDeps | null {
     http,
     fs: () => new MemoryFS(),
     remoteFor: (repo) => artifactsRemoteFor(accountId, namespace, repo),
+    // Imports become train-ready (lane pool + notes) and are marked so the
+    // first-push mirror hook does not redo the work.
+    prepareTrunk: async (repo, githubRepo) => {
+      await prepareForgeTrunk({ artifacts, git, http, fs: () => new MemoryFS() }, repo);
+      await setMirrorRow(env.DB, githubRepo, repo, "ready", FORGE_READY_DETAIL);
+    },
   };
 }
 
