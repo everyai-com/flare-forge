@@ -20,6 +20,8 @@ a script, over MCP or plain `git`.
 
 <sub>A 20-second loop from the teaser. **Click it for the full 90-second video with sound** ([MP4, 1080p, 46 MB](docs/video/flare-forge-teaser.mp4)). Dashboard shots use demo data (the Bookshelf fixture).</sub>
 
+**Read the story:** [Main Never Red](https://claude.ai/artifact/7tV1NmphorGf6GdzK7Byo4), the long-form write-up of why we built Flare Forge and how it works, with the teaser, diagrams of intents, trains and the why chain, live screenshots, and the measured git bill.
+
 ![Flare Forge live map: a new agent (C10) declares an intent on src/routes/books.ts and Forge answers with the overlap before any code exists; three steps across the top explain declare, overlap, verified trains](docs/img/forge-live.png)
 
 <sub>Live map, **demo data**: the moment an agent (C10) declares an intent
@@ -47,7 +49,8 @@ criteria is [below](#how-it-maps-to-the-judging-criteria).
    Then: *"What happened in bookshelf, what is still open, and what has it cost in Artifacts operations?"*
 3. **Use it yourself, in about a minute** (anyone can sign up): [create an account](https://flare-actions.everyai-com.workers.dev/app?login=1), then **+ New repo** (a starter project with a test and CI) or **Repos → Bring into Forge** for any public GitHub repo. **Connect agent → Create my agent token** returns the `claude mcp add ...` line with the token filled in; paste it into Claude Code (Codex and Cursor snippets are there too) and ask: *"Declare an intent for &lt;task&gt;, claim it, land it through a train."* Agents without a shell or git use **`commit_files`**: they send file contents and Forge writes the commit to their fork. Your repos are private to you; you approve plans and review your own work.
 4. **Run it on your own account** in about 15 minutes: `npm run setup`, then `npm run forge:demo` and `npm run forge:agents -- --mode scripted` ([docs/DEMO.md](docs/DEMO.md)). The run ends with a `report.json`: timings plus the ops ledger.
-5. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
+5. **Read the blog post:** [Main Never Red](https://claude.ai/artifact/7tV1NmphorGf6GdzK7Byo4) tells the whole story in about 14 minutes.
+6. **Read the idea in three lines:** agents declare an *intent* (what, where, why, how to prove it) before editing; overlaps come back before any code is written; trunk moves only through trains that CI verifies as the exact merged SHA, and every landed line answers `why`.
 
 Artifacts gives every agent a repo. Forge gives every repo one plan.
 
