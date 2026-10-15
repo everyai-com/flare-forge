@@ -23,7 +23,9 @@
 import type { FsClient, HttpClient, PromiseFsClient } from "isomorphic-git";
 import type git from "isomorphic-git";
 import { type Db, claimWebhookDelivery, getRun, isTerminal, nowIso } from "./db";
-import { ARTIFACTS_EVENT, artifactsDeliveryId, loadArtifactsPipeline } from "./artifacts-push";
+import { ARTIFACTS_EVENT, artifactsDeliveryId } from "./artifacts-push";
+import type { PipelineJob } from "./pipeline";
+import { loadTrunkCi, type TrunkCi } from "./trunk-ci";
 import {
   pathCovers,
   parsePolicy,
@@ -110,7 +112,10 @@ export interface TrainDispatchInput {
   repo: string;
   sha: string;
   ref: string;
-  pipeline: string;
+  // flare.yml text, or (repos without one, e.g. imported from GitHub)
+  // jobs translated from the trunk's own `.github/workflows`.
+  pipeline?: string;
+  jobs?: PipelineJob[];
   event: string;
   agent: string;
   priority: number;
@@ -379,10 +384,14 @@ export async function loadPolicy(deps: TrainDeps, repo: string): Promise<ForgePo
   return parsed.ok ? parsed.value : DEFAULT_POLICY;
 }
 
-async function loadPipelineAt(deps: TrainDeps, repo: string, sha: string): Promise<string | null> {
-  if (deps.loadPipeline) return deps.loadPipeline(repo, sha).catch(() => null);
-  if (!deps.artifacts) return null;
-  return loadArtifactsPipeline(deps.artifacts, repo, sha);
+// What verifies a commit: flare.yml, else the repo's translated GitHub
+// Actions workflows (trunk-ci.ts). null = nothing may land.
+async function loadCiAt(deps: TrainDeps, repo: string, sha: string): Promise<TrunkCi | null> {
+  if (deps.loadPipeline) {
+    const text = await deps.loadPipeline(repo, sha).catch(() => null);
+    return text ? { kind: "flare", pipeline: text } : null;
+  }
+  return loadTrunkCi(deps.artifacts, repo, sha);
 }
 
 async function runStatusOf(deps: TrainDeps, runId: string): Promise<{ status: string; sha: string } | null> {
@@ -790,7 +799,7 @@ export async function cutTrain(deps: TrainDeps, repo: string): Promise<CutResult
   if (!baseSha) return { status: "unavailable" };
   // CI is the gate: without a pipeline at trunk there is nothing to
   // verify, so nothing may land (invariant 2).
-  if (!(await loadPipelineAt(deps, repo, baseSha))) return { status: "no-pipeline" };
+  if (!(await loadCiAt(deps, repo, baseSha))) return { status: "no-pipeline" };
   const hold = deps.holdReason ? await deps.holdReason(repo).catch(() => null) : null;
   if (hold) return { status: "held", reason: hold };
   const plan = planTrain(candidates, policy, { maxLanes: cap.slots.length });
@@ -1207,22 +1216,22 @@ export async function dispatchTrains(deps: TrainDeps, repo: string): Promise<num
   // chain was built; a probe's base is main), never from the lane head: a
   // lane head carries the intents' changes, and an intent that rewrote
   // flare.yml to `echo ok` must not get to choose the CI that verifies it.
-  const pipelines = new Map<string, string | null>();
-  const pipelineAt = async (sha: string): Promise<string | null> => {
-    if (!pipelines.has(sha)) pipelines.set(sha, await loadPipelineAt(deps, repo, sha));
+  const pipelines = new Map<string, TrunkCi | null>();
+  const pipelineAt = async (sha: string): Promise<TrunkCi | null> => {
+    if (!pipelines.has(sha)) pipelines.set(sha, await loadCiAt(deps, repo, sha));
     return pipelines.get(sha) ?? null;
   };
   // null = dispatched or already running; else the reason it could not.
   const dispatchOne = async (t: Train, trunkSha: string): Promise<string | null> => {
     if (t.runId) return null;
-    const pipeline = await pipelineAt(trunkSha);
-    if (!pipeline || !deps.dispatch) return pipeline ? "no dispatcher" : "no pipeline on trunk";
+    const ci = await pipelineAt(trunkSha);
+    if (!ci || !deps.dispatch) return ci ? "no dispatcher" : "no pipeline on trunk";
     try {
       const out = await deps.dispatch({
         repo: `${deps.namespace}/${repo}`,
         sha: t.headSha,
         ref: `refs/heads/${laneRef(t.lane)}`,
-        pipeline,
+        ...(ci.kind === "flare" ? { pipeline: ci.pipeline } : { jobs: ci.jobs }),
         event: ARTIFACTS_EVENT,
         agent: TRAIN_RUN_AGENT,
         priority: TRAIN_RUN_PRIORITY,

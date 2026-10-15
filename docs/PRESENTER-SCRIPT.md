@@ -84,7 +84,7 @@ Second sentence: "It is built entirely on Cloudflare: Workers, Artifacts, Durabl
 - Simulator at 10k changes: "main red due to integration" is 0 minutes in every mode; human review minutes drop as risk routing takes over.
 - Edge speed: cold page load 0.4 to 0.7 s after the schema-fingerprint fast path; one bundled overview call every 3 s per viewer; public reads rate-limited per IP.
 - Multi-tenant ready: tokens are repo-scoped (owner/name or org/*), spectator mode per repo, per-repo budgets with a kill switch, fairness caps per repo and per agent.
-- Honest limits (say them before being asked): GitHub stays the source of truth until the bridge ships; public GitHub repos import in one click, private ones cannot yet (Artifacts imports public remotes only); Artifacts billing starts today so the $ figure is from Cloudflare's published rate; the resolver is a model and that is why risk routing exists.
+- Honest limits (say them before being asked): GitHub stays the source of truth: landed work returns as a sync pull request a human merges; very large private repos may not fit the Worker-side import; Artifacts billing starts today so the $ figure is from Cloudflare's published rate; the resolver is a model and that is why risk routing exists.
 
 ## 5. How to talk
 

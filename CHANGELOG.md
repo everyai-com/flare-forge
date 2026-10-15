@@ -8,6 +8,18 @@ tagged on `main` (`v0.1.0` is the first).
 
 ### Added (2026-10-15)
 
+- **Private GitHub repos import.** Artifacts refuses credentials in an
+  import URL, so a private repo is created empty and seeded by the
+  bridge's first pull (full history fetched in the Worker with the App
+  installation token, never stored). **Bring into Forge** now runs
+  through the bridge: one GitHub repo becomes one Forge repo named like
+  its CI mirror (`owner-name`), linked for two-way sync (landed work goes
+  back as one rolling pull request when the App can write), and made
+  train-ready (lane pool + `refs/notes/why`) — which bridge imports
+  previously were not.
+- The "no CI" banner follows the train's rule: `flare.yml`, or the
+  repo's GitHub workflows when they translate.
+
 - **Add CI in one click.** A repo with no `flare.yml` shows why its
   intents wait in Ready, and **Add CI** commits a starter pipeline picked
   from the repo (npm/pnpm/yarn/bun scripts, Go, Rust, Python), so trains
@@ -54,8 +66,25 @@ tagged on `main` (`v0.1.0` is the first).
 - Private GitHub repos say plainly they cannot be imported yet
   (Artifacts imports public HTTPS remotes only) instead of failing.
 - Git test fixtures ignore a late `EPIPE` from `git http-backend`.
+### Added
+
+- Forge <-> GitHub bridge (`docs/FORGE-GITHUB.md`): import any GitHub
+  repo as a Forge trunk from the dashboard (Agent forge → Import from
+  GitHub), `cli forge import`, MCP `import_github_repo` or
+  `POST /v1/forge/github/links`. Landed work flows back after every
+  train as one rolling PR (or a branch, or a fast-forward of the
+  default branch: never forced), and GitHub pushes fast-forward the
+  trunk, so merged sync PRs close the loop. `cli forge
+  links|sync|link-set|unlink`, MCP `github_links` / `sync_github`.
+- Trains (and Artifacts push CI) verify repos with no `flare.yml` using
+  their own `.github/workflows`, read from the trunk and translated by
+  the Actions-compat layer, so imported repos land on day one.
 
 ### Fixed
+
+- Forge `trunkHead` read the Artifacts default branch instead of
+  `main`, so a trunk whose default branch is not `main` reported the
+  wrong base for new intents.
 
 - Two deploy blockers that 500'd every route on fresh preview deploys
   (and would have hit prod next): index.ts exported a non-function

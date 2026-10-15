@@ -122,7 +122,7 @@ export const FORGE_PURE_JS = String.raw`
     return isFinite(ms) ? new Date(ms).toISOString() : "";
   }
   // Everything a spectator must never see or trigger (data-action = MCP verb).
-  var FX_WRITE_ACTIONS = ["approve_plan", "approve_landing", "abandon", "send_back", "review_sample", "mark_ready", "send_note", "fork_session", "claim_conflict", "plan_goal", "declare_intent", "select_item", "explore_demo"];
+  var FX_WRITE_ACTIONS = ["approve_plan", "approve_landing", "abandon", "send_back", "review_sample", "mark_ready", "send_note", "fork_session", "claim_conflict", "plan_goal", "declare_intent", "select_item", "explore_demo", "import_github_repo", "sync_github"];
   var FX_PUBLIC_HIDDEN_TABS = ["tabHome", "tabTournaments", "tabRepos", "tabMerge", "tabRuns", "tabSettings", "tabAgents", "tabBench"];
 `;
 
@@ -4488,6 +4488,84 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     if (FX.composerReturn && FX.composerReturn.focus) try { FX.composerReturn.focus(); } catch (e) {}
     return true;
   }
+  // ---------- GitHub bridge: import + linked repos ----------
+  function fxOpenImport() {
+    var ov = document.getElementById("fxImportOverlay");
+    FX.importReturn = document.activeElement;
+    ov.hidden = false;
+    fxLoadLinks();
+    setTimeout(function () { document.getElementById("fxImportRepo").focus(); }, 0);
+  }
+  function fxCloseImport() {
+    var ov = document.getElementById("fxImportOverlay");
+    if (ov.hidden) return false;
+    ov.hidden = true;
+    if (FX.importReturn && FX.importReturn.focus) try { FX.importReturn.focus(); } catch (e) {}
+    return true;
+  }
+  function fxLinkRow(l) {
+    var mode = l.syncMode === "off" ? "sync off" : (l.syncMode === "direct" ? "fast-forwards " + l.defaultBranch : l.syncMode + " via " + l.syncBranch);
+    var open = h("button", { cls: "ghost", type: "button", text: "Open", on: { click: function () { fxSetRepo(l.repo); fxCloseImport(); } } });
+    var sync = h("button", { cls: "ghost", type: "button", "data-action": "sync_github", text: "Sync now" });
+    sync.addEventListener("click", function () {
+      if (FX.demo) { toast("Demo: sync " + l.repo + ": pull up to date, push up to date"); return; }
+      sync.disabled = true;
+      fxFetch("/v1/forge/github/links/" + encodeURIComponent(l.repo) + "/sync", { method: "POST", body: { direction: "both" } }).then(function (r) {
+        toast("Sync " + l.repo + ": pull " + ((r && r.pull && r.pull.status) || "-") + ", push " + ((r && r.push && r.push.status) || "-"));
+        fxLoadLinks();
+      }, function (err) { sync.disabled = false; toast(err.message + (err.hint ? " (" + err.hint + ")" : ""), true); });
+    });
+    return h("div", { cls: "fx-link-row", "data-id": l.repo }, [
+      h("div", {}, [h("strong", { text: l.repo }), " ", h("span", { cls: "muted", text: "github.com/" + l.githubRepo + " · " + l.status + " · " + mode + (l.pullUpstream ? " · pulls on" : "") })]),
+      l.prUrl ? h("a", { href: l.prUrl, target: "_blank", rel: "noopener", text: "Open sync PR #" + l.prNumber }) : null,
+      l.detail ? h("div", { cls: "muted", text: l.detail }) : null,
+      h("div", { cls: "fx-actions" }, FX.demo ? [sync] : [open, sync])
+    ]);
+  }
+  function fxLoadLinks() {
+    var box = fxClear(document.getElementById("fxImportLinks"));
+    if (FX.demo) {
+      var demo = FX.demoLinks || [];
+      box.appendChild(h("p", { cls: "muted", text: demo.length ? "Demo data: these links exist only in this tab." : "Demo data: import any public repo to see what a link looks like. Nothing is imported." }));
+      demo.forEach(function (l) { box.appendChild(fxLinkRow(l)); });
+      return;
+    }
+    fxFetch("/v1/forge/github/links").then(function (d) {
+      var links = (d && d.links) || [];
+      if (!links.length) { box.appendChild(h("p", { cls: "muted", text: d && d.wired === false ? "This deployment has no Artifacts binding yet, so it cannot hold Forge trunks." : "No linked repos yet." })); return; }
+      links.forEach(function (l) { box.appendChild(fxLinkRow(l)); });
+    }, function (err) { box.appendChild(h("p", { cls: "muted", text: "Could not load links: " + err.message })); });
+  }
+  function fxImport() {
+    var input = document.getElementById("fxImportRepo");
+    var gh = input.value.trim();
+    if (!gh) { input.focus(); toast("Paste a GitHub repo first", true); return; }
+    var btn = document.getElementById("fxImportGo");
+    var note = document.getElementById("fxImportNote");
+    if (FX.demo) {
+      var m = /^(?:https?:\/\/github\.com\/)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(gh);
+      if (!m) { note.textContent = "Use owner/name or https://github.com/owner/name"; return; }
+      var mode = document.getElementById("fxImportMode").value;
+      FX.demoLinks = (FX.demoLinks || []).filter(function (l) { return l.githubRepo !== m[1] + "/" + m[2]; });
+      FX.demoLinks.unshift({ repo: m[2].toLowerCase(), githubRepo: m[1] + "/" + m[2], status: "ready", syncMode: mode, defaultBranch: "main", syncBranch: "flare/trunk", pullUpstream: document.getElementById("fxImportPull").checked, prUrl: "", prNumber: 0, detail: "Demo: on a real deployment this becomes a Forge trunk your agents fork from. Trains run the repo's own CI and landed work goes back to GitHub." });
+      note.textContent = "Demo: linked " + m[1] + "/" + m[2] + " as " + m[2].toLowerCase() + ". Nothing left this tab.";
+      input.value = "";
+      fxLoadLinks();
+      return;
+    }
+    btn.disabled = true;
+    note.textContent = "Importing. Large repos take a minute.";
+    fxFetch("/v1/forge/github/links", { method: "POST", body: { github: gh, syncMode: document.getElementById("fxImportMode").value, pullUpstream: document.getElementById("fxImportPull").checked } }).then(function (d) {
+      btn.disabled = false;
+      if (!d) return;
+      if (d.status === "failed") note.textContent = "Import failed: " + ((d.link && d.link.detail) || "unknown error");
+      else if (d.status === "importing") note.textContent = "Import started as " + d.repo + "; it finishes in the background.";
+      else note.textContent = (d.status === "exists" ? "Already linked as " : "Imported as ") + d.repo + ".";
+      (d.warnings || []).forEach(function (w) { toast(w, true); });
+      if (d.status !== "failed") { input.value = ""; fxSetRepo(d.repo); }
+      fxLoadLinks();
+    }, function (err) { btn.disabled = false; note.textContent = err.message + (err.hint ? " (" + err.hint + ")" : ""); });
+  }
   function fxPlan() {
     var text = document.getElementById("fxGoalText").value.trim();
     if (!text) { document.getElementById("fxGoalText").focus(); if (fxSimple()) fxToast(fxS("toast_goal_first"), true); else toast("Write the goal first", true); return; }
@@ -4705,6 +4783,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     if (FX.pub) go = go.filter(function (g) { return fxPubScreen(g[0]); });
     go.forEach(function (g) { cmds.push({ group: "Go to", label: "Go to " + FX_SCREENS[g[0]], key: "g " + g[1], desc: g[2], run: function () { fxNav("#/" + g[0]); } }); });
     cmds.push({ group: "Create", label: "New goal…", key: "c", desc: "Planner proposes intents; you edit before launch", mcp: "plan_goal", run: fxOpenComposer });
+    if (!FX.pub) cmds.push({ group: "Create", label: "Import from GitHub…", key: "", desc: "Bring a GitHub repo into Forge; landed work syncs back", mcp: "import_github_repo", run: fxOpenImport });
     var cur = FX.current;
     var focusId = FX.route.screen === "inbox" ? FX.inboxFocus : (cur && cur.kind === "intent" && FX.route.screen === "intents" && FX.route.id ? cur.id : "");
     if (focusId) {
@@ -4792,6 +4871,11 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     if (fxTourKey(e)) return;
     var composer = !document.getElementById("fxComposerOverlay").hidden;
     var keys = !document.getElementById("fxKeysOverlay").hidden;
+    if (!document.getElementById("fxImportOverlay").hidden) {
+      if (e.key === "Escape") { e.preventDefault(); fxCloseImport(); }
+      else if (e.key === "Enter" && e.target && e.target.id === "fxImportRepo") { e.preventDefault(); fxImport(); }
+      return;
+    }
     if (composer) {
       if (e.key === "Escape") { e.preventDefault(); fxCloseComposer(); }
       else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); fxPlan(); }
@@ -4888,6 +4972,7 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     fxInitTour();
     var tb = document.getElementById("fxTourBtn");
     tb.hidden = !FX.demo && !FX.pub;
+    document.getElementById("fxImportBtn").hidden = !!FX.pub;
     tb.addEventListener("click", fxTourStart);
     if (q.get("stage") === "1") { FX.stage = true; document.body.classList.add("fx-stagemode"); FX.preStageTheme = document.documentElement.getAttribute("data-theme"); document.documentElement.setAttribute("data-theme", "dark"); }
     var btns = document.querySelectorAll(".side-link[data-tab]");
@@ -4912,6 +4997,10 @@ export const FORGE_JS = String.raw`` + FORGE_PURE_JS + String.raw`
     document.getElementById("fxComposerCancel").addEventListener("click", fxCloseComposer);
     document.getElementById("fxComposerOverlay").addEventListener("click", function (ev) { if (ev.target === this) fxCloseComposer(); });
     document.getElementById("fxPlanBtn").addEventListener("click", fxPlan);
+    document.getElementById("fxImportBtn").addEventListener("click", fxOpenImport);
+    document.getElementById("fxImportClose").addEventListener("click", fxCloseImport);
+    document.getElementById("fxImportOverlay").addEventListener("click", function (ev) { if (ev.target === this) fxCloseImport(); });
+    document.getElementById("fxImportGo").addEventListener("click", fxImport);
     document.getElementById("fxLaunchBtn").addEventListener("click", fxLaunch);
     document.getElementById("fxAskBtn").addEventListener("click", fxAskClaude);
     document.getElementById("fxAskCopy").addEventListener("click", function () { fxAskCopy(); });

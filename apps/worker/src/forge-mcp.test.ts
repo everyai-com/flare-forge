@@ -27,6 +27,9 @@ const FORGE_TOOL_NAMES = [
   "approve_plan",
   "send_back",
   "review_sample",
+  "import_github_repo",
+  "github_links",
+  "sync_github",
 ];
 
 function setup(over: Partial<McpDeps> = {}) {

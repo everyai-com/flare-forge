@@ -45,6 +45,11 @@ is printed rather than written. `--json` returns the file list.
 The CLI is the npm package `flare-forge-cli` (`npx flare-forge-cli ...`); from a clone of this repo,
 `npm run cli -- forge ...` is the same command.
 
+No trunk yet? Import the GitHub repo you already have (admin token):
+`npx flare forge import owner/name` or MCP `import_github_repo`. Landed
+work goes back to GitHub as one rolling PR, and the repo's own
+`.github/workflows` verify every train. See `docs/FORGE-GITHUB.md`.
+
 ## 2. The loop
 
 ```

@@ -73,3 +73,5 @@ same as unknown ids (no existence oracle).
 | `repo_create_failed` | 502 | Artifacts create or the starter seed failed | retry with another name |
 | `token_limit` | 409 | too many live self-serve agent tokens | revoke one (`POST /v1/me/tokens/<id>/revoke`) |
 | `token_not_found` | 404 | revoking a token that is not yours or already revoked | `GET /v1/me/tokens` |
+| `github_repo_unavailable` | 404 | `import_github_repo` on a repo that is missing, or private without the GitHub App | fix owner/name, or install the Flare GitHub App on the repo, retry |
+| `github_link_exists` | 409 | the trunk name is already linked to a different GitHub repo | pick another `name`, or unlink the old link first |

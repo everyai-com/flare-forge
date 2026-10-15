@@ -44,9 +44,10 @@ Flare GitHub App can reach; members signed in with GitHub see their own),
 and **Bring into Forge** (`POST /v1/me/import`) copies one into
 Artifacts, adds `main` (at the default branch tip), the train lane pool
 and `refs/notes/why`, and makes you its owner. Any public repo imports
-by `owner/name`. Private repos cannot be imported yet: Cloudflare
-Artifacts imports public HTTPS remotes only. GitHub
-stays the source of truth (coordination mode).
+by `owner/name`; private repos import through the Flare GitHub App
+(members: repos under the GitHub account they signed in with). When the
+App can write to the repo, landed work goes back as one rolling pull
+request (docs/FORGE-GITHUB.md).
 
 To sign in with GitHub as the owner of an email-claimed deployment, set
 **Settings → Team and access → Owner's GitHub login** (`adminGithubUser`).

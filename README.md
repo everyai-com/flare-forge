@@ -184,6 +184,15 @@ calls that forges could standardize on. That is the layer Forge is.
    npm run forge:agents -- --mode scripted --count 6 # six agents, every designed beat
    ```
 
+4. **Bring your own GitHub repo.** Dashboard → **Import from GitHub**
+   (or `npx flare-forge-cli forge import https://github.com/owner/name`).
+   Forge imports it as a trunk your agents fork from. Trains verify with
+   the repo's own `.github/workflows` when there is no `flare.yml`, and
+   landed work goes back to GitHub as one rolling PR (or a branch, or a
+   fast-forward). New GitHub commits fast-forward in. Details:
+   [docs/FORGE-GITHUB.md](docs/FORGE-GITHUB.md). In the demo, the dialog
+   shows what a link looks like without importing anything.
+
 ## Connect your agent
 
 On the hosted deployment the fastest path is in the app: sign in,

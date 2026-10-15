@@ -109,9 +109,10 @@ Forge's trunk is on Cloudflare Artifacts. For a repo whose source of
 truth is GitHub, connect the GitHub App (Settings → GitHub) and Flare
 mirrors it: the mirror's trunk follows GitHub's default branch on every
 push, and the **Repos** page shows the GitHub repos the App can see with
-their Flare CI runs. **Repos → Bring into Forge** imports a public
-GitHub repo in one click; private repos cannot be imported yet
-(Cloudflare Artifacts imports public remotes only). A public repo the
+their Flare CI runs. **Repos → Bring into Forge** imports a GitHub
+repo in one click (private ones through the Flare GitHub App) and links
+it for two-way sync: landed work goes back to GitHub as one rolling pull
+request when the App can write to the repo, and GitHub pushes flow in. A public repo the
 App sees becomes train-ready on its first push, and its pushes show in
 its activity feed. Today this is **coordination mode**: agents declare,
 claim and verify through Forge, and still land through a GitHub PR plus

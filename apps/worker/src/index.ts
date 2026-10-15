@@ -281,7 +281,7 @@ import {
 } from "./mergequeue";
 import git from "isomorphic-git";
 import { MemoryFS } from "./memory-fs";
-import { FORGE_READY_DETAIL, MEMBER_REPO_LIMIT, createMemberRepo, importGithubRepo, listOwnedRepos, parseGithubRepo, prepareForgeTrunk, starterPipeline } from "./workspace";
+import { FORGE_READY_DETAIL, MEMBER_REPO_LIMIT, claimRepoOwnership, createMemberRepo, listOwnedRepos, parseGithubRepo, prepareForgeTrunk, starterPipeline } from "./workspace";
 import { commitFilesToFork } from "./forge-commit";
 import { normalizeForgeRepo } from "./forge-service";
 import http from "isomorphic-git/http/web";
@@ -323,6 +323,8 @@ import { buildMcpServer, mcpDiscovery } from "./mcp";
 import { forgeDepsFromEnv, handleForgeRequest } from "./forge-routes";
 import { forgeAdaptersFromEnv } from "./forge-adapters";
 import { bindingRateLimiter, handleForgePublicRequest } from "./forge-public"; // forge-spectator
+import { bridgeDepsFromEnv, reconcileBridge, syncPushFromGithub } from "./forge-github-env";
+import { importGithubRepo as bridgeImportGithubRepo } from "./forge-github";
 import { listAppRepos, loadSetupFacts, publicGithubRepo, repoInstallationAccess, setupSteps } from "./setup";
 import { resolveRunnerRef, runnerScript } from "./runner-script";
 import {
@@ -523,24 +525,27 @@ async function handleMe(request: Request, env: WorkerEnv, url: URL): Promise<Res
     // Private repos: admins through any installation; members only for
     // repos under their own GitHub login. Everything else: public only.
     const mayUsePrivate = access !== null && (ident.scope === "admin" || (login !== null && source.toLowerCase().startsWith(`${login}/`)));
-    let isPrivate = false;
-    let token: string | null = null;
-    if (access && mayUsePrivate) {
-      isPrivate = access.isPrivate;
-      token = access.isPrivate ? access.token : null;
-      if (isPrivate) return json(apiError("repo_not_allowed", "private repos cannot be imported yet: Cloudflare Artifacts imports public repos only. Make it public, or create a new Forge repo and push the code to it"), 403);
-    } else if (!(await publicGithubRepo(source))) {
-      return json(apiError("repo_not_allowed", "that repo is private or does not exist: Forge can import public GitHub repos only for now"), 403);
+    if (!(access && mayUsePrivate) && !(await publicGithubRepo(source))) {
+      return json(apiError("repo_not_allowed", "that repo is private or does not exist: install the Flare GitHub App on it (members: repos under the GitHub account you signed in with)"), 403);
     }
-    const out = await importGithubRepo(
-      { db: env.DB, artifacts: env.ARTIFACTS, git, http, fs: () => new MemoryFS(), namespace: env.ARTIFACTS_NAMESPACE ?? "" },
-      owner,
-      source,
-      { isPrivate, installationToken: token, limit: ident.scope === "admin" ? null : MEMBER_REPO_LIMIT },
-    );
-    if (!out.ok) return json(apiError(out.code, out.error), out.status);
-    await audit(env.DB, ident.actor, "repo.import", `${source} -> ${out.repo} (${out.status})`);
-    return json({ ...out, app: `/app?repo=${encodeURIComponent(out.repo)}` }, out.status === "ready" ? 201 : 202);
+    const bridge = bridgeDepsFromEnv(env);
+    if (!bridge) return json(apiError("artifacts_unconfigured", "Artifacts is not configured on this deployment"), 503);
+    const name = mirrorNameFor(source);
+    if (!name) return json(apiError("invalid_request", "repo: a GitHub owner/name or URL"), 400);
+    const claimed = await claimRepoOwnership(env.DB, owner, name, env.ARTIFACTS_NAMESPACE ?? "", ident.scope === "admin" ? null : MEMBER_REPO_LIMIT);
+    if (!claimed.ok) return json(apiError(claimed.code, claimed.error), claimed.status);
+    // The bridge imports (public: Artifacts import; private: created empty
+    // and seeded with the App token), links the repo for two-way sync when
+    // the App can write to it, and makes the trunk train-ready.
+    const out = await bridgeImportGithubRepo(bridge, { github: source, name, syncMode: access ? "pr" : "off", actor: ident.actor });
+    if ("error" in out) {
+      const status = out.error === "invalid_request" ? 400 : out.error === "github_link_exists" ? 409 : out.error === "github_repo_unavailable" ? 404 : 502;
+      return json(apiError(out.error, out.message), status);
+    }
+    await audit(env.DB, ident.actor, "repo.import", `${source} -> ${out.trunk} (${out.status})`);
+    if (out.status === "failed") return json(apiError("repo_create_failed", out.link.detail || "import failed"), 502);
+    const ready = out.status === "ready" || out.status === "exists";
+    return json({ ok: true, status: ready ? "ready" : "importing", repo: out.trunk, source, syncMode: out.link.syncMode, warnings: out.warnings, app: `/app?repo=${encodeURIComponent(out.trunk)}` }, ready ? 201 : 202);
   }
   const ciMatch = /^\/v1\/me\/repos\/([^/]+)\/ci$/.exec(url.pathname);
   if (request.method === "POST" && ciMatch) {
@@ -1417,6 +1422,15 @@ async function handleWebhook(request: Request, env: WorkerEnv, ctx: ExecutionCon
       await audit(env.DB, "system", "budget.warn", `${repo} ${verdict.usedMinutes}/${verdict.cap}`);
       log("warn", "monthly budget exceeded (warn mode)", { repo, usedMinutes: verdict.usedMinutes, cap: verdict.cap });
     }
+    // Forge GitHub bridge: a push to a linked repo's tracked branch
+    // fast-forwards its trunk (human commits, merged sync PRs). It sits
+    // behind the kill switch and the budget block like every other
+    // webhook side effect: a paused or blocked repo moves nothing (the
+    // next allowed push, or a manual sync, catches trunk up). It runs
+    // before the plan guard: syncing code claims no runner.
+    if (event === "push" && branchFromRef(payload.ref)) {
+      ctx.waitUntil(syncPushFromGithub(env, repo, branchFromRef(payload.ref), payload.installation?.id ?? null));
+    }
     // Plan guard: a saturated hosted plan skips the webhook like a
     // budget block (200 so GitHub stops retrying). Self-hosted: null.
     const cloud = await cloudVerdict(env);
@@ -2050,6 +2064,9 @@ export interface DispatchInput {
   sha: string;
   ref: string;
   pipeline?: string;
+  // Pre-translated jobs (Forge trains on repos verified by their own
+  // `.github/workflows`, trunk-ci.ts); wins over `pipeline`.
+  jobs?: PipelineJob[];
   event?: string;
   priority?: number;
   source?: string;
@@ -2109,7 +2126,11 @@ async function loadDispatchJobs(
       if (!resolved) throw new Error(`could not resolve ref "${sha}" — paste a full commit SHA`);
       sha = resolved;
     }
-    if (input.pipeline) {
+    if (input.jobs && input.jobs.length > 0) {
+      jobs = input.jobs;
+      profiles = emptyProfiles();
+      pipelineSource = "actions";
+    } else if (input.pipeline) {
       const parsed = parsePipelineWithProfiles(input.pipeline);
       if (!parsed) throw new Error("pipeline parse failed");
       jobs = parsed.jobs;
@@ -5557,6 +5578,12 @@ export default {
       const mq = await runMergeQueueTick(env, ctx);
       if (mq.started > 0 || mq.landed > 0 || mq.failed > 0 || mq.requeued > 0) {
         log("info", "merge queue tick finished", { ...mq });
+      }
+      try {
+        const settled = await reconcileBridge(env);
+        if (settled > 0) log("info", "forge github imports settled", { settled });
+      } catch (err) {
+        log("warn", "forge github reconcile failed", { error: String(err) });
       }
       try {
         const trains = await runTrainTick(env);
