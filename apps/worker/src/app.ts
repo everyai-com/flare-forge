@@ -356,8 +356,56 @@ body.explain .ex { display:block; }
 #auth .alt { margin-top:14px; display:flex; flex-direction:column; gap:8px; }
 #auth .err { color:var(--conflict); font-size:12.5px; margin-top:8px; min-height:18px; }
 #auth .watch { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); font-size:12.5px; color:var(--muted); }
+/* merge card: one intent against main as a live lane graph */
+.mc { --peer:#2dd4bf; --tone:var(--working); border:1px solid var(--line); border-radius:12px; background:var(--card); padding:12px 14px 10px; }
+:root[data-theme="light"] .mc { --peer:#0d9488; }
+.mc.tone-human { --tone:var(--human); } .mc.tone-landed { --tone:var(--landed); } .mc.tone-train { --tone:var(--train); } .mc.tone-conflict { --tone:var(--conflict); } .mc.tone-idle { --tone:var(--idle); }
+.mc .mh { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+.mc .mh .t { flex:1; min-width:0; font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mc .mh .t .id { color:var(--muted); font-weight:400; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+.mc .mh .st { display:inline-flex; align-items:center; gap:6px; font-size:12px; white-space:nowrap; }
+.mc .mh .st .d { width:7px; height:7px; border-radius:50%; background:currentColor; }
+.mc .st.open { color:var(--landed); } .mc .st.merged { color:var(--train); } .mc .st.failed { color:var(--conflict); } .mc .st.closed { color:var(--muted); }
+.mc .gr { position:relative; margin:0 -4px; }
+.mc svg.lanes { position:absolute; left:0; top:0; overflow:visible; pointer-events:none; }
+.mc svg.lanes path, .mc svg.lanes line, .mc svg.lanes circle { transition:stroke .3s ease, fill .3s ease; }
+.mc .r { position:relative; display:flex; align-items:center; gap:8px; height:30px; padding:0 4px 0 var(--gx); font-size:12.5px; border-radius:6px; }
+.mc .r.ln { cursor:pointer; } .mc .r.ln:hover { background:var(--hover); }
+.mc .r .tt { flex:0 1 auto; min-width:48px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mc .r.dim .tt { color:var(--muted); } .mc .r.conf .tt { color:var(--human); } .mc .r.tg .tt { color:var(--soft); }
+.mc .r .sp { flex:1; min-width:8px; }
+.mc .r .meta { color:var(--muted); font-size:11.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.mc .r .meta .sha { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--faint); margin-right:6px; }
+.mc .r .rt { font-size:12px; white-space:nowrap; color:var(--tone); font-variant-numeric:tabular-nums; }
+.mc .r .rt.plain { color:var(--muted); }
+.mc .br { flex:0 2 auto; min-width:0; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:18px; padding:0 6px; border-radius:5px; background:var(--t-working); color:var(--working); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mc .br.main { background:var(--raise); color:var(--soft); } .mc .br.peer { background:color-mix(in srgb, var(--peer) 14%, transparent); color:var(--peer); } .mc .br.merged { background:var(--t-train); color:var(--train); }
+.mc .bdg { flex:none; min-width:17px; height:17px; padding:0 4px; border-radius:999px; border:1px solid var(--human); color:var(--human); font-size:10.5px; display:inline-flex; align-items:center; justify-content:center; font-variant-numeric:tabular-nums; }
+.mc .bdg.ok { border-color:var(--landed); color:var(--landed); }
+.mc .same { flex:none; font-size:11px; color:var(--overlap); }
+.mc .pg { position:absolute; left:var(--gx); right:4px; bottom:1px; height:2px; border-radius:2px; background:var(--line); overflow:hidden; }
+.mc .pg i { display:block; height:100%; background:var(--landed); border-radius:2px; transition:width .5s ease; }
+.mc .pg.ind i { width:35%; animation:mcind 1.4s ease-in-out infinite; }
+@keyframes mcind { 0% { transform:translateX(-100%); } 100% { transform:translateX(300%); } }
+.mc .checks { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 0; }
+.mc .ck { display:inline-flex; align-items:center; gap:6px; font-size:12px; border:1px solid var(--line2); border-radius:999px; padding:2px 10px 2px 8px; white-space:nowrap; }
+.mc .ck .v { color:var(--muted); } .mc .ck .ok { color:var(--landed); } .mc .ck .bad { color:var(--conflict); } .mc .ck .idle { color:var(--faint); }
+.mc .mf { display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:9px; border-top:1px solid var(--line); font-size:12.5px; min-height:36px; }
+.mc .mf .ic { color:var(--tone); font-weight:700; width:14px; text-align:center; }
+.mc .mf .sp { flex:1; }
+.mc .mf .tx b { color:var(--tone); font-weight:600; }
+.mc .act { border-radius:999px; border-color:transparent; background:var(--t-working); color:var(--working); font-weight:600; padding:5px 14px; }
+.mc .act:hover { background:var(--t-working); filter:brightness(1.15); }
+.mc .act.quiet { background:var(--raise); color:var(--soft); }
+.mc .spin { display:inline-block; width:12px; height:12px; border-radius:50%; border:1.5px solid var(--line2); border-top-color:var(--ink); animation:mcspin .8s linear infinite; vertical-align:-2px; }
+@keyframes mcspin { to { transform:rotate(360deg); } }
+.mc .r.new { animation:rise .35s ease; }
+.mcsay { font-size:13px; color:var(--soft); line-height:1.6; margin:10px 2px 16px; }
+.mcsay code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:var(--raise); border:1px solid var(--line); border-radius:5px; padding:0 5px; }
+.mcsay b { color:var(--ink); font-weight:600; }
+@media (max-width:560px) { .mc .r .meta .who { display:none; } .mc .br { max-width:110px; } .mc .mf { flex-wrap:wrap; } }
 @media (max-width:800px) { #shell { grid-template-columns:1fr; } #side { display:none; } #main { padding:14px 14px 40px; } .split { grid-template-columns:1fr; } #top { padding:0 12px; gap:8px; } #top .sub, #top #palBtn, #top #liveText, #top #connectBtn { display:none; } #top .live { padding:4px; border:0; } .g6, .g4, .g3 { grid-template-columns:repeat(2,minmax(0,1fr)); } .stat .v { font-size:22px; } .pagehead h2 { font-size:17px; } #drawer { width:100vw; } }
-@media (prefers-reduced-motion: reduce) { #drawer { transition:none; } .skel { animation:none; } }
+@media (prefers-reduced-motion: reduce) { #drawer { transition:none; } .skel { animation:none; } .mc .spin, .mc .pg.ind i, .mc .r.new { animation:none; } }
 </style>
 </head>
 <body>
@@ -563,7 +611,7 @@ body.explain .ex { display:block; }
     var p = (S.pub ? "/v1/public/forge/overview" : "/v1/forge/overview") + "?repo=" + encodeURIComponent(S.repo);
     api(p).then(function (r) {
       S.polls++;
-      if (r.status === 200 && r.body && r.body.snapshot) { S.data = r.body; S.lastAt = Date.now(); setLive(S.pub ? "on pub" : "on", S.pub ? "read-only · just now" : "live · just now"); banner(S.pub ? { text: "You are watching " + S.repo + " read-only. Sign in to review, approve and launch goals.", link: "Sign in", href: "/app?login=1" } : null); diffEvents(); updateNav(); if (shouldRerender()) renderPage(); return; }
+      if (r.status === 200 && r.body && r.body.snapshot) { S.data = r.body; S.lastAt = Date.now(); setLive(S.pub ? "on pub" : "on", S.pub ? "read-only · just now" : "live · just now"); banner(S.pub ? { text: "You are watching " + S.repo + " read-only. Sign in to review, approve and launch goals.", link: "Sign in", href: "/app?login=1" } : null); diffEvents(); updateNav(); if (shouldRerender()) renderPage(); paintMergeCard(); return; }
       if (r.status === 401) { location.href = "/app?login=1"; return; }
       if (r.status === 429) { setLive("err", "rate limited"); return; }
       setLive("err", "error " + (r.body && r.body.code ? r.body.code : r.status));
@@ -1161,6 +1209,197 @@ body.explain .ex { display:block; }
     go.addEventListener("click", run); inp.addEventListener("keydown", function (e) { if (e.key === "Enter") run(); });
     var wb = add(tbar, el("button", "sm", "why a line")); wb.addEventListener("click", function () { var p = (intents().filter(function (i) { return i.state === "landed"; })[0] || {}); var path = ((p.footprint || {}).actual || (p.footprint || {}).paths || ["README.md"])[0]; out.textContent = "calling " + pubPath("/v1/forge/why") + " …"; api(pubPath("/v1/forge/why") + "?repo=" + encodeURIComponent(S.repo) + "&path=" + encodeURIComponent(path) + "&line=12").then(function (r) { out.textContent = JSON.stringify(r.body, null, 2).slice(0, 6000); }); });
   }
+  // ---- merge card: one intent against main, as a live lane graph ----
+  // Built from the overview bundle only (intents, conflicts, trains) plus
+  // the train run's digest for the check chips. Conflict side A is the
+  // dropped intent the replay re-derives; side B already sits on main.
+  // Lanes: 0 = main, 1 = this intent, 2+ = other live intents.
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var MC = null; // the drawer's open card: { host, id, fallback, sig, claim }
+  var DIG = {}; // run digests by run id (isolate of this page; terminal runs never refetch)
+  var LIVE_INTENT = { claimed: 1, working: 1, ready: 1, in_train: 1, replaying: 1, conflicted: 1 };
+  function svgEl(tag, attrs, style) { var e = document.createElementNS(SVGNS, tag); Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, String(attrs[k])); }); if (style) e.setAttribute("style", style); return e; }
+  function agoS(iso) { if (!iso) return ""; var s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); if (s < 45) return "now"; if (s < 3600) return Math.max(1, Math.round(s / 60)) + "m"; if (s < 86400) return Math.round(s / 3600) + "h"; return Math.round(s / 86400) + "d"; }
+  function newest(a, b) { return a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0; }
+  function fpPaths(x) { if (x && Array.isArray(x.footprint)) return x.footprint; var f = (x && x.footprint) || {}; var a = f.actual || []; return a.length ? a : (f.declared || f.paths || []); }
+  function stem(p) { var s = String(p); var k = s.indexOf("*"); return k === -1 ? s : s.slice(0, k); }
+  function pathsMeet(a, b) { return a.some(function (p) { return b.some(function (q) { var sp = stem(p), sq = stem(q); if (sp === sq) return true; if (p.indexOf("*") !== -1 && sq.indexOf(sp) === 0) return true; if (q.indexOf("*") !== -1 && sp.indexOf(sq) === 0) return true; return false; }); }); }
+  function trainFor(i) { var list = trains(); var t = i.trainId ? list.filter(function (x) { return x.id === i.trainId; })[0] : null; if (t) return t; return list.filter(function (x) { return (x.intentIds || []).indexOf(i.id) !== -1; }).sort(newest)[0] || null; }
+  function laneOf(t, id) { var lanes = (t && t.lanes) || []; return lanes.filter(function (l) { return (l.intents || []).indexOf(id) !== -1; })[0] || lanes[0] || null; }
+  function stageDone(v) { return v === "done" || v === "success"; }
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
+  function mergeModel(i) {
+    var all = intents(); var nowIso = new Date().toISOString(); var landed = i.state === "landed";
+    var mine = conflicts().filter(function (c) { return c.intentA === i.id; }).sort(function (a, b) { return a.createdAt < b.createdAt ? -1 : 1; });
+    var open = mine.filter(function (c) { return c.state === "open" || c.state === "claimed"; });
+    var against = {}, n = 0;
+    mine.forEach(function (c) { if (c.intentB && c.intentB !== "trunk" && !against[c.intentB]) { n++; against[c.intentB] = { n: n, open: c.state === "open" || c.state === "claimed" }; } });
+    var from = i.createdAt || "", to = landed ? (i.updatedAt || nowIso) : nowIso;
+    var onMain = all.filter(function (x) { return x.id !== i.id && x.state === "landed" && x.landedSha && x.landedSha !== i.baseSha && ((x.updatedAt > from && x.updatedAt <= to) || against[x.id]); }).sort(newest);
+    var keep = onMain.filter(function (x, k) { return against[x.id] || k < 5; });
+    var myPaths = fpPaths(i);
+    var peers = landed ? [] : all.filter(function (x) { return x.id !== i.id && LIVE_INTENT[x.state]; }).map(function (x) { return { x: x, meet: pathsMeet(myPaths, fpPaths(x)) }; }).sort(function (a, b) { return (b.meet ? 1 : 0) - (a.meet ? 1 : 0) || newest(a.x, b.x); }).slice(0, 2);
+    var t = trainFor(i); var ln = laneOf(t, i.id); var st = (ln && ln.stages) || {};
+    var stages = [["merge", st.merge], ["push", st.push], ["ci", st.ci && st.ci.status], ["land", st.cas]];
+    var doneN = stages.filter(function (s) { return stageDone(s[1]); }).length;
+    var files = []; open.forEach(function (c) { (c.files || []).forEach(function (f) { if (files.indexOf(f) === -1) files.push(f); }); });
+    var claimed = open.filter(function (c) { return c.state === "claimed"; })[0] || null;
+    var timed = [];
+    timed.push({ lane: 1, at: i.updatedAt, title: i.title + (i.headSha ? "" : " (nothing pushed yet)"), branch: i.forkRepo || "intent/" + short(i.id), bk: landed ? "merged" : "", sha: landed ? (i.landedSha || i.headSha) : i.headSha, who: i.agent, dim: !i.headSha });
+    keep.forEach(function (x) { var a = against[x.id]; timed.push({ lane: 0, at: x.updatedAt, title: x.title, sha: x.landedSha, who: x.agent, id: x.id, conf: !!(a && a.open), badge: a ? a.n : 0, ok: !!(a && !a.open), dim: !(a && a.open) }); });
+    peers.forEach(function (p, k) { var x = p.x; timed.push({ lane: 2 + k, at: x.updatedAt, title: x.title, branch: x.forkRepo || "intent/" + short(x.id), bk: "peer", sha: x.headSha, who: x.agent, id: x.id, dim: true, meet: p.meet }); });
+    timed.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+    var firstMain = timed.filter(function (r) { return r.lane === 0; })[0]; if (firstMain) { firstMain.branch = "main"; firstMain.bk = "main"; }
+    var V = { draft: ["idle", "not claimed", "ring"], awaiting_plan: ["human", "plan approval", "ring"], claimed: ["working", "", "ring"], working: ["working", "", "ring"], ready: ["landed", mine.length ? "resolved" : "queued", "check"], in_train: ["train", "verifying", "spin"], conflicted: ["human", plural(Math.max(1, files.length), "conflict"), "bang"], replaying: ["human", "resolving", "spin"], landed: ["train", "merged", "fill"], failed: ["conflict", "failed", "x"], abandoned: ["idle", "abandoned", "ring"] }[i.state] || ["working", String(i.state || "").replace(/_/g, " "), "ring"];
+    if ((i.state === "claimed" || i.state === "working") && !V[1]) V[1] = onMain.length ? "main +" + onMain.length + " since base" : "up to date";
+    if (i.state === "conflicted" && claimed) { V[1] = "resolving"; V[2] = "spin"; }
+    var target = { kind: "target", lane: 0, title: landed ? "Merged into main" : "Merge into main", branch: landed ? "main" : "", bk: "main", right: V[1], icon: V[2] };
+    var prog = null;
+    if (i.state === "in_train" && t) prog = { lane: 1, ring: true, title: "Merge lane " + (ln ? ln.n : t.lane) + " into main", branch: "forge/lane-" + (ln ? ln.n : t.lane), right: doneN + "/4", rtone: "plain", prog: doneN / 4 };
+    else if (i.state === "replaying" || claimed) prog = { lane: 1, ring: true, title: "Replay onto main", branch: (claimed && claimed.resolverAgent) || "replay", right: "re-deriving", rtone: "plain", prog: -1 };
+    var baseOf = all.filter(function (x) { return x.landedSha && x.landedSha === i.baseSha; })[0];
+    var base = { kind: "base", lane: 0, title: baseOf ? baseOf.title : "Branched from main", sha: i.baseSha, who: baseOf ? baseOf.agent : "", at: baseOf ? baseOf.updatedAt : "", dim: true };
+    var head = { landed: "merged", failed: "failed", abandoned: "closed" }[i.state] || "open";
+    return { id: i.id, state: i.state, tone: V[0], icon: V[2], head: head, target: target, prog: prog, rows: timed, hidden: onMain.length - keep.length, base: base, peerN: peers.length, train: t, lane: ln, stages: stages, doneN: doneN, files: files, open: open, mine: mine, claimed: claimed, against: keep.filter(function (x) { return against[x.id]; }), onMain: onMain.length, peers: peers };
+  }
+  function mergeSig(md) { return JSON.stringify([md.state, md.target, md.prog, md.rows.map(function (r) { return [r.lane, r.title, r.sha, r.conf, r.ok, agoS(r.at)]; }), md.hidden, md.doneN, md.open.map(function (c) { return c.id + c.state; }), md.train ? md.train.id + md.train.state : ""]); }
+  function drawLanes(gr, rows, md, gx) {
+    var ROW = 30, R = rows.length; var landed = md.state === "landed";
+    var svg = svgEl("svg", { "class": "lanes", width: gx, height: R * ROW, viewBox: "0 0 " + gx + " " + R * ROW, "aria-hidden": "true" }); gr.appendChild(svg);
+    function X(l) { return 13 + l * 14; } function Y(k) { return k * ROW + ROW / 2; }
+    var mine = landed ? "var(--train)" : "var(--working)"; var tone = "var(--" + md.tone + ")";
+    var yb = Y(R - 1);
+    svg.appendChild(svgEl("line", { x1: X(0), y1: Y(0), x2: X(0), y2: yb, "stroke-width": 1.5 }, "stroke:var(--line2)"));
+    var ones = []; rows.forEach(function (r, k) { if (r.lane === 1) ones.push(k); });
+    if (ones.length) {
+      var f = ones[0];
+      svg.appendChild(svgEl("path", { d: "M" + X(1) + " " + Y(f) + " L" + X(1) + " " + (yb - ROW) + " C" + X(1) + " " + (yb - ROW / 2) + " " + X(0) + " " + (yb - ROW / 2) + " " + X(0) + " " + yb, fill: "none", "stroke-width": 1.5 }, "stroke:" + mine));
+      var link = svgEl("path", { d: "M" + X(1) + " " + Y(f) + " C" + X(1) + " " + (Y(f) - ROW * 0.6) + " " + X(0) + " " + (Y(0) + ROW * 0.4) + " " + X(0) + " " + Y(0), fill: "none", "stroke-width": 1.5 }, "stroke:" + tone);
+      if (!landed) link.setAttribute("stroke-dasharray", "3 3");
+      svg.appendChild(link);
+    }
+    rows.forEach(function (r, k) { if (r.lane < 2) return; svg.appendChild(svgEl("path", { d: "M" + X(r.lane) + " " + Y(k) + " L" + X(r.lane) + " " + (yb - ROW) + " C" + X(r.lane) + " " + (yb - ROW / 2) + " " + X(0) + " " + (yb - ROW / 2) + " " + X(0) + " " + yb, fill: "none", "stroke-width": 1.5, opacity: 0.6 }, "stroke:var(--peer)")); });
+    rows.forEach(function (r, k) {
+      if (r.more) return;
+      var cx = X(r.lane), cy = Y(k);
+      if (r.kind === "target") {
+        var ic = md.icon; var hollow = ic === "ring" || ic === "spin";
+        svg.appendChild(svgEl("circle", { cx: cx, cy: cy, r: 6.5, "stroke-width": 1.5 }, hollow ? "fill:var(--card);stroke:" + tone : "fill:" + tone + ";stroke:" + tone));
+        if (ic === "spin") svg.appendChild(svgEl("circle", { cx: cx, cy: cy, r: 2.5 }, "fill:" + tone));
+        var glyph = { bang: "!", check: "✓", x: "×" }[ic];
+        if (glyph) { var tx = svgEl("text", { x: cx, y: cy + 0.5, "text-anchor": "middle", "dominant-baseline": "central", "font-size": 9, "font-weight": 700 }, "fill:var(--card)"); tx.textContent = glyph; svg.appendChild(tx); }
+        return;
+      }
+      var fill = r.lane === 0 ? (r.conf ? "var(--human)" : "var(--faint)") : r.lane === 1 ? mine : "var(--peer)";
+      if (r.ring) svg.appendChild(svgEl("circle", { cx: cx, cy: cy, r: 4, "stroke-width": 1.5 }, "fill:var(--card);stroke:" + mine));
+      else svg.appendChild(svgEl("circle", { cx: cx, cy: cy, r: r.lane === 0 && !r.conf ? 3 : 3.75 }, "fill:" + fill));
+    });
+  }
+  function renderChecks(box, md) {
+    var t = md.train; if (!t) { box.style.display = "none"; return; }
+    function stageChips() { clear(box); md.stages.forEach(function (s) { var c = add(box, el("span", "ck")); var v = s[1]; add(c, stageDone(v) ? el("span", "ok", "✓") : (v === "failed" || v === "failure") ? el("span", "bad", "✕") : (v === "running" || v === "pending") ? el("span", "spin") : el("span", "idle", "○")); add(c, el("span", null, s[0])); if (v) add(c, el("span", "v", stageDone(v) ? "passed" : String(v))); }); }
+    stageChips();
+    if (S.pub || !t.runId) return;
+    var c = DIG[t.runId]; if (c && c.body) jobChips(c.body);
+    if (c && (c.terminal || Date.now() - c.at < 5000)) return;
+    DIG[t.runId] = { at: Date.now(), body: c ? c.body : null, terminal: false };
+    api("/v1/runs/" + encodeURIComponent(t.runId) + "/digest").then(function (r) { if (r.status !== 200 || !r.body || !Array.isArray(r.body.jobs)) return; DIG[t.runId] = { at: Date.now(), body: r.body, terminal: ["success", "failure", "error", "cancelled", "skipped"].indexOf(r.body.status) !== -1 }; if (box.isConnected) jobChips(r.body); });
+    function jobChips(d) {
+      if (!d.jobs.length) return; clear(box);
+      d.jobs.forEach(function (j) { var c2 = add(box, el("span", "ck")); var ok = j.status === "success", bad = j.status === "failure" || j.status === "error"; add(c2, ok ? el("span", "ok", "✓") : bad ? el("span", "bad", "✕") : (j.status === "running" || j.status === "queued") ? el("span", "spin") : el("span", "idle", "○")); add(c2, el("span", null, j.name || "job")); add(c2, el("span", "v", (ok ? "passed" : String(j.status || "")) + (j.durationMs ? " · " + Math.max(1, Math.round(j.durationMs / 1000)) + "s" : ""))); c2.title = "CI on the exact merged commit " + short(d.sha); });
+      var land = md.stages[3]; var lc = add(box, el("span", "ck")); add(lc, stageDone(land[1]) ? el("span", "ok", "✓") : el("span", "idle", "○")); add(lc, el("span", null, "Trunk")); add(lc, el("span", "v", stageDone(land[1]) ? "moved" : "waits for green"));
+    }
+  }
+  function mergeSay(box, i, md) {
+    function t(s) { box.appendChild(document.createTextNode(s)); } function c(s) { add(box, el("code", null, s)); } function b(s) { add(box, el("b", null, s)); }
+    function fileList(fs) { fs.slice(0, 3).forEach(function (f, k) { if (k) t(k === fs.length - 1 ? " and " : ", "); c(f.split("/").pop()); }); if (fs.length > 3) t(" and " + (fs.length - 3) + " more"); }
+    var other = md.against.filter(function (x) { return md.open.length ? md.mine.some(function (cf) { return cf.intentB === x.id && (cf.state === "open" || cf.state === "claimed"); }) : true; })[0];
+    if (md.state === "conflicted" || md.state === "replaying") {
+      t("Main moved on while " + (i.agent || "the agent") + " worked: ");
+      if (other) { b(other.agent); t("’s “" + other.title + "”"); } else t("another landing");
+      t(" changed the same lines in "); fileList(md.files.length ? md.files : fpPaths(i)); t(". ");
+      t(md.claimed ? (md.claimed.resolverAgent || "A resolver") + " is re-deriving the change on the new trunk; it must pass CI again as its own commit before it lands." : "The replay re-derives this change on the new trunk, then it must pass CI again as its own commit before it lands.");
+    } else if (md.state === "landed") {
+      t("Landed on "); c("main"); t(" as "); c(short(i.landedSha)); t(" after CI passed on that exact merged commit.");
+      if (md.mine.length) { t(" It was replayed once after a conflict with "); if (other) { b(other.agent); t("’s “" + other.title + "”"); } else t("an earlier landing"); t("."); }
+    } else if (md.state === "ready") {
+      t(md.mine.length ? "Conflicts resolved and verified on the fork. " : "Verified on its fork. "); t("The next train merges it with other non-overlapping intents and runs CI on the exact merged SHA; "); c("main"); t(" moves only if that passes.");
+    } else if (md.state === "in_train") {
+      t("In a train: CI runs on the merged commit of lane " + (md.lane ? md.lane.n : md.train ? md.train.lane : "?") + ". "); c("main"); t(" moves only if it passes; a red lane is bisected out while the others rebuild.");
+    } else if (md.state === "claimed" || md.state === "working") {
+      t(md.onMain ? plural(md.onMain, "change") + " landed on main since this branched" : "Nothing landed on main since this branched"); t(".");
+      var near = md.peers.filter(function (p) { return p.meet; })[0]; if (near) { t(" "); b(near.x.agent); t(" is editing the same files ("); fileList(fpPaths(near.x)); t("); Forge flagged the overlap at declare time."); }
+    } else if (md.state === "failed") {
+      t("CI failed on the merged commit, so "); c("main"); t(" did not move. The train bisected it out; the agent fixes it on its fork and marks it ready again.");
+    } else { t(STATE_EX[md.state] ? "This intent " + STATE_EX[md.state] + "." : ""); }
+  }
+  function mergeFoot(f, i, md) {
+    function ic(s, cls) { add(f, el("span", "ic" + (cls ? " " + cls : ""), s)); }
+    function tx(parts) { var s = add(f, el("span", "tx")); parts.forEach(function (p) { if (typeof p === "string") s.appendChild(document.createTextNode(p)); else add(s, el("b", null, p[0])); }); return s; }
+    function act(label, cls) { add(f, el("span", "sp")); return add(f, el("button", "act sm" + (cls ? " " + cls : ""), label)); }
+    var oc = md.open.filter(function (c) { return c.state === "open"; })[0];
+    var NL = String.fromCharCode(10), Q = String.fromCharCode(34);
+    if (MC && MC.claim && MC.claim.conflict && (md.state === "conflicted" || md.state === "replaying")) {
+      var rp = MC.claim.replay || {}; var cid = MC.claim.conflict.id;
+      add(f, el("span", "spin")); tx([["Claimed"], " · re-derive on ", rp.forkRepo || "the replay fork", ", then resolve"]);
+      var cp = act("Copy replay commands"); copyBtn(cp, function () { return (rp.token ? "export " + (rp.tokenEnv || "FLARE_FORK_TOKEN") + "=" + rp.token + NL : "") + (rp.cloneCommand || "") + NL + "# re-derive the change on current trunk, commit with the trailers, then:" + NL + (rp.pushCommand || "") + NL + "# resolve_conflict {conflictId: " + Q + cid + Q + ", sha: " + Q + "<replayed sha>" + Q + "}"; }); cp.textContent = "Copy replay commands"; cp.title = "Includes the 1 h fork token; paste into the shell that does the replay";
+      return;
+    }
+    if (md.state === "conflicted" && !md.claimed) {
+      ic("⚠"); var s = tx([[plural(Math.max(1, md.files.length), "conflict")], " with main"]); s.title = md.files.join(", ");
+      if (!S.pub && S.authed && oc) {
+        var pr = add(f, el("button", "ghost sm", "Copy agent prompt")); copyBtn(pr, function () { return "Resolve Forge conflict " + oc.id + " in repo " + S.repo + ": call claim_conflict {conflictId: " + Q + oc.id + Q + "}, re-derive the intent “" + i.title + "” on the current trunk (do not hunk-merge), push to the replay fork, then resolve_conflict with the replayed sha."; }); pr.textContent = "Copy agent prompt"; pr.style.marginLeft = "auto";
+        var b = add(f, el("button", "act sm", "Resolve conflicts")); b.title = "Claim the conflict: you get a replay fork on current trunk and a 1 h token for it";
+        b.addEventListener("click", function () { b.disabled = true; clear(b); add(b, el("span", "spin")); b.appendChild(document.createTextNode(" Claiming")); api("/v1/forge/conflicts/" + oc.id + "/claim", { method: "POST", body: {} }).then(function (x) { if (x.status < 300) { if (MC) { MC.claim = x.body; MC.sig = ""; } toast("conflict", "Claimed: re-derive on the replay fork, then resolve"); poll(); } else { b.disabled = false; b.textContent = "Resolve conflicts"; toast("conflict", fail(x)); } }); });
+      }
+      return;
+    }
+    if (md.state === "replaying" || md.claimed) { add(f, el("span", "spin")); tx(["Replaying on main", md.claimed && md.claimed.resolverAgent ? " · " + md.claimed.resolverAgent : ""]); var rb = act("Resolving", "quiet"); rb.disabled = true; return; }
+    function approve() { if (!S.admin) return; var al = act("Approve landing"); al.title = "Policy routed this to a human: approve and the train lands it"; al.addEventListener("click", function () { al.disabled = true; api("/v1/forge/intents/" + i.id + "/approve-landing", { method: "POST", body: {} }).then(function (x) { al.disabled = false; if (x.status < 300) { toast("human", "Landing approved"); poll(); } else toast("conflict", fail(x)); }); }); }
+    if (md.state === "in_train") { add(f, el("span", "spin")); tx(["Running CI on the merged commit", md.doneN ? " · " + md.doneN + "/4 stages" : ""]); approve(); return; }
+    if (md.state === "ready") { ic("✓"); tx([["Ready"], " · lands with the next train"]); approve(); return; }
+    if (md.state === "landed") { ic("⑂"); tx([["Merged"], " into main", i.landedSha ? " · " + short(i.landedSha) : ""]); if (md.train) { var ot = act("Open train", "quiet"); ot.addEventListener("click", function () { nav("#/trains/" + md.train.id); }); } return; }
+    if (md.state === "failed") { ic("✕"); tx([["Failed"], " · CI was red on the merged commit"]); if (md.train) { var ft = act("Open train", "quiet"); ft.addEventListener("click", function () { nav("#/trains/" + md.train.id); }); } return; }
+    if (md.state === "claimed" || md.state === "working") { ic("◇"); tx([[md.onMain ? "main +" + md.onMain : "Up to date"], " · ", i.headSha ? "head " + short(i.headSha) : "no push yet", i.leaseExpiresAt ? " · lease " + (Date.parse(i.leaseExpiresAt) > Date.now() ? ago(i.leaseExpiresAt).replace(" ago", "") + " left" : "expired") : ""]); return; }
+    ic("○"); tx([STATE_EX[md.state] || String(md.state || "")]);
+  }
+  function renderMergeCard(host, i) {
+    var md = mergeModel(i); var prevSig = MC && MC.host === host ? MC.lastRows : null; clear(host);
+    var card0 = add(host, el("div", "mc tone-" + md.tone));
+    var h = add(card0, el("div", "mh")); var tt = add(h, el("div", "t", i.title || "Intent")); add(tt, el("span", "id", "  " + short(i.id)));
+    var stx = add(h, el("span", "st " + md.head)); add(stx, el("span", "d")); add(stx, el("span", null, { open: "Open", merged: "Merged", failed: "Failed", closed: "Closed" }[md.head]));
+    var rows = [md.target].concat(md.prog ? [md.prog] : [], md.rows, md.hidden ? [{ lane: 0, more: md.hidden }] : [], [md.base]);
+    var gx = 26 + (1 + md.peerN) * 14;
+    var gr = add(card0, el("div", "gr")); gr.style.setProperty("--gx", gx + "px");
+    drawLanes(gr, rows, md, gx);
+    var seen = {}; (prevSig || []).forEach(function (k) { seen[k] = 1; }); var keys = [];
+    rows.forEach(function (r) {
+      var key = r.kind || (r.lane + ":" + (r.id || r.title)); keys.push(key);
+      var row = add(gr, el("div", "r" + (r.dim ? " dim" : "") + (r.conf ? " conf" : "") + (r.id ? " ln" : "") + (r.kind === "target" ? " tg" : "") + (prevSig && !seen[key] ? " new" : "")));
+      if (r.more) { add(row, el("span", "tt", "+ " + plural(r.more, "more landing") + " on main")); return; }
+      add(row, el("span", "tt", r.title)).title = r.title;
+      if (r.branch) add(row, el("span", "br " + (r.bk || ""), r.branch));
+      if (r.badge) { var bd = add(row, el("span", "bdg" + (r.ok ? " ok" : ""), r.ok ? "✓" : String(r.badge))); bd.title = r.ok ? "conflict resolved" : "conflicts with this intent"; }
+      if (r.meet) { var sm = add(row, el("span", "same", "same files")); sm.title = "footprints overlap"; }
+      add(row, el("span", "sp"));
+      if (r.right) add(row, el("span", "rt" + (r.rtone ? " " + r.rtone : ""), r.right));
+      else { var meta = add(row, el("span", "meta")); if (r.sha) add(meta, el("span", "sha", String(r.sha).slice(0, 7))); if (r.who || r.at) add(meta, el("span", "who", (r.who || "") + (r.who && r.at ? " · " : "") + agoS(r.at))); }
+      if (r.prog !== undefined) { var pg = add(row, el("div", "pg" + (r.prog < 0 ? " ind" : ""))); var bar = add(pg, el("i")); if (r.prog >= 0) bar.style.width = Math.round(r.prog * 100) + "%"; }
+      if (r.id) { row.title = "Open this intent"; row.addEventListener("click", function () { nav("#/intents/" + r.id); }); }
+    });
+    if (MC && MC.host === host) MC.lastRows = keys;
+    renderChecks(add(card0, el("div", "checks")), md);
+    mergeFoot(add(card0, el("div", "mf")), i, md);
+    mergeSay(add(host, el("div", "mcsay")), i, md);
+    return md;
+  }
+  function mountMergeCard(parent, id, fallback) { var host = add(parent, el("div")); MC = { host: host, id: id, fallback: fallback || null, sig: "", claim: null, lastRows: null }; paintMergeCard(); return host; }
+  function paintMergeCard() {
+    if (!MC) return; if (!MC.host.isConnected) { MC = null; return; }
+    var i = byIdMap()[MC.id] || MC.fallback; if (!i || !i.id) return;
+    var sig = mergeSig(mergeModel(i)) + (MC.claim ? "c" : ""); if (sig === MC.sig) return; MC.sig = sig; renderMergeCard(MC.host, i);
+  }
+
   // ---- drawer (detail views) ----
   var drawer = byId("drawer");
   function openDrawer(title, sub) { byId("dTitle").textContent = title; byId("dSub").textContent = sub || ""; clear(byId("dBody")); clear(byId("dFoot")); drawer.classList.add("open"); drawer.setAttribute("aria-hidden", "false"); byId("scrim").classList.add("on"); return byId("dBody"); }
@@ -1173,7 +1412,7 @@ body.explain .ex { display:block; }
     var m = byIdMap(); var known = m[id] || {}; var body = openDrawer(known.title || "Intent", (known.agent || "") + (known.state ? " · " + known.state.replace(/_/g, " ") : "")); add(body, el("div", "skel")); add(body, el("div", "skel"));
     api(pubPath("/v1/forge/intents/" + encodeURIComponent(id))).then(function (r) {
       if (S.sel !== id) return; clear(body); if (r.status !== 200) { add(body, el("div", "note warn", fail(r))); return; }
-      var d = r.body, i = d.intent || known; byId("dTitle").textContent = i.title || "Intent"; byId("dSub").textContent = (i.agent || "") + " · " + String(i.state || "").replace(/_/g, " ") + (d.goal && d.goal.text ? " · " + d.goal.text : "");
+      var d = r.body, i = d.intent || known; mountMergeCard(body, i.id || id, i); byId("dTitle").textContent = i.title || "Intent"; byId("dSub").textContent = (i.agent || "") + " · " + String(i.state || "").replace(/_/g, " ") + (d.goal && d.goal.text ? " · " + d.goal.text : "");
       var top = add(body, el("div")); top.style.display = "flex"; top.style.gap = "8px"; top.style.flexWrap = "wrap"; top.style.alignItems = "center"; add(top, pill(i.state)); var rk = d.risk || {}; add(top, el("span", "small muted", "risk")); add(top, riskEl(rk.score !== undefined ? rk.score : i.risk)); (rk.terms || i.riskTerms || []).forEach(function (t) { var e = add(top, el("span", "term")); add(e, el("b", null, "+" + (t.weight || t.points || 0))); add(e, el("span", null, t.term + (t.detail ? " · " + t.detail : ""))); });
       if (i.reasoning) { var s1 = sec(body, "Why"); add(s1, el("div", "soft", i.reasoning)); }
       var s2 = sec(body, "Footprint"); var fp = d.footprint || i.footprint || {}; var declared = fp.declared || fp.paths || [], actual = fp.actual || [], drift = fp.drift || [];
@@ -1185,7 +1424,6 @@ body.explain .ex { display:block; }
       var foot = byId("dFoot"); clear(foot);
       if (S.admin) {
         if (i.state === "awaiting_plan") { var ap = add(foot, el("button", "primary sm", "Approve plan")); ap.addEventListener("click", function () { api("/v1/forge/intents/" + i.id + "/approve-plan", { method: "POST", body: {} }).then(function (x) { if (x.status < 300) { toast("human", "Plan approved"); poll(); openIntent(id); } else toast("conflict", fail(x)); }); }); }
-        if (i.state === "ready" || i.state === "in_train") { var al = add(foot, el("button", "primary sm", "Approve landing")); al.addEventListener("click", function () { api("/v1/forge/intents/" + i.id + "/approve-landing", { method: "POST", body: {} }).then(function (x) { if (x.status < 300) { toast("human", "Landing approved"); poll(); openIntent(id); } else toast("conflict", fail(x)); }); }); }
         if (i.state !== "landed" && i.state !== "abandoned") { var sb = add(foot, el("button", "sm", "Send back")); sb.addEventListener("click", function () { var reason = prompt("Reason (sent to the agent as a note):"); if (!reason) return; api("/v1/forge/intents/" + i.id + "/send-back", { method: "POST", body: { reason: reason } }).then(function (x) { if (x.status < 300) { toast("human", "Sent back"); poll(); openIntent(id); } else toast("conflict", fail(x)); }); }); }
         if (i.state === "landed") { var rv = add(foot, el("button", "sm", "Mark reviewed (agree)")); rv.addEventListener("click", function () { api("/v1/forge/intents/" + i.id + "/review", { method: "POST", body: { decision: "agree" } }).then(function (x) { if (x.status < 300) { toast("landed", "Reviewed"); poll(); } else toast("conflict", fail(x)); }); }); }
       }
@@ -1214,11 +1452,12 @@ body.explain .ex { display:block; }
     api(pubPath("/v1/forge/conflicts/" + encodeURIComponent(id))).then(function (r) {
       if (S.sel !== id) return; clear(body); if (r.status !== 200) { add(body, el("div", "note warn", fail(r))); return; }
       var c = r.body.conflict || r.body; byId("dSub").textContent = (c.files || []).join(", ") + " · " + c.state;
+      if (c.intentA) mountMergeCard(body, c.intentA, r.body.a ? Object.assign({ id: c.intentA }, r.body.a) : null);
       var v = add(body, el("div", "vs")); [c.a || {}, c.b || {}].forEach(function (sd, ix) { if (ix === 1) add(v, el("div", "x", "✕")); var s = add(v, el("div", "side")); add(s, el("div", "t", sd.title || short(sd.intent))); add(s, el("div", "s small muted", (sd.agent || "") + (sd.state ? " · " + sd.state : "") + (sd.landed ? " · landed" : ""))); if (sd.why) add(s, el("div", "small soft", sd.why)).style.marginTop = "4px"; if (sd.intent) { var a = add(s, el("a", "small", "open →")); a.href = "#/intents/" + sd.intent; } });
       var s1 = sec(body, "Resolution"); kv(s1, [["State", c.state], ["Resolver", c.resolverAgent || "unclaimed"], ["Attempts", c.attempts !== undefined ? String(c.attempts) : ""], ["Resolution SHA", c.resolutionSha ? short(c.resolutionSha) : ""], ["Opened", ago(c.createdAt)]]);
       add(s1, el("div", "small muted", "A resolution replays the dropped intent on the new trunk and must pass CI as its own exact SHA before it lands. Races run several attempts and keep the verified winner.")).style.marginTop = "8px";
       if (r.body.ledger && r.body.ledger.length) { var s6 = sec(body, "Ledger"); var lg = add(s6, el("div", "ledger")); r.body.ledger.slice(-14).forEach(function (l) { var it = add(lg, el("div", "it")); var sx = sentence({ subjectKind: "conflict", subjectId: id, kind: l.kind, body: l.body, actor: l.actor, at: l.at }, byIdMap()); add(it, el("span", "k", l.kind)); add(it, el("span", null, sx[0])); add(it, el("span", "w", ago(l.at))); }); }
-      var foot = byId("dFoot"); clear(foot); if (!S.pub && (c.state === "open")) { var cl = add(foot, el("button", "sm", "Claim for replay")); cl.addEventListener("click", function () { api("/v1/forge/conflicts/" + c.id + "/claim", { method: "POST", body: {} }).then(function (x) { if (x.status < 300) { toast("conflict", "Claimed; replay instructions in nextSteps"); openConflict(id); } else toast("conflict", fail(x)); }); }); }
+      clear(byId("dFoot"));
     });
   }
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if (S.tour !== null && S.tour !== undefined && !byId("pal").classList.contains("open") && !byId("modal").classList.contains("open") && !drawer.classList.contains("open")) { S.tour = null; renderTour(); return; } if (byId("pal").classList.contains("open")) closePal(); else if (byId("modal").classList.contains("open")) closeModal(); else if (drawer.classList.contains("open")) closeDrawer(true); } if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPal(); } });

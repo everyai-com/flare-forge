@@ -30,6 +30,19 @@ describe("product app shell", () => {
     expect(js).toContain("/v1/admin/github/login");
   });
 
+  it("draws the merge card from the overview bundle and repaints it on every poll", () => {
+    const js = scripts[scripts.length - 1];
+    // Intent and conflict drawers both mount the live card.
+    expect(js.match(/mountMergeCard\(body, /g)?.length).toBe(2);
+    // The poll loop repaints it; check chips come from the run digest.
+    expect(js).toContain("renderPage(); paintMergeCard(); return; }");
+    expect(js).toContain('"/v1/runs/" + encodeURIComponent(t.runId) + "/digest"');
+    // Conflict side A is the replayed intent; side B already sits on main.
+    expect(js).toContain("c.intentA === i.id");
+    // The lane graph is SVG built node by node, never markup strings.
+    expect(js).toContain("document.createElementNS(SVGNS, tag)");
+  });
+
   it("drives the review and settings writes through the REST routes the MCP tools use", () => {
     const js = scripts[scripts.length - 1];
     for (const route of ["/approve-plan", "/approve-landing", "/send-back", "/review", "/v1/forge/goals/plan", "/v1/forge/goals", "/v1/admin/tokens", "/v1/admin/pair-codes", "/v1/admin/forge/public", "/v1/admin/forge/judge-token", "/conflicts/", "/claim"]) {
